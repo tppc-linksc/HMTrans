@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "PureSend entry module",
+  "main": "",
+  "author": "linksc",
+  "license": "",
+  "dependencies": {}
+}

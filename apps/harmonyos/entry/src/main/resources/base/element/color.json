@@ -1,0 +1,12 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#F7F8FA"
+    },
+    {
+      "name": "app_action_surface",
+      "value": "#FFFFFF"
+    }
+  ]
+}

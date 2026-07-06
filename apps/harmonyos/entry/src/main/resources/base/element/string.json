@@ -1,0 +1,28 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "PureSend"
+    },
+    {
+      "name": "module_desc",
+      "value": "PureSend HarmonyOS module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "PureSend"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "PureSend"
+    },
+    {
+      "name": "media_write_reason",
+      "value": "用于将接收到的图片和视频保存到系统图库，方便在图库、视频和文件管理中查看。"
+    },
+    {
+      "name": "download_write_reason",
+      "value": "用于在下载目录创建 PureSend 文件夹，并将接收到的文件直接保存到该目录，方便在文件管理器中查看。"
+    }
+  ]
+}
