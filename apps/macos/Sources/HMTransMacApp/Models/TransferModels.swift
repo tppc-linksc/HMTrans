@@ -1,5 +1,5 @@
 import Foundation
-import PureSendCore
+import HMTransCore
 
 struct TransferListItem: Identifiable, Equatable {
     enum Direction: String {
@@ -80,14 +80,14 @@ struct PreparedSendFile {
 func prepareSendFileForTransfer(_ url: URL) throws -> PreparedSendFile {
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-        throw PureSendError.system("文件不存在：\(url.path)")
+        throw HMTransError.system("文件不存在：\(url.path)")
     }
     guard isDirectory.boolValue else {
         return PreparedSendFile(url: url, displayName: url.lastPathComponent, cleanupDirectory: nil)
     }
 
     let tempDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("PureSend-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("HMTrans-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
     let archiveURL = tempDirectory
         .appendingPathComponent(url.deletingPathExtension().lastPathComponent)
@@ -100,7 +100,7 @@ func prepareSendFileForTransfer(_ url: URL) throws -> PreparedSendFile {
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
         try? FileManager.default.removeItem(at: tempDirectory)
-        throw PureSendError.system("文件夹压缩失败：\(url.lastPathComponent)")
+        throw HMTransError.system("文件夹压缩失败：\(url.lastPathComponent)")
     }
 
     return PreparedSendFile(url: archiveURL, displayName: archiveURL.lastPathComponent, cleanupDirectory: tempDirectory)

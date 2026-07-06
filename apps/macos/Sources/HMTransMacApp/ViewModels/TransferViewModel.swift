@@ -1,15 +1,18 @@
 import AppKit
 import Foundation
 import Observation
-import PureSendCore
+import HMTransCore
 
 @MainActor
 @Observable
 final class TransferViewModel {
+    private static let receiveDirectoryKey = "receiveDirectory"
+    private static let legacyReceiveDirectoryName = "Pure" + "Send"
+
     var host: String = UserDefaults.standard.string(forKey: "lastHost") ?? ""
     var portText: String = UserDefaults.standard.string(forKey: "lastPort") ?? String(defaultPort)
     var selectedFile: URL?
-    var receiveDirectory: String = UserDefaults.standard.string(forKey: "receiveDirectory") ?? defaultReceiveDirectory()
+    var receiveDirectory: String = TransferViewModel.initialReceiveDirectory()
     var status: String = "正在启动接收服务"
     var progress: Double = 0
     var isSending: Bool = false
@@ -29,6 +32,19 @@ final class TransferViewModel {
     private let deviceId: String
     let deviceName: String
     private let discoveredDeviceTTL: TimeInterval = 5
+
+    private static func initialReceiveDirectory() -> String {
+        guard let saved = UserDefaults.standard.string(forKey: receiveDirectoryKey),
+              !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return defaultReceiveDirectory()
+        }
+        if saved.split(separator: "/").contains(Substring(legacyReceiveDirectoryName)) {
+            let migrated = defaultReceiveDirectory()
+            UserDefaults.standard.set(migrated, forKey: receiveDirectoryKey)
+            return migrated
+        }
+        return saved
+    }
 
     var port: UInt16 {
         UInt16(portText) ?? defaultPort
@@ -79,7 +95,7 @@ final class TransferViewModel {
             deviceId = generated
         }
 
-        NotificationCenter.default.addObserver(forName: .pureSendOpenFiles, object: nil, queue: .main) { [weak self] notification in
+        NotificationCenter.default.addObserver(forName: .hmTransOpenFiles, object: nil, queue: .main) { [weak self] notification in
             guard let filenames = notification.object as? [String] else { return }
             Task { @MainActor in
                 self?.sendDroppedFiles(filenames.map { URL(fileURLWithPath: $0) })
@@ -95,10 +111,8 @@ final class TransferViewModel {
         guard !didBootstrap else { return }
         didBootstrap = true
         clearLocalSavedTargetIfNeeded()
-        startPersistentReceiver()
-        startDiscovery()
+        ensureReceiverAndDiscovery()
         startDevicePruning()
-        startFallbackNetworkScan()
     }
 
     func chooseFile() {
@@ -119,9 +133,9 @@ final class TransferViewModel {
         panel.canChooseFiles = false
         if panel.runModal() == .OK, let url = panel.url {
             receiveDirectory = url.path
-            UserDefaults.standard.set(url.path, forKey: "receiveDirectory")
+            UserDefaults.standard.set(url.path, forKey: Self.receiveDirectoryKey)
             status = "接收目录：\(url.path)"
-            startPersistentReceiver()
+            ensureReceiverAndDiscovery()
         }
     }
 
@@ -213,6 +227,15 @@ final class TransferViewModel {
         let senderName = deviceName
 
         Task.detached { [weak self] in
+            guard tcpPortIsOpen(host: targetHost, port: targetPort, timeout: 0.8) else {
+                await MainActor.run {
+                    self?.isSending = false
+                    self?.progress = 0
+                    self?.markDeviceUnreachable(targetDevice, reason: "接收端口不可达")
+                }
+                return
+            }
+
             for (index, url) in urls.enumerated() {
                 let transferId = UUID()
                 await MainActor.run {
@@ -287,6 +310,20 @@ final class TransferViewModel {
     }
 
     func startPersistentReceiver() {
+        ensureReceiverAndDiscovery()
+    }
+
+    private func ensureReceiverAndDiscovery() {
+        guard startReceiver() else {
+            stopDiscovery()
+            return
+        }
+        startDiscovery()
+        startFallbackNetworkScan(force: true)
+    }
+
+    @discardableResult
+    private func startReceiver() -> Bool {
         receiver.stop()
         do {
             try receiver.start(
@@ -320,21 +357,26 @@ final class TransferViewModel {
                                 self?.status = "已拒绝接收"
                             }
                         case .failure(let error):
-                            self?.status = "接收错误：\(error)"
-                            self?.failOldestReceivingTransfer(detail: "\(error)")
+                            self?.handleReceiveFailure(error)
                         }
                     }
                 }
             )
             receiverRunning = true
             status = "接收服务已开启，端口 \(port)"
+            return true
         } catch {
             receiverRunning = false
             status = "接收服务启动失败：\(error)"
+            return false
         }
     }
 
     private func startDiscovery() {
+        guard receiverRunning else {
+            stopDiscovery()
+            return
+        }
         discovery?.stop()
         let service = DiscoveryService(transferPort: port, deviceId: deviceId)
         discovery = service
@@ -342,6 +384,10 @@ final class TransferViewModel {
             try service.start { [weak self] device in
                 Task { @MainActor in
                     guard let self else { return }
+                    guard self.receiverRunning else {
+                        self.stopDiscovery()
+                        return
+                    }
                     self.deviceLastSeenAt[device.deviceId] = Date()
                     var devices = self.nearbyDevices.filter { $0.deviceId != device.deviceId && $0.ip != device.ip }
                     devices.append(device)
@@ -358,8 +404,28 @@ final class TransferViewModel {
                 }
             }
         } catch {
+            discovery = nil
             status = "设备发现启动失败：\(error)"
         }
+    }
+
+    private func stopDiscovery() {
+        discovery?.stop()
+        discovery = nil
+        nearbyDevices = []
+        deviceLastSeenAt = [:]
+    }
+
+    private func handleReceiveFailure(_ error: Error) {
+        let detail = "\(error)"
+        if detail.contains("监听失败") {
+            receiverRunning = false
+            stopDiscovery()
+            status = "接收服务中断：\(detail)"
+            return
+        }
+        status = "接收错误：\(detail)"
+        failOldestReceivingTransfer(detail: detail)
     }
 
     private func startDevicePruning() {
@@ -386,6 +452,7 @@ final class TransferViewModel {
     }
 
     private func startFallbackNetworkScan(force: Bool = false) {
+        guard receiverRunning else { return }
         let now = Date()
         guard force || now.timeIntervalSince(lastFallbackScan) > 8 else { return }
         lastFallbackScan = now

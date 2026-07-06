@@ -4,21 +4,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MAC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$MAC_DIR/../.." && pwd)"
-APP_DIR="$MAC_DIR/build/PureSend.app"
+APP_DIR="$MAC_DIR/build/HMTrans.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$MAC_DIR"
-swift build -c release --product PureSendMac
+swift build -c release --product HMTransMac
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp "$MAC_DIR/.build/release/PureSendMac" "$MACOS_DIR/PureSend"
+cp "$MAC_DIR/.build/release/HMTransMac" "$MACOS_DIR/HMTrans"
 cp "$ROOT_DIR/assets/app-icon/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
-RESOURCE_BUNDLE="$MAC_DIR/.build/out/Products/Release/PureSend_PureSendMacApp.bundle"
+RESOURCE_BUNDLE="$MAC_DIR/.build/out/Products/Release/HMTrans_HMTransMacApp.bundle"
 if [ -d "$RESOURCE_BUNDLE" ]; then
   cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 fi
@@ -29,13 +29,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>PureSend</string>
+  <string>HMTrans</string>
   <key>CFBundleIdentifier</key>
-  <string>com.linksc.puresend.mac</string>
+  <string>com.linksc.hmtrans.mac</string>
   <key>CFBundleName</key>
-  <string>PureSend</string>
+  <string>HMTrans</string>
   <key>CFBundleDisplayName</key>
-  <string>PureSend</string>
+  <string>HMTrans</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -47,7 +47,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>LSMinimumSystemVersion</key>
   <string>26.0</string>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>PureSend needs local network access to discover and transfer files between your Mac and MatePad.</string>
+  <string>HMTrans needs local network access to discover and transfer files between your Mac and MatePad.</string>
 </dict>
 </plist>
 PLIST

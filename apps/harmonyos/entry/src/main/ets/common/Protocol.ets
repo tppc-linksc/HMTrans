@@ -1,4 +1,4 @@
-export const APP_NAME: string = 'PureSend'
+export const APP_NAME: string = 'HMTrans'
 export const PROTOCOL_VERSION: string = '0.1.0'
 export const DEFAULT_PORT: number = 51888
 export const DEFAULT_CHUNK_SIZE: number = 1048576

@@ -2,7 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import Network
-import PureSendCore
+import HMTransCore
 
 enum TrustedDevicesStore {
     private static let key = "trustedDeviceIds"
@@ -92,7 +92,7 @@ func localIPv4Addresses() -> [String] {
 func tcpPortIsOpen(host: String, port: UInt16, timeout: TimeInterval) -> Bool {
     guard let nwPort = NWEndpoint.Port(rawValue: port) else { return false }
     let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
-    let queue = DispatchQueue(label: "PureSend.PortProbe", qos: .utility)
+    let queue = DispatchQueue(label: "HMTrans.PortProbe", qos: .utility)
     let semaphore = DispatchSemaphore(value: 0)
     final class ProbeBox: @unchecked Sendable { var ready = false }
     let box = ProbeBox()

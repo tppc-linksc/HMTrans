@@ -41,6 +41,12 @@ class LineReader {
   }
 }
 
+function safeReceiveFileName(fileName: string): string {
+  const trimmed = fileName.trim()
+  const baseName = trimmed.length > 0 ? trimmed : `HMTrans-${Date.now()}`
+  return baseName.replace(/[\/\\:\*\?"<>\|]/g, '_')
+}
+
 export class TcpTransferService {
   private server?: socket.TCPSocketServer
   private activeConnections: Array<socket.TCPSocketConnection> = []
@@ -133,10 +139,13 @@ export class TcpTransferService {
     }
   }
 
-  async startReceiver(context: common.UIAbilityContext, port: number, callbacks: TransferCallbacks, receiveDirectory?: string): Promise<void> {
+  async startReceiver(_context: common.UIAbilityContext, port: number, callbacks: TransferCallbacks, receiveDirectory?: string): Promise<void> {
     if (this.server) {
       callbacks.onStatus('已经在监听')
       return
+    }
+    if (!receiveDirectory || receiveDirectory.length === 0) {
+      throw new Error('下载目录未就绪，无法启动接收服务')
     }
 
     const server = socket.constructTCPSocketServerInstance()
@@ -171,15 +180,16 @@ export class TcpTransferService {
               return
             }
 
-            const receiveDir = receiveDirectory && receiveDirectory.length > 0 ? receiveDirectory : `${context.filesDir}/PureSend`
+            const receiveDir = receiveDirectory
             try {
               fs.mkdirSync(receiveDir)
             } catch (_) {
             }
-            targetPath = `${receiveDir}/${meta.fileName}`
+            const safeName = safeReceiveFileName(meta.fileName)
+            targetPath = `${receiveDir}/${safeName}`
             targetPartPath = `${targetPath}.part`
             targetFile = fs.openSync(targetPartPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
-            callbacks.onStatus(`接收中：${meta.fileName}`)
+            callbacks.onStatus(`接收中：${safeName}`)
             return
           }
 
@@ -201,9 +211,16 @@ export class TcpTransferService {
               } catch (_) {
               }
               fs.renameSync(targetPartPath, targetPath)
-              await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256)) })
-              callbacks.onStatus(`已保存：${targetPath}`)
-              callbacks.onReceived?.(meta, targetPath)
+              const savedStat = fs.statSync(targetPath)
+              if (savedStat.size === meta.fileSize) {
+                await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256)) })
+                callbacks.onStatus(`已保存：${targetPath}`)
+                callbacks.onReceived?.(meta, targetPath)
+              } else {
+                const reason = `saved_size_mismatch:${savedStat.size}/${meta.fileSize}`
+                await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256, reason)) })
+                callbacks.onStatus(`接收失败：文件保存校验失败 ${reason}`)
+              }
             } else {
               await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256, 'hash_mismatch')) })
               callbacks.onStatus('接收失败：SHA-256 不一致')
@@ -212,6 +229,19 @@ export class TcpTransferService {
           }
         } catch (err) {
           callbacks.onStatus(`接收错误：${JSON.stringify(err)}`)
+          if (meta) {
+            await connection.send({
+              data: encodeJsonLine(createTransferResult(meta.transferId, null, `receive_exception:${JSON.stringify(err)}`)),
+            }).catch(() => {})
+          }
+          if (targetFile) {
+            try {
+              fs.closeSync(targetFile)
+            } catch (_) {
+            }
+            targetFile = undefined
+          }
+          await this.closeConnection(connection)
         }
       })
     })

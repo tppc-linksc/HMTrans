@@ -1,5 +1,5 @@
 import AppKit
-import PureSendCore
+import HMTransCore
 import SwiftUI
 
 struct SettingsView: View {

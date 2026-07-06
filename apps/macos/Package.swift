@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "PureSend",
+    name: "HMTrans",
     platforms: [
         .macOS("26.0")
     ],
     products: [
-        .executable(name: "puresend", targets: ["PureSendCLI"]),
-        .executable(name: "PureSendMac", targets: ["PureSendMacApp"])
+        .executable(name: "hmtrans", targets: ["HMTransCLI"]),
+        .executable(name: "HMTransMac", targets: ["HMTransMacApp"])
     ],
     targets: [
         .target(
-            name: "PureSendCore",
-            path: "Sources/PureSendCore"
+            name: "HMTransCore",
+            path: "Sources/HMTransCore"
         ),
         .executableTarget(
-            name: "PureSendCLI",
-            dependencies: ["PureSendCore"],
-            path: "Sources/PureSendMacCLI"
+            name: "HMTransCLI",
+            dependencies: ["HMTransCore"],
+            path: "Sources/HMTransMacCLI"
         ),
         .executableTarget(
-            name: "PureSendMacApp",
-            dependencies: ["PureSendCore"],
-            path: "Sources/PureSendMacApp",
+            name: "HMTransMacApp",
+            dependencies: ["HMTransCore"],
+            path: "Sources/HMTransMacApp",
             resources: [
                 .process("Resources")
             ]

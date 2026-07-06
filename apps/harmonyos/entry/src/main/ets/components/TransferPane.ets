@@ -8,6 +8,7 @@ export struct TransferPane {
   @Param emptyTitle: string = ''
   @Param emptySubtitle: string = ''
   @Param compactLayout: boolean = false
+  @Param fillHeight: boolean = false
 
   build() {
     Column({ space: 12 }) {
@@ -33,7 +34,8 @@ export struct TransferPane {
       this.TransferList()
     }
     .width(this.compactLayout ? '100%' : '49%')
-    .constraintSize({ minWidth: 320, minHeight: 360 })
+    .height(this.fillHeight ? '100%' : 360)
+    .constraintSize({ minWidth: 320 })
     .margin({ bottom: 14 })
     .padding(16)
     .backgroundColor('#FBFEFF')

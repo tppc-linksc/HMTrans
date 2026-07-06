@@ -1,5 +1,5 @@
 import Foundation
-import PureSendCore
+import HMTransCore
 
 struct Options {
     var command: String = ""
@@ -10,7 +10,7 @@ struct Options {
 }
 
 @main
-struct PureSendMacCLI {
+struct HMTransMacCLI {
     static func main() {
         do {
             let options = try parseOptions(Array(CommandLine.arguments.dropFirst()))
@@ -20,7 +20,7 @@ struct PureSendMacCLI {
             case "receive":
                 try runReceive(options)
             default:
-                throw PureSendError.usage(usageText())
+                throw HMTransError.usage(usageText())
             }
         } catch {
             fputs("Error: \(error)\n\n\(usageText())\n", stderr)
@@ -31,7 +31,7 @@ struct PureSendMacCLI {
 
 func parseOptions(_ args: [String]) throws -> Options {
     guard let command = args.first else {
-        throw PureSendError.usage(usageText())
+        throw HMTransError.usage(usageText())
     }
 
     var options = Options(command: command)
@@ -41,7 +41,7 @@ func parseOptions(_ args: [String]) throws -> Options {
         let arg = args[index]
         func nextValue() throws -> String {
             guard index + 1 < args.count else {
-                throw PureSendError.usage("缺少参数值：\(arg)")
+                throw HMTransError.usage("缺少参数值：\(arg)")
             }
             index += 1
             return args[index]
@@ -53,7 +53,7 @@ func parseOptions(_ args: [String]) throws -> Options {
         case "--port":
             let value = try nextValue()
             guard let port = UInt16(value) else {
-                throw PureSendError.usage("端口不合法：\(value)")
+                throw HMTransError.usage("端口不合法：\(value)")
             }
             options.port = port
         case "--file":
@@ -61,18 +61,18 @@ func parseOptions(_ args: [String]) throws -> Options {
         case "--dir":
             options.outputDirectory = NSString(string: try nextValue()).expandingTildeInPath
         case "-h", "--help":
-            throw PureSendError.usage(usageText())
+            throw HMTransError.usage(usageText())
         default:
-            throw PureSendError.usage("未知参数：\(arg)")
+            throw HMTransError.usage("未知参数：\(arg)")
         }
         index += 1
     }
 
     if command == "send" {
-        guard options.host != nil else { throw PureSendError.usage("send 需要 --host") }
-        guard options.filePath != nil else { throw PureSendError.usage("send 需要 --file") }
+        guard options.host != nil else { throw HMTransError.usage("send 需要 --host") }
+        guard options.filePath != nil else { throw HMTransError.usage("send 需要 --file") }
     } else if command != "receive" {
-        throw PureSendError.usage("未知命令：\(command)")
+        throw HMTransError.usage("未知命令：\(command)")
     }
 
     return options
@@ -80,7 +80,7 @@ func parseOptions(_ args: [String]) throws -> Options {
 
 func runSend(_ options: Options) throws {
     guard let host = options.host, let path = options.filePath else {
-        throw PureSendError.usage(usageText())
+        throw HMTransError.usage(usageText())
     }
 
     let fileURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
@@ -92,7 +92,7 @@ func runSend(_ options: Options) throws {
 }
 
 func runReceive(_ options: Options) throws {
-    print("PureSend 正在监听 0.0.0.0:\(options.port)")
+    print("HMTrans 正在监听 0.0.0.0:\(options.port)")
     print("接收目录：\(options.outputDirectory)")
     print("等待一个传输请求...")
 
@@ -123,16 +123,16 @@ func runReceive(_ options: Options) throws {
 
 func usageText() -> String {
     """
-    PureSend V0.1
+    HMTrans V0.1
 
     接收：
-      swift run puresend receive [--port 51888] [--dir ~/Downloads/PureSend]
+      swift run hmtrans receive [--port 51888] [--dir ~/Downloads/HMTrans]
 
     发送：
-      swift run puresend send --host 192.168.1.35 --file /path/to/file [--port 51888]
+      swift run hmtrans send --host 192.168.1.35 --file /path/to/file [--port 51888]
 
     图形端：
-      swift run PureSendMac
+      swift run HMTransMac
     """
 }
 

@@ -32,7 +32,7 @@ export class DiscoveryService {
     udp.on('message', (info: socket.SocketMessageInfo) => {
       try {
         const device = JSON.parse(arrayBufferToString(info.message)) as DeviceInfo
-        if (device.app !== 'PureSend' || device.deviceId === this.deviceId) {
+        if (device.app !== 'HMTrans' || device.deviceId === this.deviceId) {
           return
         }
         device.ip = this.resolvePeerAddress(device.ip, info.remoteInfo.address)

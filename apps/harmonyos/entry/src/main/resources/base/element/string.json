@@ -2,19 +2,19 @@
   "string": [
     {
       "name": "app_name",
-      "value": "PureSend"
+      "value": "HM互传"
     },
     {
       "name": "module_desc",
-      "value": "PureSend HarmonyOS module"
+      "value": "HMTrans HarmonyOS module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "PureSend"
+      "value": "HM互传"
     },
     {
       "name": "EntryAbility_label",
-      "value": "PureSend"
+      "value": "HM互传"
     },
     {
       "name": "media_write_reason",
@@ -22,7 +22,7 @@
     },
     {
       "name": "download_write_reason",
-      "value": "用于在下载目录创建 PureSend 文件夹，并将接收到的文件直接保存到该目录，方便在文件管理器中查看。"
+      "value": "用于在下载目录创建 HMTrans 文件夹，并将接收到的文件直接保存到该目录，方便在文件管理器中查看。"
     }
   ]
 }

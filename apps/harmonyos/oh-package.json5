@@ -1,6 +1,6 @@
 {
   "modelVersion": "5.1.0",
-  "description": "PureSend HarmonyOS client",
+  "description": "HMTrans HarmonyOS client",
   "dependencies": {},
   "devDependencies": {}
 }

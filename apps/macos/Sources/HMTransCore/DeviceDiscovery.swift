@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import OSLog
 
-private let discoveryLog = Logger(subsystem: "com.linksc.puresend", category: "discovery")
+private let discoveryLog = Logger(subsystem: "com.linksc.hmtrans", category: "discovery")
 
 public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
     public var id: String { deviceId }
@@ -16,8 +16,8 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
     public let systemVersion: String?
 
     public init(
-        app: String = "PureSend",
-        version: String = pureSendProtocolVersion,
+        app: String = "HMTrans",
+        version: String = hmTransProtocolVersion,
         deviceName: String,
         platform: String,
         ip: String,
@@ -37,8 +37,8 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
 }
 
 public final class DiscoveryService: @unchecked Sendable {
-    private let listenQueue = DispatchQueue(label: "PureSend.Discovery.Listen", qos: .utility)
-    private let beaconQueue = DispatchQueue(label: "PureSend.Discovery.Beacon", qos: .utility)
+    private let listenQueue = DispatchQueue(label: "HMTrans.Discovery.Listen", qos: .utility)
+    private let beaconQueue = DispatchQueue(label: "HMTrans.Discovery.Beacon", qos: .utility)
     private let lock = NSLock()
     private var socketFd: Int32 = -1
     private var running = false
@@ -135,7 +135,7 @@ public final class DiscoveryService: @unchecked Sendable {
 
             do {
                 var device = try JSONDecoder().decode(DeviceInfo.self, from: Data(buffer.prefix(count)))
-                guard device.app == "PureSend", device.deviceId != selfDeviceId else { continue }
+                guard device.app == "HMTrans", device.deviceId != selfDeviceId else { continue }
                 let remoteIP = addressString(from: remote)
                 let peerIP = resolvedPeerIPv4(advertised: device.ip, remote: remoteIP)
                 if device.ip != peerIP {
@@ -158,7 +158,7 @@ public final class DiscoveryService: @unchecked Sendable {
 
 private func makeDiscoverySocket() throws -> Int32 {
     let fd = socket(AF_INET, SOCK_DGRAM, 0)
-    guard fd >= 0 else { throw PureSendError.system("UDP socket 失败：\(lastErrnoText())") }
+    guard fd >= 0 else { throw HMTransError.system("UDP socket 失败：\(lastErrnoText())") }
 
     var yes: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
@@ -178,7 +178,7 @@ private func makeDiscoverySocket() throws -> Int32 {
     }
     guard result == 0 else {
         close(fd)
-        throw PureSendError.system("UDP 发现端口绑定失败：\(lastErrnoText())")
+        throw HMTransError.system("UDP 发现端口绑定失败：\(lastErrnoText())")
     }
 
     return fd
@@ -211,7 +211,7 @@ private func sendBroadcasts(fd: Int32, data: Data) throws {
     }
 
     guard sentAny else {
-        throw PureSendError.system("UDP 广播失败：\(lastError ?? "unknown")")
+        throw HMTransError.system("UDP 广播失败：\(lastError ?? "unknown")")
     }
 }
 

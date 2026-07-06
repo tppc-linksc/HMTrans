@@ -77,7 +77,7 @@ export struct DeviceStrip {
           .fontColor('#172033')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text('保持 Mac 端 PureSend 打开')
+        Text('保持 Mac 端 HMTrans 打开')
           .fontSize(11)
           .fontColor('#64748B')
           .maxLines(1)

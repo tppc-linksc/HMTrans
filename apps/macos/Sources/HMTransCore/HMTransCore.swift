@@ -6,11 +6,11 @@ import OSLog
 public let defaultPort: UInt16 = 51888
 public let defaultChunkSize = 1_048_576
 public let discoveryPort: UInt16 = 51889
-public let pureSendProtocolVersion = "0.1.0"
+public let hmTransProtocolVersion = "0.1.0"
 
-private let coreLog = Logger(subsystem: "com.linksc.puresend", category: "transfer")
+private let coreLog = Logger(subsystem: "com.linksc.hmtrans", category: "transfer")
 
-public enum PureSendError: Error, CustomStringConvertible {
+public enum HMTransError: Error, CustomStringConvertible {
     case usage(String)
     case system(String)
     case protocolError(String)
@@ -41,8 +41,8 @@ public struct FileMeta: Codable, Sendable {
 
     public init(
         type: String = "file_meta",
-        app: String = "PureSend",
-        version: String = pureSendProtocolVersion,
+        app: String = "HMTrans",
+        version: String = hmTransProtocolVersion,
         transferId: String,
         senderDeviceId: String? = nil,
         senderName: String? = nil,
@@ -107,10 +107,10 @@ public typealias ReceiveDecisionHandler = @Sendable (_ meta: FileMeta) -> Bool
 public typealias ReceiveCompletionHandler = @Sendable (_ result: Result<ReceivedFile?, Error>) -> Void
 
 public func defaultReceiveDirectory() -> String {
-    NSString(string: "~/Downloads/PureSend").expandingTildeInPath
+    NSString(string: "~/Downloads/HMTrans").expandingTildeInPath
 }
 
-/// Sends one file over a Network.framework TCP connection using the PureSend v0.1 wire protocol.
+/// Sends one file over a Network.framework TCP connection using the HMTrans v0.1 wire protocol.
 public func sendFile(
     fileURL: URL,
     host: String,
@@ -122,7 +122,7 @@ public func sendFile(
 ) throws {
     let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
     guard let fileSizeNumber = attributes[.size] as? NSNumber else {
-        throw PureSendError.system("无法读取文件大小：\(fileURL.path)")
+        throw HMTransError.system("无法读取文件大小：\(fileURL.path)")
     }
 
     let fileSize = fileSizeNumber.int64Value
@@ -146,14 +146,14 @@ public func sendFile(
 
     let decision: ReceiveDecision = try readJSONLine(connection: connection)
     guard decision.accepted else {
-        throw PureSendError.rejected("接收方拒绝：\(decision.reason ?? "无原因")")
+        throw HMTransError.rejected("接收方拒绝：\(decision.reason ?? "无原因")")
     }
 
     try streamFile(fileURL, connection: connection, fileSize: fileSize, onProgress: onProgress)
 
     let result: TransferResult = try readJSONLine(connection: connection)
     guard result.type == "transfer_success" else {
-        throw PureSendError.protocolError("接收方报告失败：\(result.reason ?? "unknown")")
+        throw HMTransError.protocolError("接收方报告失败：\(result.reason ?? "unknown")")
     }
 }
 
@@ -170,11 +170,11 @@ public func receiveOneFile(
     )
 
     guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-        throw PureSendError.usage("无效端口：\(port)")
+        throw HMTransError.usage("无效端口：\(port)")
     }
 
     let listener = try NWListener(using: .tcp, on: nwPort)
-    let queue = DispatchQueue(label: "PureSend.ReceiveOne.Listener", qos: .userInitiated)
+    let queue = DispatchQueue(label: "HMTrans.ReceiveOne.Listener", qos: .userInitiated)
     let semaphore = DispatchSemaphore(value: 0)
     let box = ListenerBox()
 
@@ -193,10 +193,10 @@ public func receiveOneFile(
 
     semaphore.wait()
     if let error = box.error {
-        throw PureSendError.system("监听失败：\(error.localizedDescription)")
+        throw HMTransError.system("监听失败：\(error.localizedDescription)")
     }
     guard let connection = box.connection else {
-        throw PureSendError.system("没有可用连接")
+        throw HMTransError.system("没有可用连接")
     }
 
     let blocking = try BlockingNetworkConnection(existing: connection)
@@ -211,7 +211,7 @@ public func receiveOneFile(
 
 public final class PersistentFileReceiver: @unchecked Sendable {
     private let lock = NSLock()
-    private let queue = DispatchQueue(label: "PureSend.PersistentReceiver", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "HMTrans.PersistentReceiver", qos: .userInitiated)
     private var listener: NWListener?
     private var running = false
 
@@ -228,7 +228,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         defer { lock.unlock() }
         guard !running else { return }
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            throw PureSendError.usage("无效端口：\(port)")
+            throw HMTransError.usage("无效端口：\(port)")
         }
 
         let listener = try NWListener(using: .tcp, on: nwPort)
@@ -244,7 +244,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         listener.stateUpdateHandler = { state in
             if case .failed(let error) = state {
                 coreLog.error("Persistent receiver listener failed: \(error.localizedDescription, privacy: .public)")
-                onConnectionResult(.failure(PureSendError.system("监听失败：\(error.localizedDescription)")))
+                onConnectionResult(.failure(HMTransError.system("监听失败：\(error.localizedDescription)")))
             }
         }
         listener.start(queue: queue)
@@ -317,7 +317,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
 
     static func connect(host: String, port: UInt16) throws -> BlockingNetworkConnection {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            throw PureSendError.usage("无效端口：\(port)")
+            throw HMTransError.usage("无效端口：\(port)")
         }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
         return try BlockingNetworkConnection(existing: connection)
@@ -325,7 +325,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
 
     init(existing connection: NWConnection) throws {
         self.connection = connection
-        self.queue = DispatchQueue(label: "PureSend.NWConnection.\(UUID().uuidString)", qos: .userInitiated)
+        self.queue = DispatchQueue(label: "HMTrans.NWConnection.\(UUID().uuidString)", qos: .userInitiated)
         try startAndWait()
     }
 
@@ -338,7 +338,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         let box = ResultBox<Void>()
         connection.send(content: data, completion: .contentProcessed { error in
             if let error {
-                box.set(.failure(PureSendError.system("send 失败：\(error.localizedDescription)")))
+                box.set(.failure(HMTransError.system("send 失败：\(error.localizedDescription)")))
             } else {
                 box.set(.success(()))
             }
@@ -357,7 +357,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
             inbox.append(try readSome(maximumLength: 4096))
         }
-        throw PureSendError.protocolError("控制消息超过 \(maxBytes) bytes")
+        throw HMTransError.protocolError("控制消息超过 \(maxBytes) bytes")
     }
 
     func readPayload(to tempURL: URL, fileSize: Int64, onProgress: ProgressHandler?) throws {
@@ -397,10 +397,10 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
                 box.set(.success(()))
                 semaphore.signal()
             case .failed(let error):
-                box.set(.failure(PureSendError.system("连接失败：\(error.localizedDescription)")))
+                box.set(.failure(HMTransError.system("连接失败：\(error.localizedDescription)")))
                 semaphore.signal()
             case .cancelled:
-                box.set(.failure(PureSendError.system("连接已取消")))
+                box.set(.failure(HMTransError.system("连接已取消")))
                 semaphore.signal()
             default:
                 break
@@ -409,7 +409,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         connection.start(queue: queue)
         guard semaphore.wait(timeout: .now() + 10) == .success else {
             connection.cancel()
-            throw PureSendError.system("连接超时")
+            throw HMTransError.system("连接超时")
         }
         try box.value.get()
     }
@@ -419,13 +419,13 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         let box = ResultBox<Data>()
         connection.receive(minimumIncompleteLength: 1, maximumLength: maximumLength) { data, _, isComplete, error in
             if let error {
-                box.set(.failure(PureSendError.system("recv 失败：\(error.localizedDescription)")))
+                box.set(.failure(HMTransError.system("recv 失败：\(error.localizedDescription)")))
             } else if let data, !data.isEmpty {
                 box.set(.success(data))
             } else if isComplete {
-                box.set(.failure(PureSendError.protocolError("连接已关闭")))
+                box.set(.failure(HMTransError.protocolError("连接已关闭")))
             } else {
-                box.set(.failure(PureSendError.protocolError("读取到空数据")))
+                box.set(.failure(HMTransError.protocolError("读取到空数据")))
             }
             semaphore.signal()
         }
@@ -441,7 +441,7 @@ private final class ResultBox<T>: @unchecked Sendable {
     var value: Result<T, Error> {
         lock.lock()
         defer { lock.unlock() }
-        return result ?? .failure(PureSendError.system("异步操作未返回结果"))
+        return result ?? .failure(HMTransError.system("异步操作未返回结果"))
     }
 
     func set(_ newValue: Result<T, Error>) {
@@ -460,8 +460,8 @@ private func receiveFromConnection(
     onProgress: ReceiveProgressHandler?
 ) throws -> ReceivedFile? {
     let meta: FileMeta = try readJSONLine(connection: connection)
-    guard meta.type == "file_meta", meta.app == "PureSend" else {
-        throw PureSendError.protocolError("不支持的元数据消息")
+    guard meta.type == "file_meta", meta.app == "HMTrans" else {
+        throw HMTransError.protocolError("不支持的元数据消息")
     }
 
     guard shouldAccept(meta) else {
@@ -509,7 +509,7 @@ private func receiveFromConnection(
         TransferResult(type: "transfer_failed", transferId: meta.transferId, sha256: receivedHash, reason: "hash_mismatch"),
         connection: connection
     )
-    throw PureSendError.protocolError("SHA-256 不一致。期望 \(meta.sha256)，实际 \(receivedHash)")
+    throw HMTransError.protocolError("SHA-256 不一致。期望 \(meta.sha256)，实际 \(receivedHash)")
 }
 
 public func sha256Hex(for url: URL) throws -> String {
@@ -546,7 +546,7 @@ private func sendJSONLine<T: Encodable>(_ value: T, connection: BlockingNetworkC
 private func readJSONLine<T: Decodable>(connection: BlockingNetworkConnection) throws -> T {
     let line = try connection.readLine()
     guard let data = line.data(using: .utf8) else {
-        throw PureSendError.protocolError("消息不是有效 UTF-8")
+        throw HMTransError.protocolError("消息不是有效 UTF-8")
     }
     return try JSONDecoder().decode(T.self, from: data)
 }

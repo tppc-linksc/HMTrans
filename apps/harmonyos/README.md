@@ -1,6 +1,6 @@
 # HarmonyOS 端
 
-HarmonyOS 端是一个 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 MatePad 和 Mac 的原文件互传。
+HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 MatePad 和 Mac 的原文件互传。
 
 当前处于 `v0.1` 发版前调试阶段。
 
@@ -21,7 +21,7 @@ HarmonyOS 端是一个 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 MatePad
 - 支持接收 Mac 发来的文件。
 - 接收前弹窗确认，已信任设备自动接收。
 - 文件夹会压缩为 zip 后发送。
-- 优先保存接收文件到系统下载目录 `Download/PureSend`；如果下载目录权限不可用，才退回应用目录。
+- 接收文件只保存到系统下载目录 `Download/HMTrans`；如果下载目录权限不可用或目录不可写，接收服务不会启动。
 - 显示当前传输、历史记录、速度、大小、格式、方向和结果。
 - 完成后做 SHA-256 校验。
 
@@ -84,13 +84,19 @@ Install Failed: error: failed to install bundle.
 error: install sign info inconsistent.
 ```
 
-说明 MatePad 上已经安装过同 bundleName `com.linksc.puresend` 但签名证书不同的旧版本。先卸载旧包，再重新 Run：
+说明 MatePad 上已经安装过同 bundleName `com.HMTrans.app` 但签名证书不同的旧版本。先卸载旧包，再重新 Run：
+
+```sh
+hdc shell bm uninstall -n com.HMTrans.app
+```
+
+如果设备上还安装过更名前的旧包，也需要一并卸载；旧包可能继续占用传输端口并把文件保存到旧目录：
 
 ```sh
 hdc shell bm uninstall -n com.linksc.puresend
 ```
 
-如果 DevEco 仍然复用旧状态，直接在平板上长按 PureSend 图标卸载一次，然后再用 DevEco Studio Run。
+如果 DevEco 仍然复用旧状态，直接在平板上长按 HM互传 图标卸载一次，然后再用 DevEco Studio Run。
 
 ## v0.2 待做
 
@@ -100,6 +106,6 @@ hdc shell bm uninstall -n com.linksc.puresend
 - 读取并展示连接设备的完整设备名称和系统版本。
 - 配对码。
 - 失败文件 UI 和续传入口。
-- 历史记录支持删除单条记录和清空全部记录。
+- 传输记录支持左滑删除单条记录，并支持清空全部记录。
 - 后台保活和后台传输保证：使用 HarmonyOS 6.1/API 23+ 后台任务能力，传输过程中退到后台或短时间锁屏不应中断。
 - 接收文件保存到系统可见目录或媒体库的方案。

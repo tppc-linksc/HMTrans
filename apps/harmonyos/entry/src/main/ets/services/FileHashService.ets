@@ -7,7 +7,7 @@ import { sliceArrayBuffer, toHex } from '../common/Bytes'
 export function fileNameFromUri(uri: string): string {
   const clean = decodeURIComponent(uri.split('?')[0])
   const segments = clean.split('/')
-  return segments[segments.length - 1] || `PureSend-${Date.now()}`
+  return segments[segments.length - 1] || `HMTrans-${Date.now()}`
 }
 
 function closeFileQuietly(file?: fs.File): void {

@@ -24,7 +24,7 @@ export class ArchiveService {
       }
     }
 
-    const archiveDir = `${context.cacheDir}/PureSend`
+    const archiveDir = `${context.cacheDir}/HMTrans`
     this.ensureDirectory(archiveDir)
     const baseName = fileNameFromUri(uri)
     const archivePath = `${archiveDir}/${baseName}-${Date.now()}.zip`

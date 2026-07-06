@@ -13,7 +13,7 @@ import { TcpTransferService } from '../services/TcpTransferService'
 
 const DEVICE_TTL_MS: number = 5000
 const DEVICE_PRUNE_INTERVAL_MS: number = 1000
-const PREFERENCES_NAME: string = 'PureSend'
+const PREFERENCES_NAME: string = 'HMTrans'
 const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 
 @Entry
@@ -21,7 +21,7 @@ const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DI
 struct Index {
   @Local targetIp: string = ''
   @Local portText: string = `${DEFAULT_PORT}`
-  @Local statusText: string = '正在启动 PureSend'
+  @Local statusText: string = '正在启动 HM互传'
   @Local progressValue: number = 0
   @Local receiverText: string = '接收启动中'
   @Local nearbyDevices: Array<DeviceInfo> = []
@@ -39,6 +39,7 @@ struct Index {
   private historyTransfersByDevice: Map<string, Array<TransferListItem>> = new Map()
   private activeTransferDeviceIds: Map<string, string> = new Map()
   private receiveDirectory: string = ''
+  private receiverReady: boolean = false
   private pruneTimer?: number
 
   aboutToAppear(): void {
@@ -55,13 +56,44 @@ struct Index {
     }
     this.startDevicePruning()
     this.statusText = this.selectedDevice ? this.statusText : '正在重新发现设备'
-    this.restartDiscovery().catch((err: Error) => {
-      this.statusText = `发现服务重启失败：${JSON.stringify(err)}`
+    this.ensureReceiverAndDiscovery().catch((err: Error) => {
+      this.statusText = `服务恢复失败：${JSON.stringify(err)}`
     })
   }
 
   build() {
-    Scroll() {
+    if (this.compactLayout) {
+      Scroll() {
+        this.PageContent(false)
+      }
+      .width('100%')
+      .height('100%')
+      .scrollable(ScrollDirection.Vertical)
+      .scrollBar(BarState.Off)
+      .backgroundColor('#F6FBFF')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .onAreaChange((_oldArea, newArea) => {
+        const width = Number.parseFloat(`${newArea.width}`)
+        this.compactLayout = Number.isFinite(width) && width < 760
+      })
+    } else {
+      Column() {
+        this.PageContent(true)
+      }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#F6FBFF')
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .onAreaChange((_oldArea, newArea) => {
+          const width = Number.parseFloat(`${newArea.width}`)
+          this.compactLayout = Number.isFinite(width) && width < 760
+        })
+    }
+  }
+
+  @Builder
+  private PageContent(stretch: boolean) {
+    if (stretch) {
       Column({ space: 14 }) {
         this.Header()
         this.FileDropSection()
@@ -72,21 +104,27 @@ struct Index {
             this.selectDevice(device)
           },
         })
-        this.FileWorkspace()
+        this.FileWorkspace(true)
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 24, right: 24, top: 34, bottom: 22 })
+    } else {
+      Column({ space: 14 }) {
+        this.Header()
+        this.FileDropSection()
+        DeviceStrip({
+          devices: this.freshDevices,
+          selectedDeviceId: this.selectedDeviceId,
+          onDeviceSelected: (device: DeviceInfo) => {
+            this.selectDevice(device)
+          },
+        })
+        this.FileWorkspace(false)
       }
       .width('100%')
       .padding({ left: 24, right: 24, top: 34, bottom: 22 })
     }
-    .width('100%')
-    .height('100%')
-    .scrollable(ScrollDirection.Vertical)
-    .scrollBar(BarState.Off)
-    .backgroundColor('#F6FBFF')
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .onAreaChange((_oldArea, newArea) => {
-      const width = Number.parseFloat(`${newArea.width}`)
-      this.compactLayout = Number.isFinite(width) && width < 760
-    })
   }
 
   @Builder
@@ -138,7 +176,7 @@ struct Index {
         .textAlign(TextAlign.Center)
         .maxLines(2)
         .width('92%')
-      Text(this.selectedDevice ? '同一 Wi-Fi 下原文件直传，支持任意文件类型' : '保持 Mac 端 PureSend 打开')
+      Text(this.selectedDevice ? '同一 Wi-Fi 下原文件直传，支持任意文件类型' : '保持 Mac 端 HMTrans 打开')
         .fontSize(12)
         .fontColor('#64748B')
         .textAlign(TextAlign.Center)
@@ -171,7 +209,7 @@ struct Index {
   }
 
   @Builder
-  private FileWorkspace() {
+  private FileWorkspace(stretch: boolean) {
     Flex({
       direction: this.compactLayout ? FlexDirection.Column : FlexDirection.Row,
       wrap: this.compactLayout ? FlexWrap.NoWrap : FlexWrap.Wrap,
@@ -184,6 +222,7 @@ struct Index {
         emptyTitle: '暂无正在传输的文件',
         emptySubtitle: '点击上方区域选择文件，或等待 Mac 发送文件',
         compactLayout: this.compactLayout,
+        fillHeight: stretch && !this.compactLayout,
       })
       TransferPane({
         title: '历史记录',
@@ -192,18 +231,19 @@ struct Index {
         emptyTitle: '暂无历史记录',
         emptySubtitle: '完成或失败的传输会显示在这里',
         compactLayout: this.compactLayout,
+        fillHeight: stretch && !this.compactLayout,
       })
     }
     .width('100%')
-    .constraintSize({ minHeight: 360 })
+    .layoutWeight(stretch ? 1 : 0)
+    .constraintSize({ minHeight: stretch ? 0 : 360 })
   }
 
   private async bootstrap(): Promise<void> {
     const context = this.abilityContext()
     await this.loadPreferences(context)
     await this.prepareReceiveDirectory(context)
-    await this.startReceiver(context)
-    await this.startDiscovery()
+    await this.ensureReceiverAndDiscovery()
     this.startDevicePruning()
   }
 
@@ -212,20 +252,40 @@ struct Index {
       const atManager = abilityAccessCtrl.createAtManager()
       const permissionResult = await atManager.requestPermissionsFromUser(context, [DOWNLOAD_PERMISSION])
       if (permissionResult.authResults.length === 0 || permissionResult.authResults[0] !== 0) {
-        this.statusText = '未授权下载目录，接收文件会退回应用缓存'
+        this.statusText = '未授权下载目录，接收服务未启动'
         return
       }
       const downloadDir = Environment.getUserDownloadDir()
-      const receiveDir = `${downloadDir}/PureSend`
+      const receiveDir = `${downloadDir}/HMTrans`
       try {
         fs.mkdirSync(receiveDir)
       } catch (_) {
       }
+      this.verifyWritableDirectory(receiveDir)
       this.receiveDirectory = receiveDir
       this.statusText = `接收目录：${receiveDir}`
     } catch (err) {
       this.receiveDirectory = ''
       this.statusText = `下载目录初始化失败：${JSON.stringify(err)}`
+    }
+  }
+
+  private verifyWritableDirectory(directory: string): void {
+    const testPath = `${directory}/.hmtrans-write-test`
+    let file: fs.File | undefined
+    try {
+      file = fs.openSync(testPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
+    } finally {
+      if (file) {
+        try {
+          fs.closeSync(file)
+        } catch (_) {
+        }
+      }
+      try {
+        fs.unlinkSync(testPath)
+      } catch (_) {
+      }
     }
   }
 
@@ -343,12 +403,26 @@ struct Index {
     })
   }
 
-  private async startReceiver(context: common.UIAbilityContext): Promise<void> {
+  private async ensureReceiverAndDiscovery(): Promise<void> {
+    const context = this.abilityContext()
+    const ready = await this.startReceiver(context)
+    if (!ready) {
+      await this.stopDiscovery()
+      return
+    }
+    await this.restartDiscovery()
+  }
+
+  private async startReceiver(context: common.UIAbilityContext): Promise<boolean> {
     try {
       await this.transferService.startReceiver(context, this.port, {
         onStatus: (value: string) => {
           this.runOnUi(() => {
             this.statusText = value
+            if (value.indexOf('接收服务错误') >= 0) {
+              this.receiverReady = false
+              this.stopDiscovery().catch(() => {})
+            }
           })
         },
         onProgress: (current: number, total: number, meta?: FileMeta) => {
@@ -389,11 +463,15 @@ struct Index {
           return accepted
         },
       }, this.receiveDirectory)
+      this.receiverReady = true
       this.receiverText = `接收中 :${this.port}`
       this.statusText = '自动发现和接收服务已开启'
+      return true
     } catch (err) {
+      this.receiverReady = false
       this.receiverText = '接收异常'
-      this.statusText = `接收服务启动失败：${JSON.stringify(err)}`
+      this.statusText = `接收服务启动失败，可能端口被旧版本占用：${JSON.stringify(err)}`
+      return false
     }
   }
 
@@ -441,6 +519,10 @@ struct Index {
   }
 
   private async restartDiscovery(): Promise<void> {
+    if (!this.receiverReady) {
+      await this.stopDiscovery()
+      return
+    }
     if (this.discoveryService) {
       await this.discoveryService.stop()
       this.discoveryService = undefined
@@ -452,6 +534,19 @@ struct Index {
       this.refreshHistoryForSelectedDevice()
     }
     await this.startDiscovery()
+  }
+
+  private async stopDiscovery(): Promise<void> {
+    if (this.discoveryService) {
+      await this.discoveryService.stop()
+      this.discoveryService = undefined
+    }
+    this.nearbyDevices = []
+    this.deviceLastSeenAt.clear()
+    if (this.selectedDeviceId.length > 0) {
+      this.selectedDeviceId = ''
+      this.refreshHistoryForSelectedDevice()
+    }
   }
 
   private pruneStaleDevices(): void {
@@ -763,7 +858,7 @@ struct Index {
 
   private async publishReceivedMedia(transferId: string, _fileName: string, _path: string): Promise<void> {
     this.runOnUi(() => {
-      this.updateHistoryDetail(transferId, '已保存到下载目录 PureSend')
+      this.updateHistoryDetail(transferId, '已保存到下载目录 HMTrans')
     })
   }
 

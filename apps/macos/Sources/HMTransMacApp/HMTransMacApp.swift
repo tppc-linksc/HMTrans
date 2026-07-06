@@ -1,15 +1,15 @@
 import AppKit
 import Foundation
-import PureSendCore
+import HMTransCore
 import SwiftUI
 
 extension Notification.Name {
-    static let pureSendOpenFiles = Notification.Name("PureSendOpenFiles")
+    static let hmTransOpenFiles = Notification.Name("HMTransOpenFiles")
 }
 
 @MainActor
 enum AppWindowController {
-    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("PureSendMainWindow")
+    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("HMTransMainWindow")
     private static let closeDelegate = MainWindowCloseDelegate()
 
     static func configureWindows() {
@@ -89,7 +89,7 @@ enum AppIconLoader {
 }
 
 @main
-struct PureSendMacApp: App {
+struct HMTransMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let model = TransferViewModel()
     @Environment(\.openWindow) private var openWindow

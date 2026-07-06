@@ -14,7 +14,7 @@ Mac 端包含 Swift 共享传输核心、命令行测试入口和 SwiftUI 图形
 ## 当前能力
 
 - 启动后自动常驻监听 TCP 端口。
-- UDP 自动发现同一局域网 PureSend 设备。
+- UDP 自动发现同一局域网 HMTrans 设备。
 - 自动记住上次连接设备。
 - 支持选择文件发送。
 - 支持拖文件/文件夹到窗口发送。
@@ -22,7 +22,7 @@ Mac 端包含 Swift 共享传输核心、命令行测试入口和 SwiftUI 图形
 - 文件夹会临时压缩为 zip 后传输。
 - 接收前确认，已信任设备自动接收。
 - SHA-256 校验。
-- 默认保存到 `~/Downloads/PureSend`。
+- 默认保存到 `~/Downloads/HMTrans`。
 - 当前传输和历史记录显示速度、大小、格式、方向和结果。
 - 菜单栏图标常驻入口。
 
@@ -31,21 +31,21 @@ Mac 端包含 Swift 共享传输核心、命令行测试入口和 SwiftUI 图形
 启动图形端：
 
 ```sh
-swift run --package-path apps/macos PureSendMac
+swift run --package-path apps/macos HMTransMac
 ```
 
 CLI 接收：
 
 ```sh
 cd apps/macos
-swift run puresend receive
+swift run hmtrans receive
 ```
 
 CLI 发送：
 
 ```sh
 cd apps/macos
-swift run puresend send --host 192.168.1.35 --file ~/Desktop/example.DNG
+swift run hmtrans send --host 192.168.1.35 --file ~/Desktop/example.DNG
 ```
 
 ## 打包
@@ -57,7 +57,7 @@ bash apps/macos/scripts/build-app.sh
 产物：
 
 ```text
-apps/macos/build/PureSend.app
+apps/macos/build/HMTrans.app
 ```
 
 ## v0.2 待做
@@ -68,6 +68,6 @@ apps/macos/build/PureSend.app
 - 读取并展示连接设备的完整设备名称和系统版本。
 - 配对码。
 - 失败文件 UI 和续传入口。
-- 历史记录支持删除单条记录和清空全部记录。
+- 传输记录支持左滑删除单条记录，并支持清空全部记录。
 - 后台保活和后台传输保证：菜单栏常驻，窗口关闭不影响发送、接收和进度更新。
 - 系统通知和更完整的后台/重连策略。
