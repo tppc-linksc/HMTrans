@@ -2,7 +2,7 @@
 
 Mac 端包含 Swift 共享传输核心、命令行测试入口和 SwiftUI 图形入口。
 
-当前处于 `v0.1` 发版前调试阶段。
+当前处于 `v0.1` 发版准备阶段，支持生成用于 GitHub Release 分发的 `HMTrans.dmg`。
 
 
 ## 系统适配基线
@@ -59,6 +59,22 @@ bash apps/macos/scripts/build-app.sh
 ```text
 apps/macos/build/HMTrans.app
 ```
+
+如需生成用于 GitHub Release 分发的磁盘镜像：
+
+```sh
+bash apps/macos/scripts/build-dmg.sh
+```
+
+产物：
+
+```text
+apps/macos/build/HMTrans.dmg
+```
+
+当前构建为未签名分发版本，没有 `Developer ID` 签名和 Apple notarization。别人下载后首次打开可能会被 macOS 安全策略拦截，需要右键 `Open` 或在系统“隐私与安全性”中手动允许。
+
+上传到 GitHub Release 的附件文件名需要固定为 `HMTrans.dmg`，以保证官网直链可用。
 
 ## v0.2 待做
 

@@ -327,13 +327,56 @@ h3 {
   gap: 16px;
 }
 
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
 .feature-card,
-.roadmap-item {
+.roadmap-item,
+.download-card {
   min-height: 236px;
   padding: 24px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.download-card {
+  display: grid;
+  gap: 22px;
+}
+
+.download-head {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 18px;
+  align-items: center;
+}
+
+.download-head img {
+  width: 64px;
+  height: 64px;
+}
+
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.download-note {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid rgba(46, 122, 104, 0.18);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--green-dark);
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .feature-icon {
@@ -529,6 +572,7 @@ h3 {
 
   .status-band,
   .feature-grid,
+  .download-grid,
   .split-section,
   .roadmap-grid {
     grid-template-columns: 1fr;
@@ -570,6 +614,15 @@ h3 {
   .device img {
     width: 64px;
     height: 64px;
+  }
+
+  .download-head {
+    grid-template-columns: 56px 1fr;
+  }
+
+  .download-head img {
+    width: 48px;
+    height: 48px;
   }
 
   .transfer-line {

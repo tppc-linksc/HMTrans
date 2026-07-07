@@ -4,9 +4,9 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 ## 项目背景
 
-这个工具来自我在做其他项目时反复遇到的传输困境：Mac 和 MatePad 之间临时传文件、截图、安装包或项目素材时，常见方案要么依赖云同步，要么步骤太多，要么不能稳定保留原文件。HMTrans 是一个 vibecoding 产品，目标很明确：把我自己每天最常用的 Mac <-> MatePad 互传链路做顺手。
+这个工具来自我在做其他项目时遇到的传输困境：Mac 和 MatePad 之间临时传文件、截图、项目素材时，常见方案要么依赖云同步，要么步骤太多，要么不能稳定保留原文件。HMTrans 是一个 vibecoding 产品，目标很明确：把我自己每天常用的 Mac <-> MatePad 统一局域网下互传原始文件链路做顺手。
 
-当前版本已经能覆盖我大约 95% 的日常使用场景，但还没有做深度测试，也不承诺适合所有网络环境。后续会继续做 `v0.2`，不过短期内我还有其他事情要忙，不会高频更新。欢迎有同样需求的人一起开发、测试和优化。
+当前版本已经能覆盖我大约 95% 的日常使用场景，已经进入 `v0.1` 发版准备阶段，但未做深度测试和代码深度审核，可能有一些小的使用体验上的问题，也不承诺适合所有网络环境。后续会继续做 `v0.2`，不过短期内有其他事情要忙不会高频更新。欢迎有同样需求的人一起开发、测试和优化。
 
 ## 功能概览
 
@@ -34,7 +34,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 ## 版本状态
 
-当前代码处于 `v0.1` 发版前调试阶段。等 Mac 端和 MatePad 真机链路全部确认稳定后，发布第一个开源版本 `v0.1`。
+当前代码处于 `v0.1` 发版准备阶段。Mac 端可生成用于 GitHub Release 分发的 `HMTrans.dmg`，HarmonyOS 端准备通过应用市场分发，当前仅支持 Pad 端。
 
 `v0.1` 的定位是“一对一可用”：
 
@@ -126,7 +126,21 @@ bash apps/macos/scripts/build-app.sh
 apps/macos/build/HMTrans.app
 ```
 
-开源分发时建议后续补充 Developer ID 签名和 notarization；未签名 `.app` 在其他 Mac 上可能需要手动允许打开。
+打包 `.dmg`：
+
+```sh
+bash apps/macos/scripts/build-dmg.sh
+```
+
+产物位置：
+
+```text
+apps/macos/build/HMTrans.dmg
+```
+
+当前仓库只提供未签名分发构建：可以直接生成 `.app` 和 `.dmg`，也可以通过 GitHub Release 分发，但因为没有 `Developer ID` 签名和 Apple notarization，其他 Mac 首次打开时可能出现“无法验证开发者”或安全提醒，用户需要右键 `Open` 或在系统“隐私与安全性”中手动允许。
+
+GitHub Release 附件文件名需要固定为 `HMTrans.dmg`，官网直接下载链接依赖这个文件名。
 
 ## HarmonyOS 端构建
 

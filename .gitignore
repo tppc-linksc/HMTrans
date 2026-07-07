@@ -32,6 +32,7 @@ apps/harmonyos/build-profile.json5
 *.bak
 *.tmp
 *.log
+docs/04-发版流程.md
 *.p12
 *.p7b
 *.cer

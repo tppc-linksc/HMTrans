@@ -255,15 +255,20 @@ struct Index {
         this.statusText = '未授权下载目录，接收服务未启动'
         return
       }
-      const downloadDir = Environment.getUserDownloadDir()
-      const receiveDir = `${downloadDir}/HMTrans`
-      try {
-        fs.mkdirSync(receiveDir)
-      } catch (_) {
+      if (canIUse('SystemCapability.FileManagement.UserFileService')) {
+        const downloadDir = Environment.getUserDownloadDir()
+        const receiveDir = `${downloadDir}/HMTrans`
+        try {
+          fs.mkdirSync(receiveDir)
+        } catch (_) {
+        }
+        this.verifyWritableDirectory(receiveDir)
+        this.receiveDirectory = receiveDir
+        this.statusText = `接收目录：${receiveDir}`
+      } else {
+        this.statusText = '当前设备不支持下载目录能力，接收服务未启动'
+        return
       }
-      this.verifyWritableDirectory(receiveDir)
-      this.receiveDirectory = receiveDir
-      this.statusText = `接收目录：${receiveDir}`
     } catch (err) {
       this.receiveDirectory = ''
       this.statusText = `下载目录初始化失败：${JSON.stringify(err)}`
@@ -275,6 +280,8 @@ struct Index {
     let file: fs.File | undefined
     try {
       file = fs.openSync(testPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
+    } catch (err) {
+      throw new Error(`接收目录不可写：${JSON.stringify(err)}`)
     } finally {
       if (file) {
         try {
