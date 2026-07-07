@@ -16,6 +16,7 @@ apps/macos/*.xcodeproj/project.xcworkspace/xcuserdata/
 apps/macos/*.xcodeproj/xcuserdata/
 apps/harmonyos/oh_modules/
 apps/harmonyos/.hvigor/
+apps/harmonyos/.appanalyzer/
 apps/harmonyos/hvigor/.hvigor/
 apps/harmonyos/entry/build/
 apps/harmonyos/entry/.preview/
