@@ -14,6 +14,8 @@ import { TcpTransferService } from '../services/TcpTransferService'
 const DEVICE_TTL_MS: number = 5000
 const DEVICE_PRUNE_INTERVAL_MS: number = 1000
 const PREFERENCES_NAME: string = 'HMTrans'
+const PRIVACY_ACCEPTED_KEY: string = 'privacyAccepted'
+const PRIVACY_POLICY_URL: string = 'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1989999961663654720'
 const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 
 @Entry
@@ -30,10 +32,14 @@ struct Index {
   @Local currentTransfers: Array<TransferListItem> = []
   @Local historyTransfers: Array<TransferListItem> = []
   @Local compactLayout: boolean = false
+  @Local showPrivacyConsentDialog: boolean = false
+  @Local contentUnlocked: boolean = false
   private transferService: TcpTransferService = new TcpTransferService()
   private archiveService: ArchiveService = new ArchiveService()
   private discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
+  private privacyAccepted: boolean = false
+  private privacyConsentResolver?: (agreed: boolean) => void
   private deviceId: string = ''
   private deviceLastSeenAt: Map<string, number> = new Map()
   private historyTransfersByDevice: Map<string, Array<TransferListItem>> = new Map()
@@ -51,7 +57,7 @@ struct Index {
   }
 
   onPageShow(): void {
-    if (!this.bootstrapped) {
+    if (!this.bootstrapped || !this.privacyAccepted) {
       return
     }
     this.startDevicePruning()
@@ -62,6 +68,31 @@ struct Index {
   }
 
   build() {
+    Stack() {
+      if (this.contentUnlocked) {
+        this.MainLayout()
+      } else {
+        this.PrivacyBlankPage()
+      }
+      if (this.showPrivacyConsentDialog) {
+        this.PrivacyConsentOverlay()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private PrivacyBlankPage() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#F6FBFF')
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  @Builder
+  private MainLayout() {
     if (this.compactLayout) {
       Scroll() {
         this.PageContent(false)
@@ -89,6 +120,81 @@ struct Index {
           this.compactLayout = Number.isFinite(width) && width < 760
         })
     }
+  }
+
+  @Builder
+  private PrivacyConsentOverlay() {
+    Column() {
+      Column({ space: 14 }) {
+        Text('隐私政策提示')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#0F172A')
+          .width('100%')
+
+        Text('欢迎使用 HM互传。HM互传用于在同一局域网内发现设备并传输文件。为实现设备发现、文件发送、文件接收和历史记录展示，应用会在本地使用设备名称、局域网地址、文件名、文件大小、传输结果和保存位置等信息。')
+          .fontSize(14)
+          .lineHeight(22)
+          .fontColor('#334155')
+          .width('100%')
+
+        Text('我们不会将文件或上述信息上传到云端服务器。请阅读并同意隐私政策后继续使用。')
+          .fontSize(14)
+          .lineHeight(22)
+          .fontColor('#334155')
+          .width('100%')
+
+        Row() {
+          Text('查看')
+            .fontSize(14)
+            .fontColor('#334155')
+          Text('《隐私政策》')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#2563EB')
+            .onClick(() => {
+              this.openPrivacyPolicy()
+            })
+        }
+        .width('100%')
+
+        Row({ space: 10 }) {
+          Button('不同意并退出')
+            .layoutWeight(1)
+            .height(44)
+            .fontSize(15)
+            .fontColor('#475569')
+            .backgroundColor('#EEF2F7')
+            .borderRadius(12)
+            .onClick(() => {
+              this.resolvePrivacyConsent(false)
+            })
+          Button('同意并继续')
+            .layoutWeight(1)
+            .height(44)
+            .fontSize(15)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#2563EB')
+            .borderRadius(12)
+            .onClick(() => {
+              this.resolvePrivacyConsent(true)
+            })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      .width('88%')
+      .constraintSize({ maxWidth: 520 })
+      .padding({ left: 22, right: 22, top: 22, bottom: 18 })
+      .backgroundColor('#FFFFFF')
+      .borderRadius(20)
+      .shadow({ radius: 20, color: '#0000001A', offsetY: 8 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#0F172A66')
+    .zIndex(20)
   }
 
   @Builder
@@ -129,31 +235,47 @@ struct Index {
 
   @Builder
   private Header() {
-    Row() {
-      if (this.selectedDevice) {
-        Row({ space: 8 }) {
-          Text(this.connectionTitle)
+    Stack() {
+      Row() {
+        if (this.selectedDevice) {
+          Row({ space: 8 }) {
+            Text(this.connectionTitle)
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#172033')
+            Text(this.selectedDevice?.ip ?? '')
+              .fontSize(13)
+              .fontColor('#64748B')
+            Text('connected')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#16A34A')
+          }
+        } else {
+          Text('unconnected')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#172033')
-          Text(this.selectedDevice?.ip ?? '')
-            .fontSize(13)
             .fontColor('#64748B')
-          Text('connected')
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#16A34A')
         }
-      } else {
-        Text('unconnected')
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#64748B')
       }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+
+      Row() {
+        Blank()
+        Text('隐私政策')
+          .fontSize(12)
+          .fontColor('#2563EB')
+          .maxLines(1)
+          .onClick(() => {
+            this.openPrivacyPolicy()
+          })
+      }
+      .width('100%')
+      .height(28)
     }
     .width('100%')
     .height(28)
-    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -241,10 +363,84 @@ struct Index {
 
   private async bootstrap(): Promise<void> {
     const context = this.abilityContext()
+    const accepted = await this.ensurePrivacyConsent(context)
+    if (!accepted) {
+      this.statusText = '未同意隐私政策，服务未启动'
+      this.receiverText = '等待用户同意隐私政策'
+      return
+    }
     await this.loadPreferences(context)
     await this.prepareReceiveDirectory(context)
     await this.ensureReceiverAndDiscovery()
     this.startDevicePruning()
+  }
+
+  private async ensurePrivacyConsent(context: common.UIAbilityContext): Promise<boolean> {
+    try {
+      const store = await preferences.getPreferences(context, PREFERENCES_NAME)
+      const accepted = await store.get(PRIVACY_ACCEPTED_KEY, false) as boolean
+      if (accepted) {
+        this.privacyAccepted = true
+        this.contentUnlocked = true
+        return true
+      }
+      const agreed = await this.showPrivacyPrompt()
+      if (!agreed) {
+        this.privacyAccepted = false
+        return false
+      }
+      await store.put(PRIVACY_ACCEPTED_KEY, true)
+      await store.flush()
+      this.privacyAccepted = true
+      this.contentUnlocked = true
+      return true
+    } catch (err) {
+      this.statusText = `隐私政策确认失败：${JSON.stringify(err)}`
+      this.privacyAccepted = false
+      this.contentUnlocked = false
+      return false
+    }
+  }
+
+  private showPrivacyPrompt(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.runOnUi(() => {
+        this.privacyConsentResolver = resolve
+        this.showPrivacyConsentDialog = true
+      })
+    })
+  }
+
+  private resolvePrivacyConsent(agreed: boolean): void {
+    this.showPrivacyConsentDialog = false
+    const resolver = this.privacyConsentResolver
+    this.privacyConsentResolver = undefined
+    if (resolver) {
+      resolver(agreed)
+    }
+    if (!agreed) {
+      this.exitForPrivacyDecline()
+    }
+  }
+
+  private openPrivacyPolicy(): void {
+    const context = this.abilityContext()
+    context.startAbility({
+      action: 'ohos.want.action.viewData',
+      uri: PRIVACY_POLICY_URL,
+    }).catch((_err: Error) => {
+      this.statusText = `请手动访问隐私政策：${PRIVACY_POLICY_URL}`
+    })
+  }
+
+  private exitForPrivacyDecline(): void {
+    this.privacyAccepted = false
+    this.contentUnlocked = false
+    const context = this.abilityContext()
+    context.terminateSelf().catch((_err: Error) => {
+      this.statusText = '未同意隐私政策，服务未启动'
+      this.receiverText = '等待用户同意隐私政策'
+    })
   }
 
   private async prepareReceiveDirectory(context: common.UIAbilityContext): Promise<void> {

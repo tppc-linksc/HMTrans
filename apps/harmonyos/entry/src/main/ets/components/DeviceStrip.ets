@@ -68,7 +68,7 @@ export struct DeviceStrip {
       Image($r('app.media.icon_wifi_discovery'))
         .width(42)
         .height(42)
-        .backgroundColor('#F8FCFF')
+        .backgroundColor('#FFFFFF')
         .borderRadius(12)
       Column({ space: 3 }) {
         Text('正在搜索 Mac')
@@ -83,13 +83,15 @@ export struct DeviceStrip {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
+      .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
     }
-    .width(190)
+    .width(230)
     .height(58)
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    .backgroundColor('#F7FCFF')
+    .backgroundColor('#EAF4FF')
     .borderRadius(16)
+    .border({ width: 1, color: '#93C5FD' })
   }
 
   @Builder
@@ -106,9 +108,13 @@ export struct DeviceStrip {
         Text(device.platform)
           .fontSize(10)
           .fontColor('#64748B')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(device.ip)
           .fontSize(10)
           .fontColor('#64748B')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
