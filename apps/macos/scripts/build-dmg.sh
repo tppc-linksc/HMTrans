@@ -155,13 +155,13 @@ tell application "Finder"
   set current view of dmgWindow to icon view
   set toolbar visible of dmgWindow to false
   set statusbar visible of dmgWindow to false
-  set bounds of dmgWindow to {160, 160, 840, 520}
+  set bounds of dmgWindow to {160, 160, 1060, 640}
   set theViewOptions to the icon view options of dmgWindow
-  set icon size of theViewOptions to 128
+  set icon size of theViewOptions to 160
   set text size of theViewOptions to 14
   tell disk "$VOLUME_NAME"
-    set position of item "HMTrans.app" to {210, 155}
-    set position of item "Applications" to {470, 155}
+    set position of item "HMTrans.app" to {310, 220}
+    set position of item "Applications" to {590, 220}
     update without registering applications
     delay 1
   end tell

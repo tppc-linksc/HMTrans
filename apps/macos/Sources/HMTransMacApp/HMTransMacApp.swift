@@ -48,9 +48,6 @@ private final class MainWindowCloseDelegate: NSObject, NSWindowDelegate {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let icon = AppIconLoader.iconImage() {
-            NSApp.applicationIconImage = icon
-        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         AppWindowController.configureWindows()
@@ -69,17 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum AppIconLoader {
-    static func iconImage() -> NSImage? {
-        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png") {
-            return NSImage(contentsOf: url)
-        }
-        return nil
-    }
-
-    static func menuBarIconImage() -> NSImage? {
-        nil
-    }
-
     static func deviceIconImage(platform: String) -> NSImage? {
         let resource = platform == "HarmonyOS" ? "DeviceMatePad" : "DeviceMacBook"
         return Bundle.module.url(forResource: resource, withExtension: "png").flatMap {
@@ -132,9 +118,11 @@ struct HMTransMacApp: App {
             }
         } label: {
             Image(systemName: "arrow.left.arrow.right.circle.fill")
-                .font(.system(size: 19, weight: .semibold))
+                .resizable()
                 .symbolRenderingMode(.hierarchical)
+                .scaledToFit()
                 .frame(width: 22, height: 22)
+                .padding(.horizontal, 4)
         }
     }
 
