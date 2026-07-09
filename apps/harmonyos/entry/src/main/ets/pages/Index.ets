@@ -33,12 +33,12 @@ struct Index {
   @Local historyTransfers: Array<TransferListItem> = []
   @Local compactLayout: boolean = false
   @Local showPrivacyConsentDialog: boolean = false
-  @Local contentUnlocked: boolean = false
+  @Local contentUnlocked: boolean = true
   private transferService: TcpTransferService = new TcpTransferService()
   private archiveService: ArchiveService = new ArchiveService()
   private discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
-  private privacyAccepted: boolean = false
+  private privacyAccepted: boolean = true
   private privacyConsentResolver?: (agreed: boolean) => void
   private deviceId: string = ''
   private deviceLastSeenAt: Map<string, number> = new Map()
@@ -363,7 +363,11 @@ struct Index {
 
   private async bootstrap(): Promise<void> {
     const context = this.abilityContext()
-    const accepted = await this.ensurePrivacyConsent(context)
+    // AppGallery Connect 托管隐私服务会自动弹出隐私政策。
+    // 为避免审核时出现托管弹窗和应用内自定义弹窗叠加，当前版本跳过自定义隐私弹窗。
+    // 如后续审核策略变化，需要恢复自定义弹窗时，改回：
+    // const accepted = await this.ensurePrivacyConsent(context)
+    const accepted = this.bypassHostedPrivacyConsent()
     if (!accepted) {
       this.statusText = '未同意隐私政策，服务未启动'
       this.receiverText = '等待用户同意隐私政策'
@@ -373,6 +377,13 @@ struct Index {
     await this.prepareReceiveDirectory(context)
     await this.ensureReceiverAndDiscovery()
     this.startDevicePruning()
+  }
+
+  private bypassHostedPrivacyConsent(): boolean {
+    this.privacyAccepted = true
+    this.contentUnlocked = true
+    this.showPrivacyConsentDialog = false
+    return true
   }
 
   private async ensurePrivacyConsent(context: common.UIAbilityContext): Promise<boolean> {
