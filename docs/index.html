@@ -5,14 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HM互传 - Mac 与 HarmonyOS 局域网原文件互传</title>
     <meta name="description" content="HM互传是一个面向 macOS 和 HarmonyOS MatePad 的局域网原文件互传工具。同一 Wi-Fi 下直接发送原始文件，不经过云端。">
-    <link rel="icon" href="site-assets/app-icon.png">
-    <link rel="apple-touch-icon" href="site-assets/app-icon.png">
+    <link rel="icon" href="site-assets/app-icon.png?v=20260710-1">
+    <link rel="apple-touch-icon" href="site-assets/app-icon.png?v=20260710-1">
+    <link rel="preload" as="image" href="site-assets/app-icon.png?v=20260710-1" fetchpriority="high">
+    <link rel="preload" as="image" href="site-assets/device-macbook.png">
+    <link rel="preload" as="image" href="site-assets/device-matepad.png">
     <link rel="stylesheet" href="site-assets/styles.css?v=20260710-3">
   </head>
   <body>
     <header class="site-header">
       <a class="brand" href="./" aria-label="HM互传首页">
-        <img src="site-assets/app-icon.png" alt="" width="36" height="36">
+        <img src="site-assets/app-icon.png?v=20260710-1" alt="" width="36" height="36" fetchpriority="high">
         <span>HM互传</span>
       </a>
       <nav class="site-nav" aria-label="主导航">
@@ -48,7 +51,7 @@
 
         <div class="hero-visual" aria-hidden="true">
           <div class="device device-mac">
-            <img src="site-assets/device-macbook.png" alt="">
+            <img src="site-assets/device-macbook.png" alt="" width="96" height="96" fetchpriority="high">
             <span>Mac</span>
           </div>
           <div class="transfer-line">
@@ -57,11 +60,11 @@
             <span></span>
           </div>
           <div class="device device-pad">
-            <img src="site-assets/device-matepad.png" alt="">
+            <img src="site-assets/device-matepad.png" alt="" width="96" height="96" fetchpriority="high">
             <span>MatePad</span>
           </div>
           <div class="app-badge">
-            <img src="site-assets/app-icon.png" alt="">
+            <img src="site-assets/app-icon.png?v=20260710-1" alt="" width="192" height="192" fetchpriority="high">
           </div>
         </div>
       </section>
@@ -118,14 +121,14 @@
         </div>
         <div class="platform-list" aria-label="平台能力">
           <div class="platform-row">
-            <img src="site-assets/device-macbook.png" alt="">
+            <img src="site-assets/device-macbook.png" alt="" width="96" height="96" loading="lazy" decoding="async">
             <div>
               <h3>macOS</h3>
               <p>菜单栏常驻、主窗口传输列表、Dock 拖拽接收入口。</p>
             </div>
           </div>
           <div class="platform-row">
-            <img src="site-assets/device-matepad.png" alt="">
+            <img src="site-assets/device-matepad.png" alt="" width="96" height="96" loading="lazy" decoding="async">
             <div>
               <h3>HarmonyOS</h3>
               <p>ArkUI 界面、系统文件选择、下载目录保存、平板横屏和窗口化优先。</p>
@@ -142,7 +145,7 @@
         <div class="download-grid">
           <article class="download-card">
             <div class="download-head">
-              <img src="site-assets/device-macbook.png" alt="">
+              <img src="site-assets/device-macbook.png" alt="" width="96" height="96" loading="lazy" decoding="async">
               <div>
                 <h3>macOS</h3>
                 <p>适用于 macOS 26 及以上。安装包通过 GitHub Release 分发，当前未签名、未公证，首次打开可能需要手动允许。</p>
@@ -155,7 +158,7 @@
           </article>
           <article class="download-card">
             <div class="download-head">
-              <img src="site-assets/device-matepad.png" alt="">
+              <img src="site-assets/device-matepad.png" alt="" width="96" height="96" loading="lazy" decoding="async">
               <div>
                 <h3>HarmonyOS</h3>
                 <p>请在应用市场搜索“HM互传”下载安装。当前仅支持 Pad 端；v0.1 首次启动可能遇到设备发现问题。</p>
