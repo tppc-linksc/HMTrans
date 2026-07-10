@@ -19,7 +19,7 @@
       <nav class="site-nav" aria-label="说明页导航">
         <a href="./">首页</a>
         <a href="./#download">下载</a>
-        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&amp;agreementId=1989999961663654720">隐私</a>
+        <a href="privacy.html">隐私</a>
         <a href="https://github.com/tppc-linksc/HMTrans">GitHub</a>
       </nav>
     </header>
@@ -53,6 +53,7 @@
         <h2>下个版本会怎样解决</h2>
         <p>该问题已加入 <code>v0.2</code>，会与现有的多设备、断点续传和失败恢复计划一起完成：</p>
         <ul>
+          <li>使用 HM互传自己的隐私确认流程，同意前不启动局域网服务，同意后按顺序初始化本地能力。</li>
           <li>设备发现与下载目录、TCP 接收服务解耦；目录异常不再导致两端互相搜不到。</li>
           <li>HarmonyOS 6.1 / API 23+ 按当前系统文件能力初始化 <code>Download/HMTrans</code>，不再把旧式权限申请作为发现服务的启动条件。</li>
           <li>补充明确的错误提示、重新初始化和权限恢复入口，不要求用户卸载重装。</li>
