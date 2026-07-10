@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HarmonyOS 连接问题说明 - HM互传</title>
+    <meta name="description" content="HM互传 HarmonyOS v0.1 应用市场版无法发现 Mac 的已知问题、临时处理办法和 v0.2 修复计划。">
+    <link rel="icon" href="site-assets/app-icon.png">
+    <link rel="apple-touch-icon" href="site-assets/app-icon.png">
+    <link rel="stylesheet" href="site-assets/styles.css?v=20260710-3">
+  </head>
+  <body class="support-page">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="返回 HM互传首页">
+        <img src="site-assets/app-icon.png" alt="" width="36" height="36">
+        <span>HM互传</span>
+      </a>
+      <nav class="site-nav" aria-label="说明页导航">
+        <a href="./">首页</a>
+        <a href="./#download">下载</a>
+        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&amp;agreementId=1989999961663654720">隐私</a>
+        <a href="https://github.com/tppc-linksc/HMTrans">GitHub</a>
+      </nav>
+    </header>
+
+    <main class="support-shell">
+      <header class="support-hero">
+        <span class="issue-pill">v0.1 已知问题</span>
+        <h1>应用市场版首次打开后，可能无法发现 Mac</h1>
+        <p class="support-lead">如果 MatePad 和 Mac 已连接同一个 Wi-Fi，但两端一直显示未连接，这通常不是你的网络配置错误，而是当前 HarmonyOS v0.1 应用市场安装包的首次启动问题。</p>
+        <p class="support-meta">问题确认时间：2026 年 7 月 10 日 · 影响范围：HarmonyOS 应用市场版 v0.1</p>
+      </header>
+
+      <section class="support-section support-callout">
+        <h2>现在可以先这样处理</h2>
+        <ol>
+          <li>从最近任务中彻底关闭 HM互传，然后重新打开一次。首次隐私确认结束后，第二次启动可能会正常完成目录初始化。</li>
+          <li>如果出现下载目录或文件访问授权提示，请选择允许，然后再次关闭并打开 HM互传。</li>
+          <li>如果没有弹窗，可进入“设置 → 应用和元服务 → 应用管理 → HM互传 → 权限”，查看是否有下载目录或文件访问权限；如有，请允许后重新启动应用。</li>
+          <li>确认 Mac 和 MatePad 使用同一个普通 Wi-Fi，而不是访客网络；同时在 Mac 的“隐私与安全性 → 本地网络”中允许 HMTrans。</li>
+        </ol>
+        <p><strong>如果设置中没有相应权限，重新打开后也仍然搜不到：</strong>不需要反复卸载。当前 v0.1 市场版无法保证在这种状态下恢复，请等待下个版本更新。</p>
+      </section>
+
+      <section class="support-section">
+        <h2>为什么会出现这个问题</h2>
+        <p>应用市场首次启动时会先处理托管隐私确认，HM互传 v0.1 同时开始初始化下载目录。部分设备上目录授权请求没有显示系统弹窗，而是直接返回未授权。</p>
+        <p>当前版本又把下载目录、TCP 文件接收和 UDP 设备发现串在同一条启动链路上：目录没有准备好，接收服务就无法启动，随后设备发现也会停止，因此两端看起来像是完全搜不到彼此。</p>
+      </section>
+
+      <section class="support-section">
+        <h2>下个版本会怎样解决</h2>
+        <p>该问题已加入 <code>v0.2</code>，会与现有的多设备、断点续传和失败恢复计划一起完成：</p>
+        <ul>
+          <li>设备发现与下载目录、TCP 接收服务解耦；目录异常不再导致两端互相搜不到。</li>
+          <li>HarmonyOS 6.1 / API 23+ 按当前系统文件能力初始化 <code>Download/HMTrans</code>，不再把旧式权限申请作为发现服务的启动条件。</li>
+          <li>补充明确的错误提示、重新初始化和权限恢复入口，不要求用户卸载重装。</li>
+          <li>显式启用 UDP 广播，并按当前网卡计算广播地址，避免广播失败被静默忽略。</li>
+          <li>使用应用市场干净安装包验证首次启动、拒绝后恢复、切后台返回以及升级安装。</li>
+        </ul>
+        <div class="support-actions">
+          <a class="button primary" href="./">返回官网首页</a>
+          <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans">查看项目进度</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <strong>HM互传</strong>
+        <span>Mac 与 HarmonyOS 局域网原文件互传。</span>
+      </div>
+      <nav aria-label="页脚导航">
+        <a href="./">首页</a>
+        <a href="https://github.com/tppc-linksc/HMTrans">GitHub</a>
+      </nav>
+    </footer>
+  </body>
+</html>

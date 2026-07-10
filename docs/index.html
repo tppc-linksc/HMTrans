@@ -7,7 +7,7 @@
     <meta name="description" content="HM互传是一个面向 macOS 和 HarmonyOS MatePad 的局域网原文件互传工具。同一 Wi-Fi 下直接发送原始文件，不经过云端。">
     <link rel="icon" href="site-assets/app-icon.png">
     <link rel="apple-touch-icon" href="site-assets/app-icon.png">
-    <link rel="stylesheet" href="site-assets/styles.css">
+    <link rel="stylesheet" href="site-assets/styles.css?v=20260710-3">
   </head>
   <body>
     <header class="site-header">
@@ -19,13 +19,33 @@
         <a href="#download">下载</a>
         <a href="#features">特点</a>
         <a href="#platforms">平台</a>
-        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1989999961663654720">隐私</a>
+        <a href="connection-help.html">连接帮助</a>
+        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&amp;agreementId=1989999961663654720">隐私</a>
         <a href="https://github.com/tppc-linksc/HMTrans">GitHub</a>
       </nav>
     </header>
 
+    <aside class="site-notice" aria-label="HarmonyOS 版本提示">
+      <div>
+        <strong>HarmonyOS v0.1 应用市场版连接提示</strong>
+        <span>首次打开后可能无法发现 Mac，已确认原因并纳入 v0.2 修复。</span>
+      </div>
+      <a href="connection-help.html">查看现象与临时处理办法</a>
+    </aside>
+
     <main>
       <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">macOS 与 HarmonyOS 的原文件互传工具</p>
+          <h1>HM互传</h1>
+          <p class="lead">同一 Wi-Fi 下，Mac 和 MatePad 直接发现、直接发送文件。不压缩画质，不上传云端，不依赖跨生态账号。</p>
+          <div class="hero-actions">
+            <a class="button primary" href="https://github.com/tppc-linksc/HMTrans/releases/latest/download/HMTrans.dmg">下载 Mac 版</a>
+            <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans/releases">GitHub 下载页</a>
+            <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans">查看源码</a>
+          </div>
+        </div>
+
         <div class="hero-visual" aria-hidden="true">
           <div class="device device-mac">
             <img src="site-assets/device-macbook.png" alt="">
@@ -44,23 +64,12 @@
             <img src="site-assets/app-icon.png" alt="">
           </div>
         </div>
-
-        <div class="hero-copy">
-          <p class="eyebrow">macOS 与 HarmonyOS 的原文件互传工具</p>
-          <h1>HM互传</h1>
-          <p class="lead">同一 Wi-Fi 下，Mac 和 MatePad 直接发现、直接发送文件。不压缩画质，不上传云端，不依赖跨生态账号。</p>
-          <div class="hero-actions">
-            <a class="button primary" href="https://github.com/tppc-linksc/HMTrans/releases/latest/download/HMTrans.dmg">下载 Mac 版</a>
-            <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans/releases">GitHub 下载页</a>
-            <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans">查看源码</a>
-          </div>
-        </div>
       </section>
 
       <section class="status-band" aria-label="版本状态">
         <div>
           <strong>当前状态</strong>
-          <span>v0.1 发版准备</span>
+          <span>v0.1 已发布，正在验证应用市场安装包</span>
         </div>
         <div>
           <strong>传输方式</strong>
@@ -149,11 +158,12 @@
               <img src="site-assets/device-matepad.png" alt="">
               <div>
                 <h3>HarmonyOS</h3>
-                <p>请在应用市场搜索“HM互传”下载安装。当前仅支持 Pad 端。</p>
+                <p>请在应用市场搜索“HM互传”下载安装。当前仅支持 Pad 端；v0.1 首次启动可能遇到设备发现问题。</p>
               </div>
             </div>
             <div class="download-note">
-              <span>应用市场上架后可获取 HarmonyOS 版本。</span>
+              <span>应用市场已上架。</span>
+              <a href="connection-help.html">连接问题说明</a>
             </div>
           </article>
         </div>
@@ -172,8 +182,8 @@
           </article>
           <article class="roadmap-item">
             <span>v0.2</span>
-            <h3>多设备与失败恢复</h3>
-            <p>一对多连接、断点续传、传输记录恢复、配对码、左滑删除记录、后台传输保证。</p>
+            <h3>发行版稳定性与失败恢复</h3>
+            <p>优先修复应用市场首次启动和设备发现，再完成一对多连接、断点续传、记录恢复、配对码与后台传输保证。</p>
           </article>
         </div>
       </section>
@@ -186,7 +196,8 @@
       </div>
       <nav aria-label="页脚导航">
         <a href="https://github.com/tppc-linksc/HMTrans/releases">下载页</a>
-        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1989999961663654720">隐私政策</a>
+        <a href="connection-help.html">连接帮助</a>
+        <a href="https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&amp;agreementId=1989999961663654720">隐私政策</a>
         <a href="https://github.com/tppc-linksc/HMTrans">GitHub</a>
       </nav>
     </footer>

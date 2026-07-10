@@ -90,12 +90,55 @@ img {
   color: var(--green-dark);
 }
 
+.site-notice {
+  width: min(1120px, calc(100% - 40px));
+  min-height: 54px;
+  margin: 18px auto 0;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid rgba(216, 111, 80, 0.28);
+  border-radius: 8px;
+  background: #fff7f2;
+}
+
+.site-notice div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.site-notice strong {
+  color: #8a422c;
+  font-size: 14px;
+}
+
+.site-notice span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.site-notice a,
+.download-note a {
+  flex: 0 0 auto;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .hero {
   position: relative;
-  min-height: min(760px, calc(100vh - 68px));
+  min-height: min(560px, calc(100vh - 68px));
   display: grid;
-  align-items: center;
-  padding: clamp(42px, 8vw, 92px) clamp(20px, 5vw, 64px) clamp(84px, 10vw, 118px);
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.85fr);
+  gap: clamp(28px, 4vw, 64px);
+  align-items: start;
+  padding: clamp(30px, 4vw, 54px) clamp(20px, 5vw, 64px) clamp(72px, 7vw, 92px);
   overflow: hidden;
   background:
     linear-gradient(90deg, rgba(247, 248, 244, 0.96) 0%, rgba(247, 248, 244, 0.84) 44%, rgba(238, 244, 239, 0.68) 100%),
@@ -106,7 +149,7 @@ img {
 .hero-copy {
   position: relative;
   z-index: 2;
-  width: min(670px, 100%);
+  width: min(640px, 100%);
 }
 
 .eyebrow {
@@ -127,7 +170,7 @@ p {
 
 h1 {
   margin-bottom: 18px;
-  font-size: clamp(52px, 9vw, 104px);
+  font-size: clamp(52px, 7vw, 96px);
   line-height: 0.94;
   letter-spacing: 0;
 }
@@ -169,13 +212,10 @@ h1 {
 }
 
 .hero-visual {
-  position: absolute;
-  right: clamp(18px, 6vw, 96px);
-  top: 50%;
-  width: min(48vw, 620px);
-  min-width: 440px;
-  height: min(50vw, 520px);
-  transform: translateY(-45%);
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: min(38vw, 430px);
   z-index: 1;
 }
 
@@ -377,6 +417,8 @@ h3 {
   color: var(--green-dark);
   font-size: 14px;
   font-weight: 700;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .feature-icon {
@@ -517,26 +559,113 @@ h3 {
   text-underline-offset: 3px;
 }
 
-@media (max-width: 900px) {
+.support-page {
+  background: var(--bg);
+}
+
+.support-shell {
+  width: min(980px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: clamp(36px, 6vw, 68px) 0 96px;
+}
+
+.support-hero {
+  max-width: 800px;
+  margin-bottom: 34px;
+}
+
+.issue-pill {
+  display: inline-flex;
+  margin-bottom: 16px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #f8e6df;
+  color: #8a422c;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.support-hero h1 {
+  margin-bottom: 18px;
+  font-size: clamp(38px, 6vw, 68px);
+  line-height: 1.04;
+}
+
+.support-lead {
+  margin-bottom: 22px;
+  color: #3f4843;
+  font-size: clamp(18px, 2.2vw, 23px);
+  line-height: 1.65;
+}
+
+.support-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.support-section {
+  margin-top: 18px;
+  padding: clamp(24px, 4vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.support-section h2 {
+  font-size: clamp(26px, 4vw, 38px);
+}
+
+.support-section h3 {
+  margin-top: 24px;
+}
+
+.support-section p,
+.support-section li {
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.support-section ol,
+.support-section ul {
+  margin: 16px 0 0;
+  padding-left: 24px;
+}
+
+.support-section li + li {
+  margin-top: 12px;
+}
+
+.support-callout {
+  border-color: rgba(216, 111, 80, 0.28);
+  background: #fff7f2;
+}
+
+.support-callout strong {
+  color: #8a422c;
+}
+
+.support-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+@media (max-width: 1040px) {
   .site-header {
     position: relative;
   }
 
   .hero {
     min-height: auto;
-    padding-top: 44px;
+    grid-template-columns: 1fr;
+    padding-top: 34px;
   }
 
   .hero-visual {
-    position: relative;
-    right: auto;
-    top: auto;
-    order: -1;
     width: 100%;
-    min-width: 0;
     height: 286px;
-    margin-bottom: 28px;
-    transform: none;
+    margin-top: 20px;
   }
 
   .device {
@@ -589,8 +718,14 @@ h3 {
   .site-nav,
   .site-footer nav {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-wrap: wrap;
     gap: 12px;
+  }
+
+  .site-notice {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .hero {
@@ -633,6 +768,14 @@ h3 {
 
   .status-band {
     margin-top: -30px;
+  }
+
+  .support-shell {
+    width: min(100% - 32px, 980px);
+  }
+
+  .support-section {
+    padding: 22px 18px;
   }
 
   .platform-row {
