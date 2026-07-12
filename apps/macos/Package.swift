@@ -26,7 +26,17 @@ let package = Package(
             path: "Sources/HMTransMacApp",
             resources: [
                 .process("Resources")
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+                .linkedFramework("CoreLocation"),
+                .linkedFramework("CoreWLAN")
             ]
+        ),
+        .testTarget(
+            name: "HMTransCoreTests",
+            dependencies: ["HMTransCore"],
+            path: "Tests/HMTransCoreTests"
         )
     ]
 )

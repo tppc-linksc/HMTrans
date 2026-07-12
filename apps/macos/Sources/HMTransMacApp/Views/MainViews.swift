@@ -28,20 +28,7 @@ struct ContentView: View {
     let model: TransferViewModel
 
     var body: some View {
-        ZStack {
-            GlassBackground()
-            VStack(spacing: 14) {
-                AppHeaderView(model: model)
-                DropTransferView(model: model)
-                NearbyDevicesStrip(model: model)
-                FilesWorkspaceView(model: model)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
-            .padding(.bottom, 18)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-        .ignoresSafeArea(.container, edges: .top)
+        V02RootView(model: model)
     }
 }
 
@@ -420,6 +407,28 @@ struct FileRow: View {
     let item: TransferListItem
     let openAction: (TransferListItem) -> Void
     let revealAction: (TransferListItem) -> Void
+    let deleteAction: ((TransferListItem) -> Void)?
+    let clearPeerAction: (() -> Void)?
+    let clearAllAction: (() -> Void)?
+    let retryAction: ((TransferListItem) -> Void)?
+
+    init(
+        item: TransferListItem,
+        openAction: @escaping (TransferListItem) -> Void,
+        revealAction: @escaping (TransferListItem) -> Void,
+        deleteAction: ((TransferListItem) -> Void)? = nil,
+        clearPeerAction: (() -> Void)? = nil,
+        clearAllAction: (() -> Void)? = nil,
+        retryAction: ((TransferListItem) -> Void)? = nil
+    ) {
+        self.item = item
+        self.openAction = openAction
+        self.revealAction = revealAction
+        self.deleteAction = deleteAction
+        self.clearPeerAction = clearPeerAction
+        self.clearAllAction = clearAllAction
+        self.retryAction = retryAction
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -460,19 +469,38 @@ struct FileRow: View {
             }
         }
         .padding(10)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .background(MacAppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(MacAppTheme.subtleBorder, lineWidth: 1)
         )
         .contextMenu {
-            if item.state == .done, item.localURL != nil {
+            if item.direction == .sending && (item.state == .failed || item.state == .cancelled),
+               let retryAction {
+                Button("重试此任务") { retryAction(item) }
+            }
+            if item.state == .done {
                 Button("打开") {
                     openAction(item)
                 }
                 Button("在 Finder 中显示") {
                     revealAction(item)
                 }
+            }
+            if deleteAction != nil || clearPeerAction != nil || clearAllAction != nil {
+                Divider()
+            }
+            if let deleteAction {
+                Button("删除此记录", role: .destructive) {
+                    deleteAction(item)
+                }
+            }
+            if let clearPeerAction {
+                Button("清空此设备的记录", role: .destructive, action: clearPeerAction)
+            }
+            if let clearAllAction {
+                Button("清空全部记录", role: .destructive, action: clearAllAction)
             }
         }
     }
@@ -483,9 +511,11 @@ struct FileRow: View {
 
     private var stateColor: Color {
         switch item.state {
-        case .active: return MacAppTheme.accent
+        case .queued, .preparing, .active, .verifying: return MacAppTheme.accent
+        case .paused, .waiting: return .orange
         case .done: return .green
         case .failed: return .red
+        case .cancelled: return .secondary
         }
     }
 }
@@ -498,6 +528,6 @@ extension View {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(MacAppTheme.border, lineWidth: 1)
             )
-            .shadow(color: MacAppTheme.shadow, radius: 18, x: 0, y: 10)
+            .shadow(color: MacAppTheme.shadow, radius: 6, x: 0, y: 2)
     }
 }

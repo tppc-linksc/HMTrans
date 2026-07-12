@@ -5,7 +5,9 @@ import Network
 import HMTransCore
 
 enum TrustedDevicesStore {
-    private static let key = "trustedDeviceIds"
+    // v0.1 的信任可能只经过单边弹窗，不能迁移为 v0.2 的双端配对关系。
+    private static let key = "trustedDeviceIds.v3.deviceSnapshot"
+    private static let fingerprintKey = "trustedDeviceFingerprints.v1"
 
     static func contains(_ deviceId: String?) -> Bool {
         guard let deviceId, !deviceId.isEmpty else { return false }
@@ -19,44 +21,65 @@ enum TrustedDevicesStore {
         UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
     }
 
+    static func insert(_ deviceId: String?, fingerprint: String?) {
+        insert(deviceId)
+        guard let deviceId, let fingerprint, !fingerprint.isEmpty else { return }
+        var values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
+        values[deviceId] = fingerprint
+        UserDefaults.standard.set(values, forKey: fingerprintKey)
+    }
+
+    static func matches(_ deviceId: String?, fingerprint: String?) -> Bool {
+        guard contains(deviceId), let deviceId, let fingerprint, !fingerprint.isEmpty else { return false }
+        let values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
+        return values[deviceId] == fingerprint
+    }
+
     static func remove(_ deviceId: String?) {
         guard let deviceId, !deviceId.isEmpty else { return }
         var ids = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
         ids.remove(deviceId)
         UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+        var values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
+        values.removeValue(forKey: deviceId)
+        UserDefaults.standard.set(values, forKey: fingerprintKey)
     }
 }
 
 func confirmIncomingFile(_ meta: FileMeta) -> Bool {
-    if TrustedDevicesStore.contains(meta.senderDeviceId) {
-        return true
-    }
-
-    if Thread.isMainThread {
-        return MainActor.assumeIsolated {
-            runIncomingFileAlert(meta)
-        }
-    }
-    return DispatchQueue.main.sync {
-        MainActor.assumeIsolated {
-            runIncomingFileAlert(meta)
-        }
-    }
+    TrustedDevicesStore.matches(meta.senderDeviceId, fingerprint: meta.senderFingerprint)
 }
 
 @MainActor
-private func runIncomingFileAlert(_ meta: FileMeta) -> Bool {
-    let sender = meta.senderName ?? meta.senderPlatform ?? "未知设备"
+func promptForIncomingFile(_ meta: FileMeta) -> Bool {
     let alert = NSAlert()
-    alert.messageText = "接收来自 \(sender) 的文件？"
-    alert.informativeText = "\(meta.fileName)\n大小：\(formatBytes(meta.fileSize))\n首次确认后会信任此设备，后续自动接收。"
-    alert.addButton(withTitle: "信任并接收")
+    alert.messageText = "接收来自 \(meta.senderName ?? meta.senderPlatform ?? "已配对设备") 的文件？"
+    alert.informativeText = "\(meta.fileName)\n大小：\(ByteCountFormatter.string(fromByteCount: meta.fileSize, countStyle: .file))"
+    alert.addButton(withTitle: "接收")
     alert.addButton(withTitle: "拒绝")
-    let accepted = alert.runModal() == .alertFirstButtonReturn
-    if accepted {
-        TrustedDevicesStore.insert(meta.senderDeviceId)
+    return alert.runModal() == .alertFirstButtonReturn
+}
+
+@MainActor
+func promptForPairingCode(device: DeviceInfo) -> String? {
+    let alert = NSAlert()
+    alert.messageText = "输入 \(device.deviceName) 的配对码"
+    alert.informativeText = "请在对方设备上查看当前六位配对码。校验成功后双方才会保存信任关系。"
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 28))
+    input.placeholderString = "六位配对码"
+    alert.accessoryView = input
+    alert.addButton(withTitle: "配对并连接")
+    alert.addButton(withTitle: "取消")
+    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    let code = input.stringValue.filter(\.isNumber)
+    guard code.count == 6 else {
+        let error = NSAlert()
+        error.messageText = "配对码格式错误"
+        error.informativeText = "请输入对方设备显示的六位数字。"
+        error.runModal()
+        return nil
     }
-    return accepted
+    return code
 }
 
 func fallbackScanCandidates(savedHost: String) -> [String] {

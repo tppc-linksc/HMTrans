@@ -1,16 +1,35 @@
 import Foundation
 import HMTransCore
 
-struct TransferListItem: Identifiable, Equatable {
-    enum Direction: String {
+struct TransferListItem: Identifiable, Equatable, Codable, Sendable {
+    enum Direction: String, Codable, Sendable {
         case sending = "发送"
         case receiving = "接收"
     }
 
-    enum StateText: String {
+    enum StateText: String, Codable, CaseIterable, Sendable {
+        case queued = "排队中"
+        case preparing = "准备中"
         case active = "传输中"
+        case paused = "已暂停"
+        case waiting = "等待重连"
+        case verifying = "正在校验"
         case done = "已完成"
         case failed = "失败"
+        case cancelled = "已取消"
+
+        var isRecoverable: Bool {
+            switch self {
+            case .queued, .preparing, .active, .paused, .waiting, .failed:
+                return true
+            case .verifying, .done, .cancelled:
+                return false
+            }
+        }
+
+        var isActive: Bool {
+            self == .queued || self == .preparing || self == .active || self == .verifying
+        }
     }
 
     let id: UUID
@@ -25,6 +44,11 @@ struct TransferListItem: Identifiable, Equatable {
     var fileSize: Int64
     var fileType: String
     var localPath: String?
+    var deviceId: String?
+    var groupId: UUID?
+    var errorCode: String?
+    var confirmedOffset: Int64
+    var updatedAt: Date
 
     var localURL: URL? {
         guard let localPath, !localPath.isEmpty else { return nil }
@@ -43,7 +67,12 @@ struct TransferListItem: Identifiable, Equatable {
         startedAt: Date = Date(),
         fileSize: Int64 = 0,
         fileType: String = "",
-        localPath: String? = nil
+        localPath: String? = nil,
+        deviceId: String? = nil,
+        groupId: UUID? = nil,
+        errorCode: String? = nil,
+        confirmedOffset: Int64 = 0,
+        updatedAt: Date = Date()
     ) {
         self.id = id
         self.fileName = fileName
@@ -57,6 +86,11 @@ struct TransferListItem: Identifiable, Equatable {
         self.fileSize = fileSize
         self.fileType = fileType
         self.localPath = localPath
+        self.deviceId = deviceId
+        self.groupId = groupId
+        self.errorCode = errorCode
+        self.confirmedOffset = confirmedOffset
+        self.updatedAt = updatedAt
     }
 
     static func nowText() -> String {
@@ -66,10 +100,26 @@ struct TransferListItem: Identifiable, Equatable {
     }
 }
 
+struct PersistedDevice: Identifiable, Equatable, Codable, Sendable {
+    let id: String
+    var name: String
+    var platform: String
+    var systemVersion: String
+    var address: String
+    var port: UInt16
+    var isPaired: Bool
+    var lastSeenAt: Date
+}
+
 struct PreparedSendFile {
     let url: URL
     let displayName: String
     let cleanupDirectory: URL?
+    let sourceKind: String
+    let payloadKind: String
+    let sourceName: String
+    let sourceSize: Int64
+    let sourceFileCount: Int
 
     func cleanup() {
         guard let cleanupDirectory else { return }
@@ -77,31 +127,75 @@ struct PreparedSendFile {
     }
 }
 
-func prepareSendFileForTransfer(_ url: URL) throws -> PreparedSendFile {
+func prepareSendFileForTransfer(_ url: URL, transferID: UUID) throws -> PreparedSendFile {
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
         throw HMTransError.system("文件不存在：\(url.path)")
     }
     guard isDirectory.boolValue else {
-        return PreparedSendFile(url: url, displayName: url.lastPathComponent, cleanupDirectory: nil)
+        return PreparedSendFile(
+            url: url,
+            displayName: url.lastPathComponent,
+            cleanupDirectory: nil,
+            sourceKind: "file",
+            payloadKind: "file",
+            sourceName: url.lastPathComponent,
+            sourceSize: (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0,
+            sourceFileCount: 1
+        )
     }
 
-    let tempDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("HMTrans-\(UUID().uuidString)", isDirectory: true)
+    let supportRoot = try FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    )
+    let tempDirectory = supportRoot
+        .appendingPathComponent("HMTrans/Staging/Outgoing", isDirectory: true)
+        .appendingPathComponent(transferID.uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
     let archiveURL = tempDirectory
         .appendingPathComponent(url.deletingPathExtension().lastPathComponent)
         .appendingPathExtension("zip")
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-    process.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", url.path, archiveURL.path]
-    try process.run()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        try? FileManager.default.removeItem(at: tempDirectory)
-        throw HMTransError.system("文件夹压缩失败：\(url.lastPathComponent)")
+    if !FileManager.default.fileExists(atPath: archiveURL.path) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", url.path, archiveURL.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            try? FileManager.default.removeItem(at: tempDirectory)
+            throw HMTransError.system("文件夹压缩失败：\(url.lastPathComponent)")
+        }
     }
 
-    return PreparedSendFile(url: archiveURL, displayName: archiveURL.lastPathComponent, cleanupDirectory: tempDirectory)
+    var sourceSize: Int64 = 0
+    var sourceFileCount = 0
+    if let enumerator = FileManager.default.enumerator(
+        at: url,
+        includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+        options: [.skipsHiddenFiles]
+    ) {
+        for case let child as URL in enumerator {
+            let values = try? child.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if values?.isRegularFile == true {
+                sourceFileCount += 1
+                sourceSize += Int64(values?.fileSize ?? 0)
+            }
+        }
+    }
+
+    return PreparedSendFile(
+        url: archiveURL,
+        // Keep the internal ZIP name out of task lists and history.
+        displayName: url.lastPathComponent,
+        cleanupDirectory: tempDirectory,
+        sourceKind: "folder",
+        payloadKind: "zip",
+        sourceName: url.lastPathComponent,
+        sourceSize: sourceSize,
+        sourceFileCount: sourceFileCount
+    )
 }

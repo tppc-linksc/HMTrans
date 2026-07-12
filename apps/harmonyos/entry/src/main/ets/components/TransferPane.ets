@@ -9,6 +9,10 @@ export struct TransferPane {
   @Param emptySubtitle: string = ''
   @Param compactLayout: boolean = false
   @Param fillHeight: boolean = false
+  @Param onTogglePause: (item: TransferListItem) => void = (_item: TransferListItem) => {}
+  @Param onCancel: (item: TransferListItem) => void = (_item: TransferListItem) => {}
+  @Param onToggleGroup: (item: TransferListItem) => void = (_item: TransferListItem) => {}
+  @Param onCancelGroup: (item: TransferListItem) => void = (_item: TransferListItem) => {}
 
   build() {
     Column({ space: 12 }) {
@@ -17,16 +21,16 @@ export struct TransferPane {
         Text(this.title)
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#172033')
+          .fontColor($r('app.color.text_primary'))
         Blank()
         Text(`${this.items.length}`)
           .fontSize(12)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#64748B')
+          .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
           .width(28)
           .height(28)
-          .backgroundColor('#EEF6FD')
+          .backgroundColor($r('app.color.accent_surface'))
           .borderRadius(14)
       }
       .width('100%')
@@ -38,10 +42,9 @@ export struct TransferPane {
     .constraintSize({ minWidth: 320 })
     .margin({ bottom: 14 })
     .padding(16)
-    .backgroundColor('#FBFEFF')
+    .backgroundColor($r('app.color.surface_primary'))
     .borderRadius(22)
-    .border({ width: 1, color: '#D8EAFB' })
-    .shadow({ radius: 24, color: '#E4EEF8', offsetY: 10 })
+    .border({ width: 1, color: $r('app.color.border_subtle') })
   }
 
   @Builder
@@ -57,7 +60,7 @@ export struct TransferPane {
       .width(48)
       .height(48)
       .padding(9)
-      .backgroundColor('#F8FCFF')
+      .backgroundColor($r('app.color.surface_primary'))
       .borderRadius(12)
   }
 
@@ -67,7 +70,7 @@ export struct TransferPane {
       .width(24)
       .height(24)
       .padding(10)
-      .backgroundColor('#F8FCFF')
+      .backgroundColor($r('app.color.surface_primary'))
       .borderRadius(12)
   }
 
@@ -79,13 +82,13 @@ export struct TransferPane {
         Text(this.emptyTitle)
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#172033')
+          .fontColor($r('app.color.text_primary'))
           .textAlign(TextAlign.Center)
           .maxLines(2)
           .width('90%')
         Text(this.emptySubtitle)
           .fontSize(12)
-          .fontColor('#64748B')
+          .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
           .maxLines(3)
           .width('90%')
@@ -94,7 +97,7 @@ export struct TransferPane {
       .layoutWeight(1)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor('#FBFEFF')
+      .backgroundColor($r('app.color.surface_primary'))
       .borderRadius(16)
     } else {
       Scroll() {
@@ -126,7 +129,7 @@ export struct TransferPane {
           Text(item.fileName)
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#172033')
+            .fontColor($r('app.color.text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
@@ -136,20 +139,37 @@ export struct TransferPane {
             .fontWeight(FontWeight.Bold)
             .fontColor(item.state === '失败' ? '#EF4444' : item.state === '已完成' ? '#16A34A' : '#2563EB')
             .maxLines(1)
+          if (item.state === '传输中' || item.state === '准备中' || item.state === '已暂停' || item.state === '等待重连') {
+            Button(item.state === '已暂停' || item.state === '等待重连' ? '继续' : '暂停')
+              .fontSize(11)
+              .height(28)
+              .onClick(() => this.onTogglePause(item))
+            Button('取消')
+              .fontSize(11)
+              .height(28)
+              .fontColor('#C2413A')
+              .onClick(() => this.onCancel(item))
+            if (this.groupSize(item.groupId) > 1) {
+              Button(item.state === '已暂停' ? '整组继续' : '整组暂停')
+                .fontSize(11).height(28).onClick(() => this.onToggleGroup(item))
+              Button('整组取消').fontSize(11).height(28).fontColor('#C2413A')
+                .onClick(() => this.onCancelGroup(item))
+            }
+          }
         }
         .width('100%')
 
         Row() {
           Text(`${item.direction} · ${item.peerName}`)
             .fontSize(11)
-            .fontColor('#64748B')
+            .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           Blank()
           Text(item.timeText)
             .fontSize(11)
-            .fontColor('#64748B')
+            .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
 
@@ -160,7 +180,7 @@ export struct TransferPane {
 
         Text(item.detail)
           .fontSize(11)
-          .fontColor('#64748B')
+          .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Start)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -170,7 +190,11 @@ export struct TransferPane {
     }
     .width('100%')
     .padding(10)
-    .backgroundColor('#F7FCFF')
+    .backgroundColor($r('app.color.surface_primary'))
     .borderRadius(16)
+  }
+
+  private groupSize(groupId: string): number {
+    return this.items.filter((row: TransferListItem) => row.groupId === groupId).length
   }
 }

@@ -11,11 +11,11 @@ enum MacAppTheme {
     }
 
     static let backgroundTop = Color.adaptive(
-        light: NSColor(calibratedRed: 0.992, green: 0.997, blue: 1.0, alpha: 1),
+        light: NSColor(calibratedRed: 0.985, green: 0.990, blue: 0.996, alpha: 1),
         dark: NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.092, alpha: 1)
     )
     static let backgroundBottom = Color.adaptive(
-        light: NSColor(calibratedRed: 0.952, green: 0.985, blue: 1.0, alpha: 1),
+        light: NSColor(calibratedRed: 0.985, green: 0.990, blue: 0.996, alpha: 1),
         dark: NSColor(calibratedRed: 0.070, green: 0.070, blue: 0.072, alpha: 1)
     )
     static let cardSurface = Color.adaptive(
@@ -35,19 +35,19 @@ enum MacAppTheme {
         dark: NSColor(calibratedRed: 0.155, green: 0.155, blue: 0.162, alpha: 0.94)
     )
     static let border = Color.adaptive(
-        light: NSColor(calibratedRed: 0.560, green: 0.740, blue: 0.980, alpha: 0.30),
+        light: NSColor(calibratedWhite: 0.76, alpha: 0.42),
         dark: NSColor(calibratedRed: 0.390, green: 0.390, blue: 0.405, alpha: 0.28)
     )
     static let subtleBorder = Color.adaptive(
-        light: NSColor(calibratedRed: 0.640, green: 0.800, blue: 0.990, alpha: 0.18),
+        light: NSColor(calibratedWhite: 0.78, alpha: 0.34),
         dark: NSColor(calibratedRed: 0.340, green: 0.340, blue: 0.355, alpha: 0.24)
     )
     static let shadow = Color.adaptive(
-        light: NSColor(calibratedRed: 0.060, green: 0.160, blue: 0.300, alpha: 0.105),
+        light: NSColor(calibratedWhite: 0.0, alpha: 0.045),
         dark: NSColor(calibratedRed: 0.0, green: 0.0, blue: 0.0, alpha: 0.38)
     )
     static let softShadow = Color.adaptive(
-        light: NSColor(calibratedRed: 0.060, green: 0.160, blue: 0.300, alpha: 0.075),
+        light: NSColor(calibratedWhite: 0.0, alpha: 0.035),
         dark: NSColor(calibratedRed: 0.0, green: 0.0, blue: 0.0, alpha: 0.28)
     )
     static let activeBorder = Color.adaptive(

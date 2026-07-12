@@ -14,6 +14,9 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
     public let port: UInt16
     public let deviceId: String
     public let systemVersion: String?
+    public let networkName: String?
+    public let identityFingerprint: String?
+    public let acknowledgedDeviceId: String?
 
     public init(
         app: String = "HMTrans",
@@ -23,7 +26,10 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
         ip: String,
         port: UInt16 = defaultPort,
         deviceId: String,
-        systemVersion: String? = nil
+        systemVersion: String? = nil,
+        networkName: String? = nil,
+        identityFingerprint: String? = nil,
+        acknowledgedDeviceId: String? = nil
     ) {
         self.app = app
         self.version = version
@@ -33,6 +39,9 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
         self.port = port
         self.deviceId = deviceId
         self.systemVersion = systemVersion
+        self.networkName = networkName
+        self.identityFingerprint = identityFingerprint
+        self.acknowledgedDeviceId = acknowledgedDeviceId
     }
 }
 
@@ -42,21 +51,28 @@ public final class DiscoveryService: @unchecked Sendable {
     private let lock = NSLock()
     private var socketFd: Int32 = -1
     private var running = false
+    private var directedReplyAt: [String: Date] = [:]
     private let selfDeviceId: String
     private let deviceName: String
     private let platform: String
     private let transferPort: UInt16
+    private let discoveryPort: UInt16
+    private let identityFingerprint: String
 
     public init(
         deviceName: String = Host.current().localizedName ?? "Mac",
         platform: String = "macOS",
         transferPort: UInt16 = defaultPort,
-        deviceId: String
+        discoveryPort: UInt16 = 51_889,
+        deviceId: String,
+        identityFingerprint: String = ""
     ) {
         self.deviceName = deviceName
         self.platform = platform
         self.transferPort = transferPort
+        self.discoveryPort = discoveryPort
         self.selfDeviceId = deviceId
+        self.identityFingerprint = identityFingerprint
     }
 
     public func start(onDevice: @escaping @Sendable (DeviceInfo) -> Void) throws {
@@ -64,7 +80,7 @@ public final class DiscoveryService: @unchecked Sendable {
         defer { lock.unlock() }
         guard !running else { return }
 
-        let fd = try makeDiscoverySocket()
+        let fd = try makeDiscoverySocket(port: discoveryPort)
         socketFd = fd
         running = true
 
@@ -89,6 +105,27 @@ public final class DiscoveryService: @unchecked Sendable {
         }
     }
 
+    /// Sends a signed discovery beacon to a saved address. TCP reachability by
+    /// itself is not enough to call a device connected because it proves no identity.
+    public func probe(address: String) {
+        lock.lock()
+        let fd = socketFd
+        let canSend = running && fd >= 0
+        lock.unlock()
+        guard canSend, isUsableIPv4(address) else { return }
+        let info = DeviceInfo(
+            deviceName: deviceName,
+            platform: platform,
+            ip: primaryIPv4Address() ?? "0.0.0.0",
+            port: transferPort,
+            deviceId: selfDeviceId,
+            systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            identityFingerprint: identityFingerprint
+        )
+        guard let data = try? JSONEncoder().encode(info) else { return }
+        try? sendDatagram(fd: fd, data: data, address: address, port: discoveryPort)
+    }
+
     private func isRunning(fd: Int32) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -104,10 +141,11 @@ public final class DiscoveryService: @unchecked Sendable {
                     ip: primaryIPv4Address() ?? "0.0.0.0",
                     port: transferPort,
                     deviceId: selfDeviceId,
-                    systemVersion: ProcessInfo.processInfo.operatingSystemVersionString
+                    systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                    identityFingerprint: identityFingerprint
                 )
                 let data = try JSONEncoder().encode(info)
-                try sendBroadcasts(fd: fd, data: data)
+                try sendBroadcasts(fd: fd, data: data, port: discoveryPort)
             } catch {
                 discoveryLog.error("Discovery beacon failed: \(String(describing: error), privacy: .public)")
             }
@@ -145,18 +183,46 @@ public final class DiscoveryService: @unchecked Sendable {
                         ip: peerIP,
                         port: device.port,
                         deviceId: device.deviceId,
-                        systemVersion: device.systemVersion
+                        systemVersion: device.systemVersion,
+                        networkName: device.networkName,
+                        identityFingerprint: device.identityFingerprint,
+                        acknowledgedDeviceId: device.acknowledgedDeviceId
                     )
                 }
                 onDevice(device)
+                sendDirectedBeaconIfNeeded(fd: fd, deviceId: device.deviceId, address: peerIP)
             } catch {
                 discoveryLog.error("Discovery packet decode failed: \(String(describing: error), privacy: .public)")
             }
         }
     }
+
+    private func sendDirectedBeaconIfNeeded(fd: Int32, deviceId: String, address: String) {
+        let now = Date()
+        if let last = directedReplyAt[deviceId], now.timeIntervalSince(last) < 2 {
+            return
+        }
+        directedReplyAt[deviceId] = now
+        let info = DeviceInfo(
+            deviceName: deviceName,
+            platform: platform,
+            ip: primaryIPv4Address() ?? "0.0.0.0",
+            port: transferPort,
+            deviceId: selfDeviceId,
+            systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            identityFingerprint: identityFingerprint,
+            acknowledgedDeviceId: deviceId
+        )
+        guard let data = try? JSONEncoder().encode(info) else { return }
+        do {
+            try sendDatagram(fd: fd, data: data, address: address, port: discoveryPort)
+        } catch {
+            discoveryLog.error("Acknowledgement failed peer=\(deviceId, privacy: .public): \(String(describing: error), privacy: .public)")
+        }
+    }
 }
 
-private func makeDiscoverySocket() throws -> Int32 {
+private func makeDiscoverySocket(port: UInt16) throws -> Int32 {
     let fd = socket(AF_INET, SOCK_DGRAM, 0)
     guard fd >= 0 else { throw HMTransError.system("UDP socket 失败：\(lastErrnoText())") }
 
@@ -168,7 +234,7 @@ private func makeDiscoverySocket() throws -> Int32 {
     var address = sockaddr_in()
     address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = discoveryPort.bigEndian
+    address.sin_port = port.bigEndian
     address.sin_addr = in_addr(s_addr: INADDR_ANY.bigEndian)
 
     let result = withUnsafePointer(to: &address) {
@@ -184,7 +250,7 @@ private func makeDiscoverySocket() throws -> Int32 {
     return fd
 }
 
-private func sendBroadcasts(fd: Int32, data: Data) throws {
+private func sendBroadcasts(fd: Int32, data: Data, port: UInt16) throws {
     var lastError: String?
     var sentAny = false
 
@@ -192,7 +258,7 @@ private func sendBroadcasts(fd: Int32, data: Data) throws {
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = discoveryPort.bigEndian
+        address.sin_port = port.bigEndian
         inet_pton(AF_INET, broadcast, &address.sin_addr)
 
         let sent = data.withUnsafeBytes { rawBuffer in
@@ -212,6 +278,24 @@ private func sendBroadcasts(fd: Int32, data: Data) throws {
 
     guard sentAny else {
         throw HMTransError.system("UDP 广播失败：\(lastError ?? "unknown")")
+    }
+}
+
+private func sendDatagram(fd: Int32, data: Data, address: String, port: UInt16) throws {
+    var destination = sockaddr_in()
+    destination.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    destination.sin_family = sa_family_t(AF_INET)
+    destination.sin_port = port.bigEndian
+    inet_pton(AF_INET, address, &destination.sin_addr)
+    let sent = data.withUnsafeBytes { rawBuffer in
+        withUnsafePointer(to: &destination) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                sendto(fd, rawBuffer.baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+    }
+    if sent < 0 {
+        throw HMTransError.system("UDP 单播回应失败：\(lastErrnoText())")
     }
 }
 
@@ -296,7 +380,10 @@ private func interfaceScore(_ interface: IPv4Interface) -> Int {
 }
 
 private func resolvedPeerIPv4(advertised: String, remote: String) -> String {
-    isUsableIPv4(advertised) ? advertised : remote
+    // Prefer the source address observed by recvfrom. The advertised address
+    // may be a valid but unreachable VPN/secondary-interface address; replying
+    // to it creates a one-sided "connected" state on multi-homed Macs.
+    isUsableIPv4(remote) ? remote : advertised
 }
 
 private func isUsableIPv4(_ value: String) -> Bool {
@@ -323,10 +410,10 @@ private func addressString(from address: sockaddr_in) -> String {
 }
 
 private func waitBeforeNextBeacon(fd: Int32) {
-    let deadline = Date().addingTimeInterval(2)
-    while Date() < deadline {
-        _ = RunLoop.current.run(mode: .default, before: min(deadline, Date().addingTimeInterval(0.1)))
-    }
+    guard fcntl(fd, F_GETFD) != -1 else { return }
+    // Discovery runs on a utility queue; a coarse sleep avoids the old 100 ms
+    // RunLoop wakeup that consumed energy while no transfer was active.
+    Thread.sleep(forTimeInterval: 5)
 }
 
 private func lastErrnoText() -> String {

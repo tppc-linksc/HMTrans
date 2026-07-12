@@ -12,16 +12,15 @@ enum AppWindowController {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("HMTransMainWindow")
     private static let closeDelegate = MainWindowCloseDelegate()
 
-    static func configureWindows() {
-        for window in NSApp.windows {
-            window.identifier = mainWindowIdentifier
-            window.delegate = closeDelegate
-            window.isReleasedWhenClosed = false
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.isMovableByWindowBackground = true
-            window.backgroundColor = .clear
-        }
+    static func configureMainWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        window.identifier = mainWindowIdentifier
+        window.delegate = closeDelegate
+        window.isReleasedWhenClosed = false
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .clear
     }
 
     @discardableResult
@@ -50,7 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        AppWindowController.configureWindows()
+        DispatchQueue.main.async {
+            _ = AppWindowController.showExistingMainWindow()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DispatchQueue.main.async {
+            _ = AppWindowController.showExistingMainWindow()
+        }
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
@@ -78,16 +85,12 @@ enum AppIconLoader {
 struct HMTransMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     private let model = TransferViewModel()
-    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            ContentView(model: model)
+            PrivacyGateView(model: model)
                 .frame(minWidth: 1040, minHeight: 720)
-                .onAppear {
-                    AppWindowController.configureWindows()
-                    model.bootstrap()
-                }
+                .background(MainWindowReader())
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 780)
@@ -97,42 +100,26 @@ struct HMTransMacApp: App {
             SettingsView(model: model)
         }
 
-        MenuBarExtra {
-            Text(model.menuSummary)
-            Divider()
-            Button("显示窗口") {
-                revealMainWindow()
-            }
-            Button("选择文件发送") {
-                revealMainWindow()
-                DispatchQueue.main.async {
-                    model.chooseFile()
-                }
-            }
-            Button(model.receiverRunning ? "接收服务已开启" : "重新开启接收服务") {
-                model.startPersistentReceiver()
-            }
-            Divider()
-            Button("退出") {
-                NSApp.terminate(nil)
-            }
-        } label: {
-            Image(systemName: "arrow.left.arrow.right.circle.fill")
-                .resizable()
-                .symbolRenderingMode(.hierarchical)
-                .scaledToFit()
-                .frame(width: 22, height: 22)
-                .padding(.horizontal, 4)
-        }
     }
 
-    private func revealMainWindow() {
-        if AppWindowController.showExistingMainWindow() {
-            return
-        }
-        openWindow(id: "main")
+}
+
+private struct MainWindowReader: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        resolve(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        resolve(nsView)
+    }
+
+    private func resolve(_ view: NSView) {
         DispatchQueue.main.async {
-            AppWindowController.configureWindows()
+            guard let window = view.window else { return }
+            guard window.identifier != AppWindowController.mainWindowIdentifier else { return }
+            AppWindowController.configureMainWindow(window)
             _ = AppWindowController.showExistingMainWindow()
         }
     }

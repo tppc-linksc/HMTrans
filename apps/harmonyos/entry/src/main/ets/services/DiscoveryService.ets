@@ -11,20 +11,28 @@ export class DiscoveryService {
   private udp?: socket.UDPSocket
   private timer?: number
   private deviceId: string
+  private discoveryPort: number = DISCOVERY_PORT
+  private identityFingerprint: string
+  private directedReplyAt: Map<string, number> = new Map()
 
-  constructor(deviceId: string) {
+  constructor(deviceId: string, identityFingerprint: string) {
     this.deviceId = deviceId
+    this.identityFingerprint = identityFingerprint
   }
 
   async start(
     deviceName: string,
     transferPort: number,
+    discoveryPort: number,
+    networkName: string,
+    systemVersion: string,
     callbacks: DiscoveryCallbacks,
     knownTargets: Array<string> = []
   ): Promise<void> {
     if (this.udp) {
       return
     }
+    this.discoveryPort = discoveryPort
 
     const udp = socket.constructUDPSocketInstance()
     this.udp = udp
@@ -35,9 +43,11 @@ export class DiscoveryService {
         if (device.app !== 'HMTrans' || device.deviceId === this.deviceId) {
           return
         }
-        device.ip = this.resolvePeerAddress(device.ip, info.remoteInfo.address)
+        const advertisedAddress = device.ip
+        device.ip = this.resolvePeerAddress(advertisedAddress, info.remoteInfo.address)
         callbacks.onDevice(device)
-        this.sendDirectedBeacon(udp, deviceName, transferPort, device.ip)
+        this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, networkName, systemVersion,
+          device.deviceId, device.ip)
       } catch (_) {
       }
     })
@@ -52,7 +62,7 @@ export class DiscoveryService {
     try {
       await udp.bind({
         address: '0.0.0.0',
-        port: DISCOVERY_PORT,
+        port: this.discoveryPort,
       })
     } catch (err) {
       this.udp = undefined
@@ -62,44 +72,22 @@ export class DiscoveryService {
       throw new Error(JSON.stringify(err))
     }
 
-    const broadcastAddresses: Array<string> = [
-      '255.255.255.255',
-      '192.168.0.255',
-      '192.168.1.255',
-      '192.168.2.255',
-      '192.168.3.255',
-      '192.168.31.255',
-      '192.168.50.255',
-      '10.0.0.255',
-      '10.0.1.255',
-      '172.16.0.255',
-      '172.17.0.255',
-      '172.18.0.255',
-      '172.19.0.255',
-      '172.20.0.255',
-      '172.21.0.255',
-      '172.22.0.255',
-      '172.23.0.255',
-      '172.24.0.255',
-      '172.25.0.255',
-      '172.26.0.255',
-      '172.27.0.255',
-      '172.28.0.255',
-      '172.29.0.255',
-      '172.30.0.255',
-      '172.31.0.255',
-    ]
+    // Use the LAN limited broadcast and paired-device unicast targets instead
+    // of continuously sweeping guessed private subnets.
+    const broadcastAddresses: Array<string> = ['255.255.255.255']
     const beaconTargets = this.uniqueTargets(broadcastAddresses.concat(knownTargets))
 
     const sendBeacon = async () => {
-      const info = createDeviceInfo(deviceName, transferPort, this.deviceId)
+      const info = createDeviceInfo(
+        deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint
+      )
       for (let index = 0; index < beaconTargets.length; index++) {
         try {
           await udp.send({
             data: JSON.stringify(info),
             address: {
               address: beaconTargets[index],
-              port: DISCOVERY_PORT,
+              port: this.discoveryPort,
             },
           })
         } catch (_) {
@@ -108,6 +96,8 @@ export class DiscoveryService {
     }
 
     await sendBeacon()
+    // Both clients expire a device after 12 seconds. A five-second heartbeat
+    // leaves room for one dropped packet without showing asymmetric state.
     this.timer = setInterval(sendBeacon, 5000)
   }
 
@@ -136,6 +126,9 @@ export class DiscoveryService {
   }
 
   private resolvePeerAddress(advertised: string, remote: string): string {
+    // On current HarmonyOS UDPSocket builds, remoteInfo.address can report the
+    // tablet's local interface address instead of the datagram sender. Prefer
+    // the peer's advertised LAN address and retain remoteInfo only as fallback.
     return this.isUsableAddress(advertised) ? advertised : remote
   }
 
@@ -149,15 +142,22 @@ export class DiscoveryService {
     return value.indexOf(':') >= 0 && value.indexOf('::') !== 0
   }
 
-  private sendDirectedBeacon(udp: socket.UDPSocket, deviceName: string, transferPort: number, address: string): void {
-    const info = createDeviceInfo(deviceName, transferPort, this.deviceId)
+  private sendDirectedBeaconIfNeeded(udp: socket.UDPSocket, deviceName: string, transferPort: number,
+    networkName: string, systemVersion: string, deviceId: string, address: string): void {
+    const now = Date.now()
+    if (now - (this.directedReplyAt.get(deviceId) ?? 0) < 2000) return
+    this.directedReplyAt.set(deviceId, now)
+    const info = createDeviceInfo(
+      deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint, deviceId
+    )
     udp.send({
       data: JSON.stringify(info),
       address: {
         address,
-        port: DISCOVERY_PORT,
+        port: this.discoveryPort,
       },
-    }).catch(() => {
+    }).catch((err: Error) => {
+      console.error(`[HMTrans.Discovery] acknowledgement failed peer=${deviceId}: ${JSON.stringify(err)}`)
     })
   }
 }

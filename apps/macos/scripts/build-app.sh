@@ -9,8 +9,16 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
+if [ -z "${DEVELOPER_DIR:-}" ]; then
+  if [ -d "/Applications/Xcode-beta.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode-beta.app/Contents/Developer"
+  elif [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+  fi
+fi
+
 cd "$MAC_DIR"
-swift build -c release --product HMTransMac
+swift build --disable-sandbox -c release --product HMTransMac
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -39,15 +47,17 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.2.0</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>LSMinimumSystemVersion</key>
   <string>26.0</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>HMTrans needs local network access to discover and transfer files between your Mac and MatePad.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>用于显示当前连接的 Wi-Fi 网络名称，网络信息只在本机使用。</string>
 </dict>
 </plist>
 PLIST

@@ -6,7 +6,7 @@ import OSLog
 public let defaultPort: UInt16 = 51888
 public let defaultChunkSize = 1_048_576
 public let discoveryPort: UInt16 = 51889
-public let hmTransProtocolVersion = "0.1.0"
+public let hmTransProtocolVersion = "0.2.0"
 
 private let coreLog = Logger(subsystem: "com.linksc.hmtrans", category: "transfer")
 
@@ -15,12 +15,82 @@ public enum HMTransError: Error, CustomStringConvertible {
     case system(String)
     case protocolError(String)
     case rejected(String)
+    case cancelled
 
     public var description: String {
         switch self {
         case .usage(let message), .system(let message), .protocolError(let message), .rejected(let message):
             return message
+        case .cancelled:
+            return "传输已取消"
         }
+    }
+}
+
+/// Thread-safe control shared by the UI and the blocking transfer loop.
+/// Pause stops file reads and socket writes at the next chunk boundary; cancel
+/// also closes the active connection so a blocked network operation is released.
+public final class TransferControl: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var paused = false
+    private var cancelled = false
+    private var cancellationHandler: (@Sendable () -> Void)?
+
+    public init() {}
+
+    public var isPaused: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return paused
+    }
+
+    public var isCancelled: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return cancelled
+    }
+
+    public func pause() {
+        condition.lock()
+        if !cancelled { paused = true }
+        condition.unlock()
+    }
+
+    public func resume() {
+        condition.lock()
+        paused = false
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    public func cancel() {
+        let handler: (@Sendable () -> Void)?
+        condition.lock()
+        cancelled = true
+        paused = false
+        handler = cancellationHandler
+        condition.broadcast()
+        condition.unlock()
+        handler?()
+    }
+
+    fileprivate func installCancellationHandler(_ handler: @escaping @Sendable () -> Void) {
+        let cancelImmediately: Bool
+        condition.lock()
+        cancellationHandler = handler
+        cancelImmediately = cancelled
+        condition.unlock()
+        if cancelImmediately { handler() }
+    }
+
+    fileprivate func waitIfNeeded() throws {
+        condition.lock()
+        while paused && !cancelled {
+            condition.wait()
+        }
+        let shouldCancel = cancelled
+        condition.unlock()
+        if shouldCancel { throw HMTransError.cancelled }
     }
 }
 
@@ -38,6 +108,13 @@ public struct FileMeta: Codable, Sendable {
     public let sha256: String
     public let chunkSize: Int
     public let totalChunks: Int
+    public let resumeSupported: Bool?
+    public let sourceKind: String?
+    public let payloadKind: String?
+    public let sourceName: String?
+    public let sourceSize: Int64?
+    public let sourceFileCount: Int?
+    public let senderFingerprint: String?
 
     public init(
         type: String = "file_meta",
@@ -51,7 +128,14 @@ public struct FileMeta: Codable, Sendable {
         fileSize: Int64,
         sha256: String,
         chunkSize: Int = defaultChunkSize,
-        totalChunks: Int
+        totalChunks: Int,
+        resumeSupported: Bool? = true,
+        sourceKind: String? = "file",
+        payloadKind: String? = "file",
+        sourceName: String? = nil,
+        sourceSize: Int64? = nil,
+        sourceFileCount: Int? = nil,
+        senderFingerprint: String? = nil
     ) {
         self.type = type
         self.app = app
@@ -65,6 +149,13 @@ public struct FileMeta: Codable, Sendable {
         self.sha256 = sha256
         self.chunkSize = chunkSize
         self.totalChunks = totalChunks
+        self.resumeSupported = resumeSupported
+        self.sourceKind = sourceKind
+        self.payloadKind = payloadKind
+        self.sourceName = sourceName
+        self.sourceSize = sourceSize
+        self.sourceFileCount = sourceFileCount
+        self.senderFingerprint = senderFingerprint
     }
 }
 
@@ -73,8 +164,67 @@ public struct ReceiveDecision: Codable, Sendable {
     public let type: String
     public let accepted: Bool
     public let reason: String?
+    public let resumeOffset: Int64?
 
-    public init(type: String = "receive_decision", accepted: Bool, reason: String?) {
+    public init(
+        type: String = "receive_decision",
+        accepted: Bool,
+        reason: String?,
+        resumeOffset: Int64? = nil
+    ) {
+        self.type = type
+        self.accepted = accepted
+        self.reason = reason
+        self.resumeOffset = resumeOffset
+    }
+}
+
+public struct PairingRequest: Codable, Sendable {
+    public let type: String
+    public let app: String
+    public let version: String
+    public let requesterDeviceId: String
+    public let requesterName: String
+    public let requesterPlatform: String
+    public let requesterSystemVersion: String
+    public let requesterIP: String
+    public let requesterPort: UInt16
+    public let code: String
+    public let requesterFingerprint: String?
+
+    public init(
+        type: String = "pairing_request",
+        app: String = "HMTrans",
+        version: String = hmTransProtocolVersion,
+        requesterDeviceId: String,
+        requesterName: String,
+        requesterPlatform: String,
+        requesterSystemVersion: String,
+        requesterIP: String,
+        requesterPort: UInt16,
+        code: String,
+        requesterFingerprint: String? = nil
+    ) {
+        self.type = type
+        self.app = app
+        self.version = version
+        self.requesterDeviceId = requesterDeviceId
+        self.requesterName = requesterName
+        self.requesterPlatform = requesterPlatform
+        self.requesterSystemVersion = requesterSystemVersion
+        self.requesterIP = requesterIP
+        self.requesterPort = requesterPort
+        self.code = code
+        self.requesterFingerprint = requesterFingerprint
+    }
+}
+
+public struct PairingResponse: Codable, Sendable {
+    public let type: String
+    public let accepted: Bool
+    public let reason: String?
+
+    public init(type: String = "pairing_response", accepted: Bool, reason: String? = nil) {
         self.type = type
         self.accepted = accepted
         self.reason = reason
@@ -104,44 +254,93 @@ public struct ReceivedFile: Sendable {
 public typealias ProgressHandler = @Sendable (_ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveProgressHandler = @Sendable (_ meta: FileMeta, _ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveDecisionHandler = @Sendable (_ meta: FileMeta) -> Bool
+public typealias PairingRequestHandler = @Sendable (_ request: PairingRequest) -> Bool
 public typealias ReceiveCompletionHandler = @Sendable (_ result: Result<ReceivedFile?, Error>) -> Void
 
 public func defaultReceiveDirectory() -> String {
     NSString(string: "~/Downloads/HMTrans").expandingTildeInPath
 }
 
-/// Sends one file over a Network.framework TCP connection using the HMTrans v0.1 wire protocol.
+public func requestPairing(
+    host: String,
+    port: UInt16 = defaultPort,
+    requesterDeviceId: String,
+    requesterName: String,
+    requesterPlatform: String,
+    requesterSystemVersion: String,
+    requesterIP: String,
+    requesterPort: UInt16,
+    code: String,
+    requesterFingerprint: String? = nil
+) throws -> PairingResponse {
+    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    defer { connection.cancel() }
+    try sendJSONLine(
+        PairingRequest(
+            requesterDeviceId: requesterDeviceId,
+            requesterName: requesterName,
+            requesterPlatform: requesterPlatform,
+            requesterSystemVersion: requesterSystemVersion,
+            requesterIP: requesterIP,
+            requesterPort: requesterPort,
+            code: code.filter(\.isNumber),
+            requesterFingerprint: requesterFingerprint
+        ),
+        connection: connection
+    )
+    return try readJSONLine(connection: connection)
+}
+
+/// Sends one resumable file payload over the HMTrans v0.2-compatible TCP wire protocol.
 public func sendFile(
     fileURL: URL,
     host: String,
     port: UInt16 = defaultPort,
+    transferId: String = UUID().uuidString,
     senderDeviceId: String? = nil,
     senderName: String? = nil,
     senderPlatform: String? = nil,
+    sourceKind: String = "file",
+    payloadKind: String = "file",
+    sourceName: String? = nil,
+    sourceSize: Int64? = nil,
+    sourceFileCount: Int? = nil,
+    senderFingerprint: String? = nil,
+    control: TransferControl? = nil,
     onProgress: ProgressHandler? = nil
 ) throws {
+    try control?.waitIfNeeded()
     let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
     guard let fileSizeNumber = attributes[.size] as? NSNumber else {
         throw HMTransError.system("无法读取文件大小：\(fileURL.path)")
     }
 
     let fileSize = fileSizeNumber.int64Value
-    let sha256 = try sha256Hex(for: fileURL)
+    let sha256 = try sha256Hex(for: fileURL, control: control)
     let totalChunks = Int((fileSize + Int64(defaultChunkSize) - 1) / Int64(defaultChunkSize))
     let meta = FileMeta(
-        transferId: UUID().uuidString,
+        transferId: transferId,
         senderDeviceId: senderDeviceId,
         senderName: senderName,
         senderPlatform: senderPlatform,
         fileName: fileURL.lastPathComponent,
         fileSize: fileSize,
         sha256: sha256,
-        totalChunks: totalChunks
+        totalChunks: totalChunks,
+        resumeSupported: true,
+        sourceKind: sourceKind,
+        payloadKind: payloadKind,
+        sourceName: sourceName ?? fileURL.lastPathComponent,
+        sourceSize: sourceSize ?? fileSize,
+        sourceFileCount: sourceFileCount ?? 1,
+        senderFingerprint: senderFingerprint
     )
 
     let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    control?.installCancellationHandler { connection.cancel() }
     defer { connection.cancel() }
 
+    try control?.waitIfNeeded()
     try sendJSONLine(meta, connection: connection)
 
     let decision: ReceiveDecision = try readJSONLine(connection: connection)
@@ -149,8 +348,22 @@ public func sendFile(
         throw HMTransError.rejected("接收方拒绝：\(decision.reason ?? "无原因")")
     }
 
-    try streamFile(fileURL, connection: connection, fileSize: fileSize, onProgress: onProgress)
+    let resumeOffset = decision.resumeOffset ?? 0
+    guard resumeOffset >= 0, resumeOffset <= fileSize else {
+        throw HMTransError.protocolError("接收方返回了无效断点：\(resumeOffset)/\(fileSize)")
+    }
+    onProgress?(resumeOffset, fileSize)
 
+    try streamFile(
+        fileURL,
+        connection: connection,
+        fileSize: fileSize,
+        startingOffset: resumeOffset,
+        control: control,
+        onProgress: onProgress
+    )
+
+    try control?.waitIfNeeded()
     let result: TransferResult = try readJSONLine(connection: connection)
     guard result.type == "transfer_success" else {
         throw HMTransError.protocolError("接收方报告失败：\(result.reason ?? "unknown")")
@@ -173,7 +386,9 @@ public func receiveOneFile(
         throw HMTransError.usage("无效端口：\(port)")
     }
 
-    let listener = try NWListener(using: .tcp, on: nwPort)
+    let parameters = NWParameters.tcp
+    parameters.allowLocalEndpointReuse = true
+    let listener = try NWListener(using: parameters, on: nwPort)
     let queue = DispatchQueue(label: "HMTrans.ReceiveOne.Listener", qos: .userInitiated)
     let semaphore = DispatchSemaphore(value: 0)
     let box = ListenerBox()
@@ -201,9 +416,11 @@ public func receiveOneFile(
 
     let blocking = try BlockingNetworkConnection(existing: connection)
     defer { blocking.cancel() }
+    let firstLine = try blocking.readLine()
     return try receiveFromConnection(
         connection: blocking,
         outputDirectory: outputDirectory,
+        firstLine: firstLine,
         shouldAccept: shouldAccept,
         onProgress: onProgress
     )
@@ -214,12 +431,16 @@ public final class PersistentFileReceiver: @unchecked Sendable {
     private let queue = DispatchQueue(label: "HMTrans.PersistentReceiver", qos: .userInitiated)
     private var listener: NWListener?
     private var running = false
+    private var activeTransfers: [String: BlockingNetworkConnection] = [:]
+    private var pausedTransferIDs: Set<String> = []
+    private var cancelledTransferIDs: Set<String> = []
 
     public init() {}
 
     public func start(
         port: UInt16 = defaultPort,
         outputDirectory: String = defaultReceiveDirectory(),
+        onPairingRequest: PairingRequestHandler? = nil,
         shouldAccept: @escaping ReceiveDecisionHandler,
         onProgress: ReceiveProgressHandler? = nil,
         onConnectionResult: @escaping ReceiveCompletionHandler
@@ -231,11 +452,14 @@ public final class PersistentFileReceiver: @unchecked Sendable {
             throw HMTransError.usage("无效端口：\(port)")
         }
 
-        let listener = try NWListener(using: .tcp, on: nwPort)
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+        let listener = try NWListener(using: parameters, on: nwPort)
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(
                 connection: connection,
                 outputDirectory: outputDirectory,
+                onPairingRequest: onPairingRequest,
                 shouldAccept: shouldAccept,
                 onProgress: onProgress,
                 onConnectionResult: onConnectionResult
@@ -255,16 +479,49 @@ public final class PersistentFileReceiver: @unchecked Sendable {
     public func stop() {
         lock.lock()
         let current = listener
+        let active = Array(activeTransfers.values)
         listener = nil
+        activeTransfers.removeAll()
         running = false
         lock.unlock()
 
         current?.cancel()
+        active.forEach { $0.cancel() }
+    }
+
+    /// Pausing a receive closes only its data connection. The private part file
+    /// remains and the sender can negotiate the saved offset after resume.
+    public func pauseTransfer(_ transferID: String) {
+        lock.lock()
+        pausedTransferIDs.insert(transferID)
+        let connection = activeTransfers[transferID]
+        lock.unlock()
+        connection?.cancel()
+    }
+
+    public func resumeTransfer(_ transferID: String) {
+        lock.lock()
+        pausedTransferIDs.remove(transferID)
+        cancelledTransferIDs.remove(transferID)
+        lock.unlock()
+    }
+
+    public func cancelTransfer(_ transferID: String, deletePartial: Bool = false) {
+        lock.lock()
+        cancelledTransferIDs.insert(transferID)
+        pausedTransferIDs.remove(transferID)
+        let connection = activeTransfers[transferID]
+        lock.unlock()
+        connection?.cancel()
+        if deletePartial {
+            removeStagingFiles(transferID: transferID)
+        }
     }
 
     private func handle(
         connection: NWConnection,
         outputDirectory: String,
+        onPairingRequest: PairingRequestHandler?,
         shouldAccept: @escaping ReceiveDecisionHandler,
         onProgress: ReceiveProgressHandler?,
         onConnectionResult: @escaping ReceiveCompletionHandler
@@ -273,9 +530,47 @@ public final class PersistentFileReceiver: @unchecked Sendable {
             do {
                 let blocking = try BlockingNetworkConnection(existing: connection)
                 defer { blocking.cancel() }
+                let firstLine = try blocking.readLine()
+                let envelope = try JSONDecoder().decode(
+                    IncomingEnvelope.self,
+                    from: Data(firstLine.utf8)
+                )
+                if envelope.type == "pairing_request" {
+                    let request = try JSONDecoder().decode(PairingRequest.self, from: Data(firstLine.utf8))
+                    let accepted = onPairingRequest?(request) ?? false
+                    try sendJSONLine(
+                        PairingResponse(accepted: accepted, reason: accepted ? nil : "invalid_pairing_code"),
+                        connection: blocking
+                    )
+                    return
+                }
+                let meta = try JSONDecoder().decode(FileMeta.self, from: Data(firstLine.utf8))
+                self.lock.lock()
+                let isPaused = self.pausedTransferIDs.contains(meta.transferId)
+                let isCancelled = self.cancelledTransferIDs.contains(meta.transferId)
+                if !isPaused && !isCancelled {
+                    self.activeTransfers[meta.transferId] = blocking
+                }
+                self.lock.unlock()
+                if isPaused || isCancelled {
+                    try sendJSONLine(
+                        ReceiveDecision(
+                            accepted: false,
+                            reason: isPaused ? "receiver_paused" : "receiver_cancelled"
+                        ),
+                        connection: blocking
+                    )
+                    return
+                }
+                defer {
+                    self.lock.lock()
+                    self.activeTransfers.removeValue(forKey: meta.transferId)
+                    self.lock.unlock()
+                }
                 let received = try receiveFromConnection(
                     connection: blocking,
                     outputDirectory: outputDirectory,
+                    firstLine: firstLine,
                     shouldAccept: shouldAccept,
                     onProgress: onProgress
                 )
@@ -286,6 +581,27 @@ public final class PersistentFileReceiver: @unchecked Sendable {
             }
         }
     }
+}
+
+private func removeStagingFiles(transferID: String) {
+    guard let root = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else { return }
+    let safeID = transferID.replacingOccurrences(
+        of: "[^A-Za-z0-9._-]",
+        with: "_",
+        options: .regularExpression
+    )
+    let staging = root.appendingPathComponent("HMTrans/Staging", isDirectory: true)
+    try? FileManager.default.removeItem(at: staging.appendingPathComponent(safeID).appendingPathExtension("part"))
+    try? FileManager.default.removeItem(at: staging.appendingPathComponent(safeID).appendingPathExtension("meta.json"))
+}
+
+private struct IncomingEnvelope: Decodable {
+    let type: String
 }
 
 private final class ListenerBox: @unchecked Sendable {
@@ -320,13 +636,13 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             throw HMTransError.usage("无效端口：\(port)")
         }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
-        return try BlockingNetworkConnection(existing: connection)
+        return try BlockingNetworkConnection(existing: connection, role: "发送端")
     }
 
-    init(existing connection: NWConnection) throws {
+    init(existing connection: NWConnection, role: String = "接收端") throws {
         self.connection = connection
         self.queue = DispatchQueue(label: "HMTrans.NWConnection.\(UUID().uuidString)", qos: .userInitiated)
-        try startAndWait()
+        try startAndWait(role: role)
     }
 
     func cancel() {
@@ -360,13 +676,26 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         throw HMTransError.protocolError("控制消息超过 \(maxBytes) bytes")
     }
 
-    func readPayload(to tempURL: URL, fileSize: Int64, onProgress: ProgressHandler?) throws {
-        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+    func readPayload(
+        to tempURL: URL,
+        fileSize: Int64,
+        startingOffset: Int64 = 0,
+        onProgress: ProgressHandler?
+    ) throws {
+        if startingOffset == 0 {
+            try? FileManager.default.removeItem(at: tempURL)
+            FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+        }
         let handle = try FileHandle(forWritingTo: tempURL)
         defer { try? handle.close() }
 
-        var remaining = fileSize
-        var received: Int64 = 0
+        if startingOffset > 0 {
+            try handle.seek(toOffset: UInt64(startingOffset))
+        }
+
+        var remaining = fileSize - startingOffset
+        var received = startingOffset
+        onProgress?(received, fileSize)
 
         if !inbox.isEmpty, remaining > 0 {
             let count = min(inbox.count, Int(remaining))
@@ -388,7 +717,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         }
     }
 
-    private func startAndWait() throws {
+    private func startAndWait(role: String) throws {
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResultBox<Void>()
         connection.stateUpdateHandler = { state in
@@ -409,7 +738,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         connection.start(queue: queue)
         guard semaphore.wait(timeout: .now() + 10) == .success else {
             connection.cancel()
-            throw HMTransError.system("连接超时")
+            throw HMTransError.system("\(role)连接超时")
         }
         try box.value.get()
     }
@@ -456,10 +785,11 @@ private final class ResultBox<T>: @unchecked Sendable {
 private func receiveFromConnection(
     connection: BlockingNetworkConnection,
     outputDirectory: String,
+    firstLine: String,
     shouldAccept: ReceiveDecisionHandler,
     onProgress: ReceiveProgressHandler?
 ) throws -> ReceivedFile? {
-    let meta: FileMeta = try readJSONLine(connection: connection)
+    let meta = try JSONDecoder().decode(FileMeta.self, from: Data(firstLine.utf8))
     guard meta.type == "file_meta", meta.app == "HMTrans" else {
         throw HMTransError.protocolError("不支持的元数据消息")
     }
@@ -472,11 +802,6 @@ private func receiveFromConnection(
         return nil
     }
 
-    try sendJSONLine(
-        ReceiveDecision(accepted: true, reason: nil),
-        connection: connection
-    )
-
     try FileManager.default.createDirectory(
         atPath: outputDirectory,
         withIntermediateDirectories: true
@@ -485,26 +810,102 @@ private func receiveFromConnection(
         directory: URL(fileURLWithPath: outputDirectory),
         fileName: meta.fileName
     )
-    let tempURL = destinationURL.appendingPathExtension("part")
+    let stagingRoot = (try FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ))
+        .appendingPathComponent("HMTrans", isDirectory: true)
+        .appendingPathComponent("Staging", isDirectory: true)
+    try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+    let safeTransferID = meta.transferId.replacingOccurrences(
+        of: "[^A-Za-z0-9._-]",
+        with: "_",
+        options: .regularExpression
+    )
+    let stagingName = safeTransferID.isEmpty ? UUID().uuidString : safeTransferID
+    let tempURL = stagingRoot
+        .appendingPathComponent(stagingName)
+        .appendingPathExtension("part")
+    let metadataURL = stagingRoot
+        .appendingPathComponent(stagingName)
+        .appendingPathExtension("meta.json")
 
-    try connection.readPayload(to: tempURL, fileSize: meta.fileSize) { current, total in
+    var resumeOffset: Int64 = 0
+    if meta.resumeSupported == true,
+       FileManager.default.fileExists(atPath: tempURL.path),
+       FileManager.default.fileExists(atPath: metadataURL.path),
+       let savedData = try? Data(contentsOf: metadataURL),
+       let savedMeta = try? JSONDecoder().decode(FileMeta.self, from: savedData),
+       savedMeta.sha256 == meta.sha256,
+       savedMeta.fileSize == meta.fileSize,
+       savedMeta.fileName == meta.fileName,
+       let partSize = (try? FileManager.default.attributesOfItem(atPath: tempURL.path)[.size] as? NSNumber)?.int64Value,
+       partSize >= 0,
+       partSize <= meta.fileSize {
+        resumeOffset = partSize
+    } else {
+        try? FileManager.default.removeItem(at: tempURL)
+        try? FileManager.default.removeItem(at: metadataURL)
+    }
+
+    // Keep a small safety margin so publishing metadata and the final rename do
+    // not fail after the receiver has already promised to accept the payload.
+    let remainingBytes = max(0, meta.fileSize - resumeOffset)
+    let safetyMargin: Int64 = 64 * 1_024 * 1_024
+    if let available = try? stagingRoot.resourceValues(
+        forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+    ).volumeAvailableCapacityForImportantUsage,
+       available < remainingBytes + safetyMargin {
+        try sendJSONLine(
+            ReceiveDecision(
+                accepted: false,
+                reason: "insufficient_space:required=\(remainingBytes + safetyMargin),available=\(available)"
+            ),
+            connection: connection
+        )
+        return nil
+    }
+    try JSONEncoder().encode(meta).write(to: metadataURL, options: .atomic)
+
+    try sendJSONLine(
+        ReceiveDecision(accepted: true, reason: nil, resumeOffset: resumeOffset),
+        connection: connection
+    )
+
+    try connection.readPayload(
+        to: tempURL,
+        fileSize: meta.fileSize,
+        startingOffset: resumeOffset
+    ) { current, total in
         onProgress?(meta, current, total)
     }
 
     let receivedHash = try sha256Hex(for: tempURL)
     if receivedHash == meta.sha256 {
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
-        try FileManager.default.moveItem(at: tempURL, to: destinationURL)
+        let publishedURL = try publishReceivedPayload(
+            meta: meta,
+            payloadURL: tempURL,
+            defaultDestination: destinationURL,
+            outputDirectory: URL(fileURLWithPath: outputDirectory, isDirectory: true),
+            stagingRoot: stagingRoot
+        )
+        try? FileManager.default.removeItem(at: metadataURL)
         try sendJSONLine(
-            TransferResult(type: "transfer_success", transferId: meta.transferId, sha256: receivedHash, reason: nil),
+            TransferResult(
+                type: "transfer_success",
+                transferId: meta.transferId,
+                sha256: receivedHash,
+                reason: nil
+            ),
             connection: connection
         )
-        return ReceivedFile(meta: meta, url: destinationURL)
+        return ReceivedFile(meta: meta, url: publishedURL)
     }
 
     try? FileManager.default.removeItem(at: tempURL)
+    try? FileManager.default.removeItem(at: metadataURL)
     try sendJSONLine(
         TransferResult(type: "transfer_failed", transferId: meta.transferId, sha256: receivedHash, reason: "hash_mismatch"),
         connection: connection
@@ -512,12 +913,13 @@ private func receiveFromConnection(
     throw HMTransError.protocolError("SHA-256 不一致。期望 \(meta.sha256)，实际 \(receivedHash)")
 }
 
-public func sha256Hex(for url: URL) throws -> String {
+public func sha256Hex(for url: URL, control: TransferControl? = nil) throws -> String {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
 
     var hasher = SHA256()
     while true {
+        try control?.waitIfNeeded()
         let data = try handle.read(upToCount: defaultChunkSize) ?? Data()
         if data.isEmpty { break }
         hasher.update(data: data)
@@ -555,37 +957,25 @@ private func streamFile(
     _ fileURL: URL,
     connection: BlockingNetworkConnection,
     fileSize: Int64,
+    startingOffset: Int64,
+    control: TransferControl?,
     onProgress: ProgressHandler?
 ) throws {
     let handle = try FileHandle(forReadingFrom: fileURL)
     defer { try? handle.close() }
 
-    var sent: Int64 = 0
+    if startingOffset > 0 {
+        try handle.seek(toOffset: UInt64(startingOffset))
+    }
+
+    var sent = startingOffset
     while true {
+        try control?.waitIfNeeded()
         let data = try handle.read(upToCount: defaultChunkSize) ?? Data()
         if data.isEmpty { break }
+        try control?.waitIfNeeded()
         try connection.send(data)
         sent += Int64(data.count)
         onProgress?(sent, fileSize)
-    }
-}
-
-private func uniqueDestinationURL(directory: URL, fileName: String) -> URL {
-    let safeName = URL(fileURLWithPath: fileName).lastPathComponent
-    let base = directory.appendingPathComponent(safeName)
-    if !FileManager.default.fileExists(atPath: base.path) {
-        return base
-    }
-
-    let ext = base.pathExtension
-    let stem = base.deletingPathExtension().lastPathComponent
-    var index = 1
-    while true {
-        let candidateName = ext.isEmpty ? "\(stem)-\(index)" : "\(stem)-\(index).\(ext)"
-        let candidate = directory.appendingPathComponent(candidateName)
-        if !FileManager.default.fileExists(atPath: candidate.path) {
-            return candidate
-        }
-        index += 1
     }
 }
