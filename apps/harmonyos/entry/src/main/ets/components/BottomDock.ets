@@ -11,14 +11,23 @@ export struct BottomDock {
 
   build() {
     HdsTabs({ barPosition: BarPosition.End, index: this.pageIndex() }) {
-      TabContent() { Column() }.tabBar(this.ConnectionTab)
-      TabContent() { Column() }.tabBar(this.HistoryTab)
-      TabContent() { Column() }.tabBar(this.SettingsTab)
+      TabContent() { this.TransparentTabContent() }
+        .backgroundColor(Color.Transparent)
+        .tabBar(this.ConnectionTab)
+      TabContent() { this.TransparentTabContent() }
+        .backgroundColor(Color.Transparent)
+        .tabBar(this.HistoryTab)
+      TabContent() { this.TransparentTabContent() }
+        .backgroundColor(Color.Transparent)
+        .tabBar(this.SettingsTab)
     }
     // 悬浮栏宽 228vp，宿主必须额外容纳系统默认的左右安全边距；
     // 两者同宽时系统会回退为带分割线的普通底部页签。
     .width(280)
     .height(88)
+    // HdsTabs 默认的内容宿主在深色模式下会绘制一块不透明底色；悬浮 Dock 只应保留
+    // 系统沉浸光感材质本身，因此显式清空宿主和空页面的背景。
+    .backgroundColor(Color.Transparent)
     .vertical(false)
     .barMode(BarMode.Fixed)
     .barHeight(52)
@@ -29,6 +38,9 @@ export struct BottomDock {
       barWidth: { smallWidth: 228, mediumWidth: 228, largeWidth: 228 },
       barSideMargin: 16,
       barBottomMargin: 24,
+      // 浮动模式需要保留有效遮罩高度才能绘制系统胶囊材质。遮罩颜色与页面背景保持
+      // 一致，可消除深色模式下的矩形色差，同时不破坏沉浸光感胶囊。
+      gradientMask: { maskColor: $r('app.color.app_background'), maskHeight: 88 },
       adaptToHandedness: false,
       systemMaterialEffect: {
         materialType: hdsMaterial.MaterialType.IMMERSIVE,
@@ -44,6 +56,14 @@ export struct BottomDock {
         this.onPageChanged(page)
       }
     })
+  }
+
+  @Builder
+  private TransparentTabContent() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Transparent)
   }
 
   @Builder

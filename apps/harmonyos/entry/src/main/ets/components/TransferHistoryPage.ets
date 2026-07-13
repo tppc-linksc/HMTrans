@@ -6,6 +6,7 @@ export struct TransferHistoryPage {
   @Param currentTransfers: Array<TransferListItem> = []
   @Param historyTransfers: Array<TransferListItem> = []
   @Param historyFilter: string = 'all'
+  @Param compactLayout: boolean = false
   @Param onFilterChanged: (value: string) => void = (_value: string) => {}
   @Param onTogglePause: (item: TransferListItem) => void = (_item: TransferListItem) => {}
   @Param onCancel: (item: TransferListItem) => void = (_item: TransferListItem) => {}
@@ -13,7 +14,7 @@ export struct TransferHistoryPage {
   @Param onCancelGroup: (item: TransferListItem) => void = (_item: TransferListItem) => {}
   @Param onDeleteHistory: (item: TransferListItem) => void = (_item: TransferListItem) => {}
   @Param onRetryHistory: (item: TransferListItem) => void = (_item: TransferListItem) => {}
-  @Param onClearPeer: (peerName: string) => void = (_peerName: string) => {}
+  @Param onClearPeer: (deviceKey: string, peerName: string) => void = (_deviceKey: string, _peerName: string) => {}
   @Param onClearAll: () => void = () => {}
 
   build() {
@@ -33,7 +34,8 @@ export struct TransferHistoryPage {
         this.FilterButton('失败', 'failed')
         this.FilterButton('已取消', 'cancelled')
       }
-      .width(496).height(42).padding(3).backgroundColor($r('app.color.control_track')).borderRadius(12)
+      .width(this.compactLayout ? 296 : 496).height(42).padding(3)
+      .backgroundColor($r('app.color.control_track')).borderRadius(12)
       Blank()
       Text('清空记录').fontSize(11).fontWeight(FontWeight.Medium).fontColor($r('app.color.danger'))
         .height(36).padding({ left: 10, right: 4 }).textAlign(TextAlign.Center)
@@ -41,7 +43,7 @@ export struct TransferHistoryPage {
         .onClick(() => { if (this.historyTransfers.length > 0) this.onClearAll() })
         .accessibilityText('清空全部历史记录')
     }.width('100%')
-    if (this.filteredPeerNames().length === 0) {
+    if (this.filteredGroupKeys().length === 0) {
       Column({ space: 10 }) {
         Image($r('app.media.icon_transfer_empty')).width(48).height(48)
         Text('暂无匹配的传输记录').fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
@@ -50,34 +52,37 @@ export struct TransferHistoryPage {
         .backgroundColor($r('app.color.surface_primary')).borderRadius(22)
         .border({ width: 1, color: $r('app.color.border_subtle') })
     } else {
-      Repeat<string>(this.filteredPeerNames())
+      Repeat<string>(this.filteredGroupKeys())
         .each((item) => { this.DeviceGroup(item.item) })
-        .key((peerName: string) => peerName)
+        .key((deviceKey: string) => deviceKey)
     }
   }
 
   @Builder
-  private DeviceGroup(peerName: string) {
+  private DeviceGroup(deviceKey: string) {
     Column({ space: 10 }) {
       Row() {
         Image($r('app.media.device_macbook')).width(34).height(30).borderRadius(9)
-        Text(peerName).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).margin({ left: 9 })
+        Text(this.groupName(deviceKey)).fontSize(13).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary')).margin({ left: 9 })
         Blank()
-        Text(`${this.itemsForPeer(peerName).length} 条记录`).fontSize(10).fontColor($r('app.color.text_secondary'))
+        Text(`${this.itemsForGroup(deviceKey).length} 条记录`).fontSize(10).fontColor($r('app.color.text_secondary'))
         Text('清空本设备记录').fontSize(10).fontWeight(FontWeight.Medium).fontColor($r('app.color.danger'))
           .height(34).padding({ left: 12, right: 2 }).textAlign(TextAlign.Center)
-          .opacity(this.historyItemsForPeer(peerName).length > 0 ? 1 : 0.45)
+          .opacity(this.historyItemsForGroup(deviceKey).length > 0 ? 1 : 0.45)
           .onClick(() => {
-            if (this.historyItemsForPeer(peerName).length > 0) this.onClearPeer(peerName)
+            if (this.historyItemsForGroup(deviceKey).length > 0) {
+              this.onClearPeer(deviceKey, this.groupName(deviceKey))
+            }
           })
-          .accessibilityText(`清空 ${peerName} 的历史记录`)
+          .accessibilityText(`清空 ${this.groupName(deviceKey)} 的历史记录`)
       }.width('100%')
       List({ space: 0 }) {
-        Repeat<TransferListItem>(this.itemsForPeer(peerName))
+        Repeat<TransferListItem>(this.itemsForGroup(deviceKey))
           .each((item) => { this.HistoryListItem(item.item) })
           .key((item: TransferListItem) => item.id)
       }
-      .width('100%').height(this.itemsForPeer(peerName).length * 68)
+      .width('100%').height(this.itemsForGroup(deviceKey).length * 68)
       .scrollBar(BarState.Off).backgroundColor($r('app.color.surface_primary'))
       .borderRadius(14).border({ width: 1, color: $r('app.color.border_subtle') }).clip(true)
     }
@@ -145,7 +150,7 @@ export struct TransferHistoryPage {
 
   @Builder
   private FilterButton(label: string, value: string) {
-    Button(label).width(98).height(36).fontSize(12)
+    Button(label).width(this.compactLayout ? 58 : 98).height(36).fontSize(this.compactLayout ? 10 : 12)
       .fontWeight(this.historyFilter === value ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(this.historyFilter === value ? '#FFFFFF' : $r('app.color.text_secondary'))
       .backgroundColor(this.historyFilter === value ? $r('app.color.accent') : Color.Transparent).borderRadius(9)
@@ -176,20 +181,34 @@ export struct TransferHistoryPage {
     return this.currentTransfers.concat(this.historyTransfers)
   }
 
-  private filteredPeerNames(): Array<string> {
-    const peers: Array<string> = []
-    this.filteredItems().forEach((item) => { if (peers.indexOf(item.peerName) < 0) peers.push(item.peerName) })
-    return peers.sort((left, right) => (this.itemsForPeer(right)[0]?.updatedAt ?? 0) -
-      (this.itemsForPeer(left)[0]?.updatedAt ?? 0))
+  private filteredGroupKeys(): Array<string> {
+    const keys: Array<string> = []
+    this.filteredItems().forEach((item) => {
+      const key = this.deviceKey(item)
+      if (keys.indexOf(key) < 0) keys.push(key)
+    })
+    return keys.sort((left, right) => (this.itemsForGroup(right)[0]?.updatedAt ?? 0) -
+      (this.itemsForGroup(left)[0]?.updatedAt ?? 0))
   }
 
-  private itemsForPeer(peerName: string): Array<TransferListItem> {
-    return this.filteredItems().filter((item) => item.peerName === peerName)
+  private itemsForGroup(deviceKey: string): Array<TransferListItem> {
+    return this.filteredItems().filter((item) => this.deviceKey(item) === deviceKey)
       .sort((left, right) => right.updatedAt - left.updatedAt)
   }
 
-  private historyItemsForPeer(peerName: string): Array<TransferListItem> {
-    return this.historyTransfers.filter((item: TransferListItem) => item.peerName === peerName)
+  private historyItemsForGroup(deviceKey: string): Array<TransferListItem> {
+    return this.historyTransfers.filter((item: TransferListItem) => this.deviceKey(item) === deviceKey)
+  }
+
+  private deviceKey(item: TransferListItem): string {
+    return item.deviceId.length > 0 ? item.deviceId : `name:${item.peerName}`
+  }
+
+  private groupName(deviceKey: string): string {
+    const items = this.itemsForGroup(deviceKey)
+    if (items.length > 0) return items[0].peerName
+    const history = this.historyItemsForGroup(deviceKey)
+    return history.length > 0 ? history[0].peerName : '未知设备'
   }
 
   private isCurrent(item: TransferListItem): boolean {

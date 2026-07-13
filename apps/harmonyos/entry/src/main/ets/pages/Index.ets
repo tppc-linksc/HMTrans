@@ -1,6 +1,5 @@
 import { common } from '@kit.AbilityKit'
 import { preferences } from '@kit.ArkData'
-import { deviceInfo } from '@kit.BasicServicesKit'
 import { DEFAULT_PORT, DISCOVERY_PORT, DeviceInfo, FileMeta } from '../common/Protocol'
 import { nowText } from '../common/Formatters'
 import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
@@ -23,10 +22,13 @@ import { OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordin
 import { DiagnosticService } from '../services/DiagnosticService'
 import { NetworkChangeService } from '../services/NetworkChangeService'
 import { PadDialogService } from '../services/PadDialogService'
+import { DeviceIdentityService } from '../services/DeviceIdentityService'
+import { TransferNotificationActionService } from '../services/TransferNotificationActionService'
 import { TransferSnapshot, TransferStore } from '../persistence/TransferStore'
 import { errorText } from '../common/ErrorText'
 import { PadTransferController } from '../controllers/PadTransferController'
 import { PadNetworkController } from '../controllers/PadNetworkController'
+import { PadSettingsController } from '../controllers/PadSettingsController'
 
 const DEVICE_TTL_MS: number = 12000
 const PREFERENCES_NAME: string = 'HMTrans'
@@ -83,10 +85,14 @@ struct Index {
   private diagnosticService: DiagnosticService = new DiagnosticService()
   private networkChangeService: NetworkChangeService = new NetworkChangeService()
   private dialogService: PadDialogService = new PadDialogService()
+  private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
+  private notificationActionService: TransferNotificationActionService =
+    new TransferNotificationActionService(this)
+  private settingsController: PadSettingsController =
+    new PadSettingsController(this, this.padPreferencesService, this.backgroundTransferService)
   discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
   private pageActive: boolean = false
-  private notificationActionsRegistered: boolean = false
   private privacyAccepted: boolean = false
   private privacyConsentResolver?: (agreed: boolean) => void
   deviceId: string = ''
@@ -122,6 +128,7 @@ struct Index {
     if (!this.bootstrapped || !this.privacyAccepted) {
       return
     }
+    this.notificationActionService.register(this.abilityContext())
     this.network().startDevicePruning()
     this.networkChangeService.start(() => this.network().handleNetworkChanged())
     this.statusText = this.selectedDevice ? this.statusText : '正在重新发现设备'
@@ -135,6 +142,7 @@ struct Index {
     this.pageActive = false
     this.network().clearLifecycleTimers()
     this.transfers().clearLifecycleTimers()
+    this.notificationActionService.unregister(this.abilityContext())
     this.networkChangeService.stop()
     this.persistTransferState(true)
     this.network().stopDiscovery().catch(() => {})
@@ -273,6 +281,7 @@ struct Index {
       currentTransfers: this.currentTransfers,
       historyTransfers: this.historyTransfers,
       historyFilter: this.historyFilter,
+      compactLayout: this.compactLayout,
       onFilterChanged: (value: string) => { this.historyFilter = value },
       onTogglePause: (item: TransferListItem) => this.toggleTransferPause(item),
       onCancel: (item: TransferListItem) => this.confirmCancelTransfer(item),
@@ -280,7 +289,7 @@ struct Index {
       onCancelGroup: (item: TransferListItem) => this.confirmCancelTransferGroup(item),
       onDeleteHistory: (item: TransferListItem) => this.confirmDeleteHistoryItem(item),
       onRetryHistory: (item: TransferListItem) => this.retryHistoryItem(item),
-      onClearPeer: (peerName: string) => this.confirmClearHistoryPeer(peerName),
+      onClearPeer: (deviceKey: string, peerName: string) => this.confirmClearHistoryPeer(deviceKey, peerName),
       onClearAll: () => this.confirmClearAllHistory(),
     })
   }
@@ -296,10 +305,10 @@ struct Index {
       tcpPort: this.localTcpPort,
       networkServiceReady: this.receiverReady && this.discoveryEnabled,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
-      onReceiverChanged: (enabled: boolean) => this.setReceiverEnabled(enabled),
-      onDiscoveryChanged: (enabled: boolean) => this.setDiscoveryEnabled(enabled),
-      onBackgroundChanged: (enabled: boolean) => this.setBackgroundProtectionEnabled(enabled),
-      onAutoReceiveChanged: (enabled: boolean) => this.setAutoReceiveTrustedEnabled(enabled),
+      onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
+      onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
+      onBackgroundChanged: (enabled: boolean) => this.settingsController.setBackgroundProtectionEnabled(enabled),
+      onAutoReceiveChanged: (enabled: boolean) => this.settingsController.setAutoReceiveTrustedEnabled(enabled),
       onCheckDownload: () => { this.checkReceiveDirectory() },
       onClearStaging: () => this.confirmClearHistory(),
       onEditPorts: () => this.openPortEditor(),
@@ -340,9 +349,15 @@ struct Index {
   private async clearTemporaryStorage(): Promise<void> {
     const stagingDir = `${this.abilityContext().filesDir}/HMTrans/Staging`
     this.statusText = '正在停止未完成任务'
+    this.outgoingCoordinator.cancelAll()
     this.currentTransfers.forEach((item: TransferListItem) => this.transferService.cancelTransfer(item.id))
-    const idle = await this.transferService.waitForIdle()
-    if (!idle) {
+    const idleResults = await Promise.all([
+      this.transferService.waitForIdle(),
+      this.outgoingCoordinator.waitForIdle(),
+    ])
+    const networkIdle = idleResults[0]
+    const queueIdle = idleResults[1]
+    if (!networkIdle || !queueIdle) {
       throw new Error('仍有传输正在释放资源，请稍后重试')
     }
     this.currentTransfers = []
@@ -398,9 +413,10 @@ struct Index {
   }
 
   private retryHistoryItem(item: TransferListItem): void {
-    const matches = this.freshDevices.filter((device: DeviceInfo) =>
-      device.deviceId === item.deviceId || device.deviceName === item.peerName)
-    if (item.direction !== '发送' || matches.length === 0) {
+    const matches = item.deviceId.length > 0 ?
+      this.freshDevices.filter((device: DeviceInfo) => device.deviceId === item.deviceId) :
+      this.freshDevices.filter((device: DeviceInfo) => device.deviceName === item.peerName)
+    if (item.direction !== '发送' || matches.length !== 1) {
       this.statusText = `请先重新连接 ${item.peerName}`
       return
     }
@@ -414,9 +430,10 @@ struct Index {
     this.persistTransferState(true); this.resumeWaitingTransfers(matches[0])
   }
 
-  private confirmClearHistoryPeer(peerName: string): void {
+  private confirmClearHistoryPeer(deviceKey: string, peerName: string): void {
     this.confirmHistoryMutation('清空此设备的历史？', peerName, () => {
-      this.historyTransfers = this.historyTransfers.filter((row: TransferListItem) => row.peerName !== peerName)
+      this.historyTransfers = this.historyTransfers.filter((row: TransferListItem) =>
+        (row.deviceId.length > 0 ? row.deviceId : `name:${row.peerName}`) !== deviceKey)
       this.persistTransferState(true)
     })
   }
@@ -496,7 +513,7 @@ struct Index {
 
   private async bootstrap(): Promise<void> {
     const context = this.abilityContext()
-    this.registerNotificationActions(context)
+    this.notificationActionService.register(context)
     const accepted = await this.ensurePrivacyConsent(context)
     if (!accepted) {
       this.statusText = '未同意隐私政策，服务未启动'
@@ -519,27 +536,6 @@ struct Index {
   }
 
   // MARK: 隐私、存储与持久化偏好
-
-  /** 让通知栏与应用内的暂停、取消操作修改同一份任务模型。 */
-  private registerNotificationActions(context: common.UIAbilityContext): void {
-    if (this.notificationActionsRegistered) return
-    this.notificationActionsRegistered = true
-    context.eventHub.on('hmtransTransferAction', (action: string) => {
-      this.runOnUi(() => {
-        if (action === 'pause_all') {
-          const active = this.currentTransfers.filter((row: TransferListItem) =>
-            row.state === TransferState.Active || row.state === TransferState.Preparing)
-          const rows = active.length > 0 ? active : this.currentTransfers.filter((row: TransferListItem) =>
-            row.state === TransferState.Paused || row.state === TransferState.Waiting)
-          rows.forEach((row: TransferListItem) => this.toggleTransferPause(row))
-          this.statusText = active.length > 0 ? '已从通知暂停全部活动任务' : '已从通知继续可恢复任务'
-        } else if (action === 'cancel_all') {
-          this.currentTransfers.slice().forEach((row: TransferListItem) => { this.cancelTransfer(row) })
-          this.statusText = '已从通知取消全部任务，可恢复数据仍保留在私有目录'
-        }
-      })
-    })
-  }
 
   private async ensurePrivacyConsent(context: common.UIAbilityContext): Promise<boolean> {
     try {
@@ -718,52 +714,6 @@ struct Index {
     }, 1000)
   }
 
-  // MARK: 服务开关与网络生命周期
-
-  private setReceiverEnabled(enabled: boolean): void {
-    this.receiverEnabled = enabled
-    this.persistBooleanPreference('receiverEnabled', enabled)
-    if (enabled) {
-      const context = this.abilityContext()
-      const start = this.receiveDirectory.length > 0 ? this.network().startReceiver(context) :
-        this.prepareReceiveDirectory(context).then(() => this.receiverReady)
-      start.catch((err: Error) => { this.statusText = `接收服务启动失败：${errorText(err)}` })
-    } else {
-      this.receiverReady = false
-      this.transferService.stopReceive().catch(() => {})
-      this.statusText = '接收服务已关闭，仍可发现和发送'
-    }
-  }
-
-  private setDiscoveryEnabled(enabled: boolean): void {
-    this.discoveryEnabled = enabled
-    this.persistBooleanPreference('discoveryEnabled', enabled)
-    if (enabled) {
-      this.network().restartDiscovery().catch((err: Error) => {
-        this.statusText = `发现服务启动失败：${errorText(err)}`
-      })
-    } else {
-      this.network().stopDiscovery().catch(() => {})
-      this.statusText = '自动发现已关闭，接收服务保持当前状态'
-    }
-  }
-
-  private setBackgroundProtectionEnabled(enabled: boolean): void {
-    this.backgroundProtectionEnabled = enabled
-    this.backgroundTransferService.setEnabled(enabled, this.abilityContext()).catch((err: Error) => {
-      this.backgroundProtectionEnabled = !enabled
-      this.persistBooleanPreference('backgroundProtectionEnabled', !enabled)
-      this.statusText = `后台传输保护切换失败：${errorText(err)}`
-      this.showToast('后台传输保护切换失败')
-    })
-    this.persistBooleanPreference('backgroundProtectionEnabled', enabled)
-  }
-
-  private setAutoReceiveTrustedEnabled(enabled: boolean): void {
-    this.autoReceiveTrustedEnabled = enabled
-    this.persistBooleanPreference('autoReceiveTrustedEnabled', enabled)
-  }
-
   private async applyNetworkPorts(): Promise<void> {
     const tcp = Number(this.localTcpPortText)
     const udp = Number(this.discoveryPortText)
@@ -818,12 +768,6 @@ struct Index {
     }
   }
 
-  private persistBooleanPreference(key: string, value: boolean): void {
-    this.padPreferencesService.saveBoolean(this.abilityContext(), key, value).catch((err: Error) => {
-      this.statusText = `设置保存失败：${errorText(err)}`
-    })
-  }
-
   async rememberDevice(device: DeviceInfo): Promise<void> {
     this.persistedDevices = this.persistedDevices
       .filter((item: DeviceInfo) => item.deviceId !== device.deviceId)
@@ -872,6 +816,28 @@ struct Index {
     return this.getUIContext().getHostContext() as common.UIAbilityContext
   }
 
+  async startReceiverForSettings(): Promise<boolean> {
+    const context = this.abilityContext()
+    if (this.receiveDirectory.length > 0) {
+      await this.network().startReceiver(context)
+    } else {
+      await this.prepareReceiveDirectory(context)
+    }
+    return this.receiverReady
+  }
+
+  stopReceiverForSettings(): Promise<void> {
+    return this.transferService.stopReceive()
+  }
+
+  restartDiscoveryForSettings(): Promise<void> {
+    return this.network().restartDiscovery()
+  }
+
+  stopDiscoveryForSettings(): Promise<void> {
+    return this.network().stopDiscovery()
+  }
+
   private network(): PadNetworkController {
     if (!this.networkController) this.networkController = new PadNetworkController(this)
     return this.networkController
@@ -908,20 +874,12 @@ struct Index {
   }
 
   localDeviceName(): string {
-    if (this.localDeviceDisplayName.length > 0) {
-      return this.localDeviceDisplayName
-    }
-    const fallback = deviceInfo.marketName && deviceInfo.marketName.length > 0 ? deviceInfo.marketName :
-      (deviceInfo.productModel && deviceInfo.productModel.length > 0 ? deviceInfo.productModel : 'HarmonyOS-Device')
-    return fallback
+    return this.deviceIdentityService.deviceName(this.localDeviceDisplayName)
   }
 
   /** 对外广播用户可见的 HarmonyOS 版本，而不是 OpenHarmony 构建字符串。 */
   localSystemVersion(): string {
-    const value = deviceInfo.displayVersion.trim()
-    const version = value.match(/\d+(?:\.\d+){2,3}/)?.[0] ?? value
-    const servicePack = value.match(/SP\d+/i)?.[0]?.toUpperCase() ?? ''
-    return `HarmonyOS${version}${servicePack.length > 0 ? ` ${servicePack}` : ''}`
+    return this.deviceIdentityService.systemVersion()
   }
 
   private transfers(): PadTransferController {
@@ -963,7 +921,7 @@ struct Index {
     this.transfers().updateCurrentTransfer(id, progress, detail)
   }
 
-  private toggleTransferPause(item: TransferListItem): void {
+  toggleTransferPause(item: TransferListItem): void {
     this.transfers().toggleTransferPause(item)
   }
 
@@ -975,7 +933,7 @@ struct Index {
     this.transfers().confirmCancelTransfer(item)
   }
 
-  private cancelTransfer(item: TransferListItem): void {
+  cancelTransfer(item: TransferListItem): void {
     this.transfers().cancelTransfer(item)
   }
 

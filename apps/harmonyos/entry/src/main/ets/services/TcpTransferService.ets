@@ -29,6 +29,7 @@ const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
 const MAX_ACTIVE_CONNECTIONS: number = 16
 const CONTROL_RESPONSE_TIMEOUT_MS: number = 30 * 1000
 const VERIFY_RESULT_TIMEOUT_MS: number = 10 * 60 * 1000
+const RECEIVE_IDLE_TIMEOUT_MS: number = 60 * 1000
 const STORAGE_SAFETY_MARGIN_BYTES: number = 64 * 1024 * 1024
 
 export interface TransferCallbacks {
@@ -38,6 +39,7 @@ export interface TransferCallbacks {
   onPairing: (request: PairingRequest) => Promise<boolean>
   onReceived?: (meta: FileMeta, path: string) => void
   onFailed?: (meta: FileMeta, reason: string) => void
+  onInterrupted?: (meta: FileMeta, reason: string) => void
   onTransferActivity?: (active: boolean) => void
 }
 
@@ -213,9 +215,11 @@ export class TcpTransferService {
       await client.send({ data: encodeJsonLine(request) })
       return await withTimeout(new Promise<PairingResponse>((resolve, reject) => {
         client.on('message', (info: socket.SocketMessageInfo) => {
-          const lines = reader.append(info.message)
-          if (lines.length > 0) {
-            resolve(parseJsonLine<PairingResponse>(lines[0]))
+          try {
+            const lines = reader.append(info.message)
+            if (lines.length > 0) resolve(parseJsonLine<PairingResponse>(lines[0]))
+          } catch (err) {
+            reject(new Error(errorText(err)))
           }
         })
         client.on('error', (err) => reject(err))
@@ -271,9 +275,11 @@ export class TcpTransferService {
 
       const decision = await withTimeout(new Promise<ReceiveDecision>((resolve, reject) => {
         client.on('message', (info: socket.SocketMessageInfo) => {
-          const lines = reader.append(info.message)
-          if (lines.length > 0) {
-            resolve(parseJsonLine<ReceiveDecision>(lines[0]))
+          try {
+            const lines = reader.append(info.message)
+            if (lines.length > 0) resolve(parseJsonLine<ReceiveDecision>(lines[0]))
+          } catch (err) {
+            reject(new Error(errorText(err)))
           }
         })
         client.on('error', (err) => reject(err))
@@ -318,9 +324,11 @@ export class TcpTransferService {
       const result = await withTimeout(new Promise<TransferResult>((resolve, reject) => {
         client.off('message')
         client.on('message', (info: socket.SocketMessageInfo) => {
-          const lines = reader.append(info.message)
-          if (lines.length > 0) {
-            resolve(parseJsonLine<TransferResult>(lines[0]))
+          try {
+            const lines = reader.append(info.message)
+            if (lines.length > 0) resolve(parseJsonLine<TransferResult>(lines[0]))
+          } catch (err) {
+            reject(new Error(errorText(err)))
           }
         })
         client.on('error', (err) => reject(err))
@@ -371,6 +379,47 @@ export class TcpTransferService {
       let targetFile: fs.File | undefined
       let received = 0
       let activityStarted = false
+      let connectionFinished = false
+      let idleTimer: number | undefined
+
+      /** 所有退出路径共用一个幂等清理入口，避免重复关闭文件、套接字和后台活动。 */
+      const finishConnection = async (): Promise<void> => {
+        if (connectionFinished) return
+        connectionFinished = true
+        if (idleTimer !== undefined) {
+          clearTimeout(idleTimer)
+          idleTimer = undefined
+        }
+        if (targetFile) {
+          try { fs.closeSync(targetFile) } catch (_) {}
+          targetFile = undefined
+        }
+        if (meta) this.incomingConnections.delete(meta.transferId)
+        if (activityStarted) {
+          callbacks.onTransferActivity?.(false)
+          activityStarted = false
+        }
+        await this.closeConnection(connection)
+      }
+
+      /** 静默对端也必须释放资源；中断保留私有分片，供相同任务 ID 续传。 */
+      const interruptConnection = async (reason: string): Promise<void> => {
+        if (connectionFinished) return
+        if (meta && !this.pausedIncomingTransferIDs.has(meta.transferId) &&
+          !this.cancelledIncomingTransferIDs.has(meta.transferId)) {
+          callbacks.onInterrupted?.(meta, reason)
+          callbacks.onStatus(`接收中断，已保留断点：${meta.fileName}`)
+        }
+        await finishConnection()
+      }
+
+      const resetIdleTimer = (): void => {
+        if (idleTimer !== undefined) clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          interruptConnection('receive_idle_timeout').catch(() => {})
+        }, RECEIVE_IDLE_TIMEOUT_MS)
+      }
+      resetIdleTimer()
 
       /** 完成统一的校验、发布和回执流程，零字节文件也会走到这里。 */
       const finalizeIncoming = async (): Promise<void> => {
@@ -417,15 +466,12 @@ export class TcpTransferService {
           callbacks.onStatus('接收失败：SHA-256 不一致')
           callbacks.onFailed?.(finalMeta, 'hash_mismatch')
         }
-        await this.closeConnection(connection)
-        this.incomingConnections.delete(finalMeta.transferId)
-        if (activityStarted) {
-          callbacks.onTransferActivity?.(false)
-          activityStarted = false
-        }
+        await finishConnection()
       }
 
       connection.on('message', async (info: socket.SocketMessageInfo) => {
+        if (connectionFinished) return
+        resetIdleTimer()
         try {
           if (!meta) {
             const lines = reader.append(info.message)
@@ -442,7 +488,7 @@ export class TcpTransferService {
               const accepted = compatible && await callbacks.onPairing(request)
               const reason = accepted ? undefined : compatible ? 'invalid_pairing_code' : 'protocol_incompatible'
               await connection.send({ data: encodeJsonLine(createPairingResponse(accepted, reason)) })
-              await this.closeConnection(connection)
+              await finishConnection()
               return
             }
 
@@ -452,20 +498,20 @@ export class TcpTransferService {
               !Number.isSafeInteger(meta.chunkSize) || meta.chunkSize <= 0 ||
               !Number.isSafeInteger(meta.totalChunks) || meta.totalChunks < 0 || meta.sha256.length !== 64) {
               await connection.send({ data: encodeJsonLine(createReceiveDecision(false, 'invalid_meta')) })
-              await this.closeConnection(connection)
+              await finishConnection()
               return
             }
             if (this.pausedIncomingTransferIDs.has(meta.transferId) ||
               this.cancelledIncomingTransferIDs.has(meta.transferId)) {
               const reason = this.pausedIncomingTransferIDs.has(meta.transferId) ? 'receiver_paused' : 'receiver_cancelled'
               await connection.send({ data: encodeJsonLine(createReceiveDecision(false, reason)) })
-              await this.closeConnection(connection)
+              await finishConnection()
               return
             }
             const accepted = await callbacks.onIncoming(meta)
             if (!accepted) {
               await connection.send({ data: encodeJsonLine(createReceiveDecision(false, 'user_rejected')) })
-              await this.closeConnection(connection)
+              await finishConnection()
               return
             }
 
@@ -512,7 +558,7 @@ export class TcpTransferService {
               await connection.send({ data: encodeJsonLine(createReceiveDecision(false, 'insufficient_space')) })
               callbacks.onStatus('接收失败：存储空间不足，请清理空间后继续')
               callbacks.onFailed?.(meta, 'insufficient_space')
-              await this.closeConnection(connection)
+              await finishConnection()
               return
             }
             const metaFile = fs.openSync(targetMetaPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
@@ -557,22 +603,14 @@ export class TcpTransferService {
             }).catch(() => {})
             callbacks.onFailed?.(meta, failureReason)
           }
-          if (targetFile) {
-            try {
-              fs.closeSync(targetFile)
-            } catch (_) {
-            }
-            targetFile = undefined
-          }
-          await this.closeConnection(connection)
-          if (meta) {
-            this.incomingConnections.delete(meta.transferId)
-          }
-          if (activityStarted) {
-            callbacks.onTransferActivity?.(false)
-            activityStarted = false
-          }
+          await finishConnection()
         }
+      })
+      connection.on('close', () => {
+        interruptConnection('connection_closed').catch(() => {})
+      })
+      connection.on('error', (err) => {
+        interruptConnection(`connection_error:${errorText(err)}`).catch(() => {})
       })
     })
 
@@ -625,7 +663,11 @@ export class TcpTransferService {
       return destination
     }
 
-    this.zipSafetyService.validate(payloadPath)
+    const validation = this.zipSafetyService.validate(payloadPath)
+    const availableBytes = statfs.getFreeSizeSync(stagingDir)
+    if (availableBytes < validation.expandedSize + STORAGE_SAFETY_MARGIN_BYTES) {
+      throw new Error('insufficient_space_for_archive_expansion')
+    }
     const unpackRoot = `${stagingDir}/${safeReceiveFileName(meta.transferId)}-unpack`
     try {
       fs.rmdirSync(unpackRoot)
@@ -655,11 +697,15 @@ export class TcpTransferService {
 
   private availableDestination(directory: string, fileName: string): string {
     let candidate = `${directory}/${fileName}`
+    const dotIndex = fileName.lastIndexOf('.')
+    const hasExtension = dotIndex > 0 && dotIndex < fileName.length - 1
+    const stem = hasExtension ? fileName.substring(0, dotIndex) : fileName
+    const extension = hasExtension ? fileName.substring(dotIndex) : ''
     let index = 1
     while (true) {
       try {
         fs.statSync(candidate)
-        candidate = `${directory}/${fileName}-${index}`
+        candidate = `${directory}/${stem}-${index}${extension}`
         index += 1
       } catch (_) {
         return candidate

@@ -62,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         _ = AppWindowController.showExistingMainWindow()
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .hmTransOpenFiles, object: filenames)
+        }
+        sender.reply(toOpenOrPrint: .success)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

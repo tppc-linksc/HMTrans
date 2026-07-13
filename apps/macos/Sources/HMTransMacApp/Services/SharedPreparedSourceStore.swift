@@ -13,11 +13,15 @@ final class SharedPreparedSourceStore: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var preparing: Set<String> = []
 
-    func acquire(url: URL, groupID: UUID, participantCount: Int) throws -> PreparedSendFile {
+    func acquire(url: URL, groupID: UUID) throws -> PreparedSendFile {
         let key = cacheKey(url: url, groupID: groupID)
         condition.lock()
         while preparing.contains(key) { condition.wait() }
-        if let entry = entries[key] {
+        if var entry = entries[key] {
+            // 只统计实际取得共享产物的发送任务。目标在 TCP 探测阶段失败时不会
+            // 虚增引用数，因此最后一个真实使用者一定能完成清理。
+            entry.remainingUsers += 1
+            entries[key] = entry
             condition.unlock()
             return entry.source
         }
@@ -29,7 +33,7 @@ final class SharedPreparedSourceStore: @unchecked Sendable {
             condition.lock()
             entries[key] = Entry(
                 source: source,
-                remainingUsers: max(1, participantCount),
+                remainingUsers: 1,
                 preserveForResume: false
             )
             preparing.remove(key)

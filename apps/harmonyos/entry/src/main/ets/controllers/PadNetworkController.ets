@@ -46,6 +46,7 @@ export class PadNetworkController {
       fileType: fileTypeLabel(meta.fileName),
       sourceSize: meta.sourceSize ?? meta.fileSize,
       sourceFileCount: meta.sourceFileCount ?? 1,
+      deviceId: historyDeviceId,
     })
   }
 
@@ -105,6 +106,12 @@ export class PadNetworkController {
           this.host.runOnUi(() => {
             this.host.transferStore.recordDiagnostic(this.errorCodeForReason(reason), reason, meta.transferId).catch(() => {})
             this.host.completeTransfer(meta.transferId, false, this.userMessageForReason(reason))
+          })
+        },
+        onInterrupted: (meta: FileMeta, reason: string) => {
+          this.host.runOnUi(() => {
+            this.host.transferStore.recordDiagnostic('TRN-RECV-INT', reason, meta.transferId).catch(() => {})
+            this.host.markCurrentTransferState(meta.transferId, TransferState.Waiting, '连接中断，已保存断点')
           })
         },
         onTransferActivity: (active: boolean) => {
@@ -396,11 +403,14 @@ export class PadNetworkController {
   }
 
   resumeWaitingTransfers(device: DeviceInfo): void {
+    const sameNameCount = this.host.nearbyDevices.filter((candidate: DeviceInfo) =>
+      candidate.deviceName === device.deviceName).length
     const candidates = this.host.currentTransfers.filter((item: TransferListItem) => {
       const hasSource = this.host.archiveService.sourceExists(item.stagingPath)
+      const routesToDevice = item.deviceId.length > 0 ? item.deviceId === device.deviceId :
+        item.peerName === device.deviceName && sameNameCount === 1
       return item.direction === '发送' && item.state === TransferState.Waiting && hasSource &&
-        (item.deviceId.length === 0 || item.deviceId === device.deviceId ||
-          item.peerName === device.deviceName) && !this.host.activeTransferDeviceIds.has(item.id)
+        routesToDevice && !this.host.activeTransferDeviceIds.has(item.id)
     })
     candidates.forEach((item: TransferListItem) => {
       this.host.activeTransferDeviceIds.set(item.id, device.deviceId)

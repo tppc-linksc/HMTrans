@@ -58,16 +58,21 @@ final class TransferStore: @unchecked Sendable {
                 let bucket = String(cString: bucketText)
                 let payload = Data(String(cString: payloadText).utf8)
                 persistedTransferRows[id] = bucket + "\u{0}" + String(cString: payloadText)
-                guard let item = try? decoder.decode(TransferListItem.self, from: payload) else { return }
+                guard let item = try? decoder.decode(TransferListItem.self, from: payload) else {
+                    report("decode transfer \(id)")
+                    return
+                }
                 if bucket == "history" { history.append(item) } else { current.append(item) }
             }
 
             query("SELECT payload FROM devices ORDER BY last_seen_at DESC") { statement in
                 guard let payloadText = sqlite3_column_text(statement, 0) else { return }
                 let payload = Data(String(cString: payloadText).utf8)
-                if let device = try? decoder.decode(PersistedDevice.self, from: payload) {
-                    devices.append(device)
+                guard let device = try? decoder.decode(PersistedDevice.self, from: payload) else {
+                    report("decode persisted device")
+                    return
                 }
+                devices.append(device)
             }
             return Snapshot(current: current, history: history, devices: devices)
         }
@@ -94,9 +99,12 @@ final class TransferStore: @unchecked Sendable {
 
     func upsert(device: PersistedDevice) {
         queue.async { [weak self] in
-            guard let self, let payload = try? encoder.encode(device),
-                  let text = String(data: payload, encoding: .utf8)
-            else { return }
+            guard let self else { return }
+            guard let payload = try? encoder.encode(device),
+                  let text = String(data: payload, encoding: .utf8) else {
+                self.report("encode persisted device \(device.id)")
+                return
+            }
             withStatement("INSERT INTO devices (id, payload, last_seen_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, last_seen_at=excluded.last_seen_at") { statement in
                 bind(device.id, at: 1, statement: statement)
                 bind(text, at: 2, statement: statement)

@@ -62,6 +62,22 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>HMTrans needs local network access to discover and transfer files between your Mac and MatePad.</string>
   <key>NSLocationWhenInUseUsageDescription</key>
   <string>用于显示当前连接的 Wi-Fi 网络名称，网络信息只在本机使用。</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>可发送的文件或文件夹</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.data</string>
+        <string>public.folder</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

@@ -42,6 +42,14 @@ private final class ListenerReadyBox: @unchecked Sendable {
     func markReady() { lock.withLock { ready = true } }
 }
 
+private final class ReceiveErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Error?
+
+    func store(_ error: Error) { lock.withLock { value = error } }
+    func load() -> Error? { lock.withLock { value } }
+}
+
 @Test("对端半开时网络读取会超时而不是永久阻塞")
 func stalledPeerTimesOut() async throws {
     let queue = DispatchQueue(label: "HMTransTests.StalledPeer")
@@ -123,6 +131,68 @@ func symbolicLinkArchiveIsRejected() throws {
         )
     }
     #expect(try manager.contentsOfDirectory(atPath: output.path).isEmpty)
+}
+
+@Test("异常高压缩比归档在解压前被拒绝")
+func compressionBombArchiveIsRejected() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appendingPathComponent("HMTransZipRatio-\(UUID())", isDirectory: true)
+    let source = root.appendingPathComponent("source", isDirectory: true)
+    try manager.createDirectory(at: source, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: root) }
+    try Data(repeating: 0, count: 20 * 1_048_576).write(to: source.appendingPathComponent("zeros.bin"))
+    let archive = root.appendingPathComponent("ratio.zip")
+    try runDitto(arguments: ["-c", "-k", "--keepParent", source.path, archive.path])
+
+    #expect(throws: HMTransError.self) {
+        _ = try ZipArchiveInspector.inspect(archive)
+    }
+}
+
+@Test("接收连接中断会携带准确的线上任务 ID")
+func interruptedReceiveReportsExactTransferID() async throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appendingPathComponent("HMTransReceiveError-\(UUID())", isDirectory: true)
+    try manager.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: root) }
+    let port = UInt16.random(in: 40_000...44_000)
+    let transferID = UUID().uuidString
+    let errorBox = ReceiveErrorBox()
+    let receiver = PersistentFileReceiver()
+    try receiver.start(port: port, outputDirectory: root.path, shouldAccept: { _ in true }) { result in
+        if case .failure(let error) = result { errorBox.store(error) }
+    }
+    defer { receiver.stop() }
+    try await Task.sleep(for: .milliseconds(250))
+
+    let connection = NWConnection(
+        host: NWEndpoint.Host("127.0.0.1"),
+        port: try #require(NWEndpoint.Port(rawValue: port)),
+        using: .tcp
+    )
+    let queue = DispatchQueue(label: "HMTransTests.InterruptedReceive")
+    let meta = FileMeta(
+        transferId: transferID,
+        fileName: "partial.bin",
+        fileSize: 1_048_576,
+        sha256: String(repeating: "0", count: 64),
+        totalChunks: 1
+    )
+    var encodedLine = try JSONEncoder().encode(meta)
+    encodedLine.append(0x0A)
+    let line = encodedLine
+    connection.stateUpdateHandler = { state in
+        guard case .ready = state else { return }
+        connection.send(content: line, completion: .contentProcessed { _ in connection.cancel() })
+    }
+    connection.start(queue: queue)
+    defer { connection.cancel() }
+
+    for _ in 0..<100 where errorBox.load() == nil {
+        try await Task.sleep(for: .milliseconds(25))
+    }
+    let receiveError = try #require(errorBox.load() as? ReceiveConnectionError)
+    #expect(receiveError.transferID == transferID)
 }
 
 @Test("配对端只接受当前六位码")

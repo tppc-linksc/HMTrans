@@ -172,6 +172,19 @@ public struct ReceivedFile: Sendable {
     public let url: URL
 }
 
+/// 将接收连接错误绑定到线上任务 ID，避免并发接收时把错误归到另一台设备的任务。
+public struct ReceiveConnectionError: LocalizedError, Sendable {
+    public let transferID: String
+    public let underlyingDescription: String
+
+    public init(transferID: String, underlyingDescription: String) {
+        self.transferID = transferID
+        self.underlyingDescription = underlyingDescription
+    }
+
+    public var errorDescription: String? { underlyingDescription }
+}
+
 public typealias ProgressHandler = @Sendable (_ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveProgressHandler = @Sendable (_ meta: FileMeta, _ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveDecisionHandler = @Sendable (_ meta: FileMeta) -> Bool

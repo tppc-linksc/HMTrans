@@ -35,8 +35,10 @@ struct PrivacyGateView: View {
                     Label("任务、历史和配对关系只保存在本机", systemImage: "internaldrive")
                 }
                 .font(.system(size: 12, weight: .medium))
-                Link("查看完整隐私政策", destination: URL(string: "https://hmt.tppc.top/privacy.html")!)
-                    .font(.system(size: 12, weight: .semibold))
+                if let privacyURL = URL(string: "https://hmt.tppc.top/privacy.html") {
+                    Link("查看完整隐私政策", destination: privacyURL)
+                        .font(.system(size: 12, weight: .semibold))
+                }
                 HStack {
                     Button("不同意并退出") { NSApp.terminate(nil) }
                     Spacer()

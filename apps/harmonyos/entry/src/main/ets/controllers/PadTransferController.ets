@@ -96,9 +96,10 @@ export class PadTransferController {
   async sendUris(uris: Array<string>): Promise<void> {
     const selectedTargets = this.host.connectedDevices.filter((device: DeviceInfo) =>
       this.host.selectedDeviceIds.indexOf(device.deviceId) >= 0)
-    const targets = selectedTargets.length > 0 ? selectedTargets : this.host.connectedDevices
+    const targets = selectedTargets.length > 0 ? selectedTargets :
+      (this.host.connectedDevices.length === 1 ? this.host.connectedDevices : [])
     if (targets.length === 0) {
-      this.host.statusText = '请等待发现并选择 Mac'
+      this.host.statusText = this.host.connectedDevices.length > 1 ? '请至少选择一台接收设备' : '请等待发现并选择 Mac'
       return
     }
     await this.outgoingCoordinator.sendUris(uris, targets, this.host.abilityContext(), {
@@ -162,8 +163,7 @@ export class PadTransferController {
       return
     }
     if (item.state === TransferState.Waiting) {
-      const matched = this.host.freshDevices.filter((device: DeviceInfo) => device.deviceId === item.deviceId)
-      const device = matched.length > 0 ? matched[0] : this.host.selectedDevice
+      const device = this.matchingDevice(item)
       if (!device) {
         this.host.statusText = `请先重新连接 ${item.peerName}`
         return
@@ -172,10 +172,10 @@ export class PadTransferController {
       return
     }
     if (item.state === TransferState.Paused) {
-      this.transferService.resumeTransfer(item.id)
+      this.outgoingCoordinator.resume(item.id)
       this.markCurrentTransferState(item.id, TransferState.Active, '正在继续传输')
     } else {
-      this.transferService.pauseTransfer(item.id)
+      this.outgoingCoordinator.pause(item.id)
       this.markCurrentTransferState(item.id, TransferState.Paused, '已暂停网络发送')
     }
   }
@@ -196,7 +196,8 @@ export class PadTransferController {
 
   cancelTransfer(item: TransferListItem): void {
     this.clearAutomaticResume(item.id)
-    this.transferService.cancelTransfer(item.id)
+    if (item.direction === '发送') this.outgoingCoordinator.cancel(item.id)
+    else this.transferService.cancelTransfer(item.id)
     this.host.activeTransferDeviceIds.delete(item.id)
     this.host.currentTransfers = this.host.currentTransfers.filter((row: TransferListItem) => row.id !== item.id)
     this.appendHistory(item.copyWith(item.progress, '用户取消', TransferState.Cancelled, nowText()),
@@ -245,8 +246,10 @@ export class PadTransferController {
       this.automaticResumeTimers.delete(id)
       const waiting = this.host.currentTransfers.some((item: TransferListItem) =>
         item.id === id && item.state === TransferState.Waiting)
-      if (waiting && this.host.selectedDevice && !this.host.activeTransferDeviceIds.has(id)) {
-        this.host.resumeWaitingTransfers(this.host.selectedDevice)
+      const item = this.host.currentTransfers.find((row: TransferListItem) => row.id === id)
+      const device = item ? this.matchingDevice(item) : undefined
+      if (waiting && device && !this.host.activeTransferDeviceIds.has(id)) {
+        this.host.resumeWaitingTransfers(device)
       }
     }, 2000)
     this.automaticResumeTimers.set(id, timer)
@@ -275,10 +278,8 @@ export class PadTransferController {
   }
 
   historyDeviceIdForIncoming(meta: FileMeta): string {
-    if (this.host.selectedDeviceId.length > 0 && this.host.selectedDevice !== undefined) {
-      return this.host.selectedDeviceId
-    }
-    return meta.senderDeviceId ?? ''
+    if (meta.senderDeviceId && meta.senderDeviceId.length > 0) return meta.senderDeviceId
+    return this.host.selectedDeviceId
   }
 
   async markReceivedFilePublished(transferId: string, _fileName: string, _path: string): Promise<void> {
@@ -342,5 +343,14 @@ export class PadTransferController {
     const timer = this.automaticResumeTimers.get(id)
     if (timer !== undefined) clearTimeout(timer)
     this.automaticResumeTimers.delete(id)
+  }
+
+  /** 恢复任务必须按稳定设备 ID 路由；旧记录仅在设备名称唯一时兼容匹配。 */
+  private matchingDevice(item: TransferListItem): DeviceInfo | undefined {
+    if (item.deviceId.length > 0) {
+      return this.host.freshDevices.find((device: DeviceInfo) => device.deviceId === item.deviceId)
+    }
+    const legacyMatches = this.host.freshDevices.filter((device: DeviceInfo) => device.deviceName === item.peerName)
+    return legacyMatches.length === 1 ? legacyMatches[0] : undefined
   }
 }

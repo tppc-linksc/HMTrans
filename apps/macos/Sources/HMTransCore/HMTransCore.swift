@@ -306,6 +306,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         onConnectionResult: @escaping ReceiveCompletionHandler
     ) {
         queue.async {
+            var currentTransferID: String?
             defer {
                 self.lock.lock()
                 self.openConnectionCount = max(0, self.openConnectionCount - 1)
@@ -336,6 +337,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
                     return
                 }
                 let meta = try JSONDecoder().decode(FileMeta.self, from: Data(firstLine.utf8))
+                currentTransferID = meta.transferId
                 self.lock.lock()
                 let isPaused = self.pausedTransferIDs.contains(meta.transferId)
                 let isCancelled = self.cancelledTransferIDs.contains(meta.transferId)
@@ -368,7 +370,14 @@ public final class PersistentFileReceiver: @unchecked Sendable {
                 onConnectionResult(.success(received))
             } catch {
                 coreLog.error("Receive connection failed: \(String(describing: error), privacy: .public)")
-                onConnectionResult(.failure(error))
+                if let currentTransferID {
+                    onConnectionResult(.failure(ReceiveConnectionError(
+                        transferID: currentTransferID,
+                        underlyingDescription: error.localizedDescription
+                    )))
+                } else {
+                    onConnectionResult(.failure(error))
+                }
             }
         }
     }

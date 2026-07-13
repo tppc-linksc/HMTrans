@@ -27,10 +27,7 @@ extension TransferViewModel {
             status = "无法重试：原文件不存在或已移动"
             return
         }
-        guard let device = nearbyDevices.first(where: {
-            ($0.deviceId == item.deviceId || $0.deviceName == item.peerName) &&
-            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
-        }) else {
+        guard let device = matchingNearbyDevice(for: item) else {
             status = "请先重新连接 \(item.peerName)"
             return
         }
@@ -132,7 +129,8 @@ extension TransferViewModel {
                 progress: progress,
                 detail: transferProgressDetail(current: current, total: total, startedAt: Date()),
                 fileSize: meta.fileSize,
-                fileType: fileTypeLabel(meta.sourceName ?? meta.fileName)
+                fileType: fileTypeLabel(meta.sourceName ?? meta.fileName),
+                deviceId: meta.senderDeviceId
             ))
         } else {
             updateCurrentTransfer(id: id, progress: progress, current: current, total: total)
@@ -157,7 +155,8 @@ extension TransferViewModel {
                 detail: detail,
                 fileSize: meta.fileSize,
                 fileType: fileTypeLabel(meta.sourceName ?? savedName),
-                localPath: localURL?.path
+                localPath: localURL?.path,
+                deviceId: meta.senderDeviceId
             ))
         }
         if let localURL, let index = currentTransfers.firstIndex(where: { $0.id == id }) {

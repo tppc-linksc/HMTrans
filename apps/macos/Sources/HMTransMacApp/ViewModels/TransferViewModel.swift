@@ -52,9 +52,10 @@ final class TransferViewModel {
     private let networkChangeMonitor = MacNetworkChangeMonitor()
     let sharedPreparedSources = SharedPreparedSourceStore()
     let sendConcurrencyGate = AsyncConcurrencyGate(limit: 3)
-    private var transferGeneration = 0
+    var transferGeneration = 0
     private var workspaceSleepObserver: NSObjectProtocol?
     private var workspaceWakeObserver: NSObjectProtocol?
+    private var openFilesObserver: NSObjectProtocol?
     var pruneTask: Task<Void, Never>?
     private var pairingTask: Task<Void, Never>?
     var persistenceTask: Task<Void, Never>?
@@ -84,7 +85,9 @@ final class TransferViewModel {
     var localDiscoveryPort: UInt16 { UInt16(discoveryPortText) ?? discoveryPort }
 
     var selectedNearbyDevice: DeviceInfo? {
-        connectedDevices.first { $0.ip == host }
+        // 发送目标必须以稳定设备 ID 为准。IP 可能被 DHCP 重新分配，按 IP 反查会把
+        // 同一地址上的另一台设备误认为已选设备，也会让离线配对设备看起来仍可发送。
+        connectedDevices.first { selectedTargetDeviceIDs.contains($0.deviceId) }
     }
 
     var connectedDevices: [DeviceInfo] {
@@ -96,7 +99,8 @@ final class TransferViewModel {
 
     var activeTransferTargets: [DeviceInfo] {
         let selected = connectedDevices.filter { selectedTargetDeviceIDs.contains($0.deviceId) }
-        return selected.isEmpty ? connectedDevices : selected
+        if !selected.isEmpty { return selected }
+        return connectedDevices.count == 1 ? connectedDevices : []
     }
 
     func isBidirectionallyConnected(_ device: DeviceInfo) -> Bool {
@@ -155,7 +159,7 @@ final class TransferViewModel {
             identityFingerprint = generated
         }
 
-        NotificationCenter.default.addObserver(forName: .hmTransOpenFiles, object: nil, queue: .main) { [weak self] notification in
+        openFilesObserver = NotificationCenter.default.addObserver(forName: .hmTransOpenFiles, object: nil, queue: .main) { [weak self] notification in
             guard let filenames = notification.object as? [String] else { return }
             Task { @MainActor in
                 self?.sendDroppedFiles(filenames.map { URL(fileURLWithPath: $0) })
@@ -179,7 +183,9 @@ final class TransferViewModel {
     }
 
     isolated deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let openFilesObserver {
+            NotificationCenter.default.removeObserver(openFilesObserver)
+        }
         if let workspaceSleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceSleepObserver)
         }
@@ -269,41 +275,68 @@ final class TransferViewModel {
     func setConnectionEnabled(_ enabled: Bool) {
         discoveryEnabled = enabled
         receiverEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.discoveryEnabledKey)
-        UserDefaults.standard.set(enabled, forKey: Self.receiverEnabledKey)
         if enabled {
-            ensureReceiverAndDiscovery()
-            status = "连接服务已开启"
+            let receiverStarted = startReceiver()
+            let discoveryStarted = startDiscovery()
+            if receiverStarted && discoveryStarted {
+                UserDefaults.standard.set(true, forKey: Self.discoveryEnabledKey)
+                UserDefaults.standard.set(true, forKey: Self.receiverEnabledKey)
+                startFallbackNetworkScan(force: true)
+                status = "连接服务已开启"
+            } else {
+                receiver.stop()
+                receiverRunning = false
+                stopDiscovery()
+                discoveryEnabled = false
+                receiverEnabled = false
+                UserDefaults.standard.set(false, forKey: Self.discoveryEnabledKey)
+                UserDefaults.standard.set(false, forKey: Self.receiverEnabledKey)
+                status = "连接服务启动失败，开关已恢复"
+            }
         } else {
             receiver.stop()
             receiverRunning = false
             stopDiscovery()
+            UserDefaults.standard.set(false, forKey: Self.discoveryEnabledKey)
+            UserDefaults.standard.set(false, forKey: Self.receiverEnabledKey)
             status = "连接服务已关闭"
         }
     }
 
     func setReceiverEnabled(_ enabled: Bool) {
         receiverEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.receiverEnabledKey)
         if enabled {
-            _ = startReceiver()
-            status = receiverRunning ? "接收服务已开启" : status
+            if startReceiver() {
+                UserDefaults.standard.set(true, forKey: Self.receiverEnabledKey)
+                status = "接收服务已开启"
+            } else {
+                receiverEnabled = false
+                UserDefaults.standard.set(false, forKey: Self.receiverEnabledKey)
+                status = "接收服务启动失败，开关已恢复"
+            }
         } else {
             receiver.stop()
             receiverRunning = false
+            UserDefaults.standard.set(false, forKey: Self.receiverEnabledKey)
             status = "接收服务已关闭，仍可发现和发送"
         }
     }
 
     func setDiscoveryEnabled(_ enabled: Bool) {
         discoveryEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.discoveryEnabledKey)
         if enabled {
-            startDiscovery()
-            startFallbackNetworkScan(force: true)
-            status = "自动发现已开启"
+            if startDiscovery() {
+                UserDefaults.standard.set(true, forKey: Self.discoveryEnabledKey)
+                startFallbackNetworkScan(force: true)
+                status = "自动发现已开启"
+            } else {
+                discoveryEnabled = false
+                UserDefaults.standard.set(false, forKey: Self.discoveryEnabledKey)
+                status = "自动发现启动失败，开关已恢复"
+            }
         } else {
             stopDiscovery()
+            UserDefaults.standard.set(false, forKey: Self.discoveryEnabledKey)
             status = "自动发现已关闭，接收服务保持当前状态"
         }
     }
@@ -343,9 +376,14 @@ final class TransferViewModel {
         persistTransfers()
     }
 
-    func clearHistory(peerName: String) {
-        historyTransfers.removeAll { $0.peerName == peerName }
+    func clearHistory(deviceKey: String) {
+        historyTransfers.removeAll { historyDeviceKey($0) == deviceKey }
         persistTransfers()
+    }
+
+    func historyDeviceKey(_ item: TransferListItem) -> String {
+        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID }
+        return "name:\(item.peerName)"
     }
 
     func clearTemporaryStorage() {
@@ -525,7 +563,7 @@ final class TransferViewModel {
         }
     }
 
-    private func useDevice(_ device: DeviceInfo) {
+    func useDevice(_ device: DeviceInfo) {
         guard !isLocalIPv4Address(device.ip) else {
             forgetDevice(device)
             status = "已忽略本机地址：\(device.ip)"
@@ -539,15 +577,15 @@ final class TransferViewModel {
         resumeWaitingTransfers(for: device)
     }
 
-    func resumePersistedTransfer(_ item: TransferListItem) {
+    func resumePersistedTransfer(_ item: TransferListItem, using preferredDevice: DeviceInfo? = nil) {
         guard item.direction == .sending,
               let path = item.localPath,
               FileManager.default.fileExists(atPath: path) else {
             status = "无法恢复：原文件不存在或已移动"
             return
         }
-        guard let device = selectedNearbyDevice,
-              item.deviceId == nil || item.deviceId == device.deviceId || item.peerName == device.deviceName else {
+        guard let device = preferredDevice ?? matchingNearbyDevice(for: item),
+              transfer(item, belongsTo: device) else {
             status = "请先重新连接 \(item.peerName)"
             return
         }
@@ -563,13 +601,27 @@ final class TransferViewModel {
         let candidates = currentTransfers.filter { item in
             item.direction == .sending &&
             item.state == .waiting &&
-            (item.deviceId == nil || item.deviceId == device.deviceId || item.peerName == device.deviceName) &&
+            transfer(item, belongsTo: device) &&
             item.localPath.map { FileManager.default.fileExists(atPath: $0) } == true &&
             transferControls[item.id] == nil
         }
         for item in candidates {
-            resumePersistedTransfer(item)
+            resumePersistedTransfer(item, using: device)
         }
+    }
+
+    /// 任务恢复必须使用稳定设备 ID；仅对没有 ID 的旧记录保留唯一名称匹配。
+    func matchingNearbyDevice(for item: TransferListItem) -> DeviceInfo? {
+        let matches = nearbyDevices.filter {
+            transfer(item, belongsTo: $0) &&
+            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private func transfer(_ item: TransferListItem, belongsTo device: DeviceInfo) -> Bool {
+        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID == device.deviceId }
+        return item.peerName == device.deviceName
     }
 
     func forgetDevice(_ device: DeviceInfo) {
@@ -620,7 +672,7 @@ final class TransferViewModel {
         status = "已清除保存目标"
     }
 
-    private func markDeviceUnreachable(_ device: DeviceInfo, reason: String) {
+    func markDeviceUnreachable(_ device: DeviceInfo, reason: String) {
         nearbyDevices.removeAll { $0.deviceId == device.deviceId || $0.ip == device.ip }
         deviceLastSeenAt.removeValue(forKey: device.deviceId)
         if host == device.ip {
@@ -630,226 +682,6 @@ final class TransferViewModel {
         }
         status = "MatePad 接收端不可达：\(reason)"
         startFallbackNetworkScan(force: true)
-    }
-
-    func sendSelectedFile() {
-        guard let selectedFile else {
-            status = "请先选择或拖入文件"
-            return
-        }
-        sendFiles([selectedFile])
-    }
-
-    func sendDroppedFiles(_ urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        selectedFile = urls.first
-        sendFiles(urls)
-    }
-
-    func sendFiles(_ urls: [URL], reusingTransferID: UUID? = nil) {
-        let targets = activeTransferTargets
-        guard !targets.isEmpty else {
-            status = "请先在连接页输入六位配对码并完成配对"
-            return
-        }
-        let groupID = UUID()
-        for target in targets {
-            sendFiles(
-                urls,
-                to: target,
-                reusingTransferID: targets.count == 1 ? reusingTransferID : nil,
-                groupID: groupID,
-                groupParticipantCount: targets.count
-            )
-        }
-    }
-
-    func toggleTransferTarget(_ device: DeviceInfo) {
-        guard TrustedDevicesStore.matches(device.deviceId, fingerprint: device.identityFingerprint) else {
-            selectDevice(device)
-            return
-        }
-        if selectedTargetDeviceIDs.contains(device.deviceId), selectedTargetDeviceIDs.count > 1 {
-            selectedTargetDeviceIDs.remove(device.deviceId)
-            status = "已取消选择：\(device.deviceName)"
-        } else {
-            selectedTargetDeviceIDs.insert(device.deviceId)
-            useDevice(device)
-            status = "已选择发送目标：\(device.deviceName)"
-        }
-    }
-
-    private func sendFiles(
-        _ urls: [URL],
-        to targetDevice: DeviceInfo,
-        reusingTransferID: UUID? = nil,
-        groupID: UUID? = nil,
-        groupParticipantCount: Int = 1
-    ) {
-        let targetHost = targetDevice.ip
-        let targetPort = targetDevice.port
-        guard !isLocalIPv4Address(targetHost) else {
-            clearSavedTarget()
-            status = "已阻止发送到本机地址，请等待发现 MatePad"
-            return
-        }
-
-        rememberTarget()
-        isSending = true
-        progress = 0
-        let senderDeviceId = deviceId
-        let senderName = deviceName
-        let senderFingerprint = identityFingerprint
-        let generation = transferGeneration
-
-        Task.detached { [weak self] in
-            guard let gate = self?.sendConcurrencyGate,
-                  let sourceStore = self?.sharedPreparedSources else { return }
-            await gate.acquire()
-            defer { Task { await gate.release() } }
-            let isCurrentGeneration = await MainActor.run { self?.transferGeneration == generation }
-            guard isCurrentGeneration else { return }
-            guard tcpPortIsOpen(host: targetHost, port: targetPort, timeout: 0.8) else {
-                await MainActor.run {
-                    self?.isSending = false
-                    self?.progress = 0
-                    self?.markDeviceUnreachable(targetDevice, reason: "接收端口不可达")
-                }
-                return
-            }
-
-            for (index, url) in urls.enumerated() {
-                let transferId = (urls.count == 1 ? reusingTransferID : nil) ?? UUID()
-                let control = TransferControl()
-                await MainActor.run {
-                    self?.transferControls[transferId] = control
-                    self?.status = "准备发送 \(index + 1)/\(urls.count)：\(url.lastPathComponent)"
-                    if let existingIndex = self?.currentTransfers.firstIndex(where: { $0.id == transferId }) {
-                        self?.currentTransfers[existingIndex].state = .preparing
-                        self?.currentTransfers[existingIndex].detail = "正在协商断点"
-                        self?.currentTransfers[existingIndex].updatedAt = Date()
-                        self?.persistTransfers()
-                    } else {
-                        self?.upsertCurrentTransfer(
-                            TransferListItem(
-                                id: transferId,
-                                fileName: url.lastPathComponent,
-                                peerName: targetDevice.deviceName,
-                                direction: .sending,
-                                progress: 0,
-                                detail: "准备发送",
-                                fileSize: Self.initialFileSizeForDisplay(url),
-                                fileType: fileTypeLabel(url.lastPathComponent),
-                                localPath: url.path,
-                                deviceId: targetDevice.deviceId,
-                                groupId: groupID
-                            )
-                        )
-                    }
-                }
-
-                do {
-                    let artifactGroupID = groupID ?? transferId
-                    let prepared = try sourceStore.acquire(
-                        url: url,
-                        groupID: artifactGroupID,
-                        participantCount: groupParticipantCount
-                    )
-                    let preparedSize = Self.initialFileSizeForDisplay(prepared.url)
-                    await MainActor.run {
-                        self?.status = "发送 \(index + 1)/\(urls.count)：\(prepared.displayName)"
-                        self?.updatePreparedTransfer(
-                            id: transferId,
-                            fileName: prepared.displayName,
-                            fileSize: preparedSize,
-                            fileType: prepared.sourceKind == "folder" ? "文件夹" : fileTypeLabel(prepared.displayName),
-                            detail: prepared.cleanupDirectory == nil ? "准备发送" : "已压缩为 zip，准备发送"
-                        )
-                        // 多 GB 载荷的哈希计算可能耗时明显，因此在 Core 开始前先展示此阶段。
-                        self?.markTransferVerifying(id: transferId)
-                    }
-                    try sendFile(
-                        fileURL: prepared.url,
-                        host: targetHost,
-                        port: targetPort,
-                        transferId: transferId.uuidString,
-                        senderDeviceId: senderDeviceId,
-                        senderName: senderName,
-                        senderPlatform: "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)",
-                        sourceKind: prepared.sourceKind,
-                        payloadKind: prepared.payloadKind,
-                        sourceName: prepared.sourceName,
-                        sourceSize: prepared.sourceSize,
-                        sourceFileCount: prepared.sourceFileCount,
-                        senderFingerprint: senderFingerprint,
-                        control: control,
-                        onProgress: { current, total in
-                            Task { @MainActor in
-                                if let currentIndex = self?.currentTransfers.firstIndex(where: { $0.id == transferId }) {
-                                    self?.currentTransfers[currentIndex].state = .active
-                                }
-                                self?.progress = total == 0 ? 1 : Double(current) / Double(total)
-                                self?.status = "发送中 \(Int((self?.progress ?? 0) * 100))%：\(prepared.displayName)"
-                                self?.updateCurrentTransfer(
-                                    id: transferId,
-                                    progress: self?.progress ?? 0,
-                                    current: current,
-                                    total: total
-                                )
-                            }
-                        }
-                    )
-                    await MainActor.run {
-                        self?.transferControls.removeValue(forKey: transferId)
-                        self?.completeTransfer(id: transferId, success: true, detail: "发送完成")
-                        self?.isSending = !(self?.transferControls.isEmpty ?? true)
-                    }
-                    sourceStore.release(
-                        url: url,
-                        groupID: artifactGroupID,
-                        preserveForResume: false
-                    )
-                } catch {
-                    let wasCancelled = control.isCancelled
-                    let shouldWaitForReconnect: Bool
-                    if case HMTransError.system = error {
-                        shouldWaitForReconnect = true
-                    } else if case HMTransError.rejected(let reason) = error,
-                              reason.contains("receiver_paused") {
-                        shouldWaitForReconnect = true
-                    } else {
-                        shouldWaitForReconnect = false
-                    }
-                    await MainActor.run {
-                        self?.transferControls.removeValue(forKey: transferId)
-                        self?.isSending = !(self?.transferControls.isEmpty ?? true)
-                        if wasCancelled {
-                            self?.status = "已取消：\(url.lastPathComponent)"
-                        } else if shouldWaitForReconnect {
-                            self?.status = "连接中断，等待设备恢复：\(url.lastPathComponent)"
-                            self?.markTransferWaiting(id: transferId, detail: "连接中断，已保存断点")
-                            self?.scheduleAutomaticResume(id: transferId)
-                        } else {
-                            self?.recordDiagnostic(code: "TRN-SEND-001", module: "send", message: "\(error)", transferID: transferId.uuidString, deviceID: targetDevice.deviceId)
-                            self?.status = "发送失败：\(error)"
-                            self?.completeTransfer(id: transferId, success: false, detail: "\(error)")
-                        }
-                    }
-                    sourceStore.release(
-                        url: url,
-                        groupID: groupID ?? transferId,
-                        preserveForResume: shouldWaitForReconnect && !wasCancelled
-                    )
-                    return
-                }
-            }
-
-            await MainActor.run {
-                self?.progress = 1
-                self?.isSending = false
-                self?.status = "发送完成"
-            }
-        }
     }
 
     func startPersistentReceiver() {

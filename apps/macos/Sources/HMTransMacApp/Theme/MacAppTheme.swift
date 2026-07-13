@@ -62,6 +62,16 @@ enum MacAppTheme {
         light: NSColor.systemBlue.withAlphaComponent(0.72),
         dark: NSColor(calibratedRed: 0.650, green: 0.650, blue: 0.670, alpha: 0.72)
     )
+    // 筛选标签需要在深色模式下保持明确的选中层级。这里不复用偏中性的全局强调色，
+    // 避免白色文字落在浅灰背景上时对比度不足。
+    static let selectedTabSurface = Color.adaptive(
+        light: NSColor.systemBlue,
+        dark: NSColor(calibratedRed: 0.170, green: 0.380, blue: 0.600, alpha: 1)
+    )
+    static let tabBarSurface = Color.adaptive(
+        light: NSColor(calibratedWhite: 0.0, alpha: 0.08),
+        dark: NSColor(calibratedWhite: 1.0, alpha: 0.10)
+    )
 }
 
 private extension Color {

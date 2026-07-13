@@ -4,10 +4,11 @@ import HMTransCore
 /// 设备发现与身份去重独立于传输状态，确保回退 TCP 探测不会创建第二个物理设备。
 @MainActor
 extension TransferViewModel {
-    func startDiscovery() {
+    @discardableResult
+    func startDiscovery() -> Bool {
         guard discoveryEnabled else {
             stopDiscovery()
-            return
+            return false
         }
         discovery?.stop()
         let service = DiscoveryService(
@@ -31,10 +32,12 @@ extension TransferViewModel {
                     }
                 }
             }
+            return true
         } catch {
             discovery = nil
             recordDiagnostic(code: "TRN-DISC-001", module: "discovery", message: "\(error)")
             status = "设备发现启动失败：\(error)"
+            return false
         }
     }
 
@@ -87,7 +90,9 @@ extension TransferViewModel {
         }
         status = "接收错误：\(detail)"
         recordDiagnostic(code: "TRN-RECV-002", module: "receiver", message: detail)
-        guard let item = currentTransfers.first(where: { $0.direction == .receiving }),
+        guard let connectionError = error as? ReceiveConnectionError,
+              let itemID = receivingTransferIds[connectionError.transferID],
+              let item = currentTransfers.first(where: { $0.id == itemID }),
               item.state != .paused, item.state != .waiting else { return }
         markTransferWaiting(id: item.id, detail: "接收连接中断，分片已保留")
     }
@@ -101,7 +106,7 @@ extension TransferViewModel {
             try? await Task.sleep(for: .seconds(2))
             guard let self,
                   let item = currentTransfers.first(where: { $0.id == id && $0.state == .waiting }),
-                  selectedNearbyDevice != nil,
+                  matchingNearbyDevice(for: item) != nil,
                   transferControls[id] == nil else { return }
             resumePersistedTransfer(item)
         }

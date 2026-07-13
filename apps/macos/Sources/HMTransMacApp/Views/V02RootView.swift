@@ -385,12 +385,19 @@ private struct MacHistoryPage: View {
 private struct MacFileDrop: View {
     let model: TransferViewModel
 
-    private var connectedTarget: DeviceInfo? {
-        if let selected = model.selectedNearbyDevice,
-           TrustedDevicesStore.matches(selected.deviceId, fingerprint: selected.identityFingerprint) {
-            return selected
+    private var connectedTargets: [DeviceInfo] {
+        // 只有完成双向心跳确认的设备才能启用发送区；“已配对但离线”不能作为兜底目标。
+        model.activeTransferTargets
+    }
+
+    private var targetLabel: String {
+        if connectedTargets.count == 1, let target = connectedTargets.first {
+            return "发送给 \(target.deviceName)"
         }
-        return model.connectedDevices.first
+        if connectedTargets.count > 1 {
+            return "发送给 \(connectedTargets.count) 台已连接设备"
+        }
+        return "请先选择已连接设备"
     }
 
     var body: some View {
@@ -403,7 +410,7 @@ private struct MacFileDrop: View {
                     .background(MacAppTheme.blueSurface, in: RoundedRectangle(cornerRadius: 16))
                 VStack(spacing: 6) {
                     Text("拖入文件或文件夹").font(.system(size: 16, weight: .bold))
-                    Text(connectedTarget.map { "发送给 \($0.deviceName)" } ?? "连接设备后即可发送")
+                    Text(targetLabel)
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -412,16 +419,11 @@ private struct MacFileDrop: View {
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(MacAppTheme.activeBorder, style: StrokeStyle(lineWidth: 1.3, dash: [7, 5])))
         }
         .buttonStyle(.plain)
-        .disabled(connectedTarget == nil)
-        .accessibilityLabel(connectedTarget.map { "选择文件或文件夹并发送给 \($0.deviceName)" } ?? "暂无已连接设备")
+        .disabled(connectedTargets.isEmpty)
+        .accessibilityLabel(connectedTargets.isEmpty ? "尚未选择已连接设备" : "选择文件或文件夹，\(targetLabel)")
         .dropDestination(for: URL.self) { urls, _ in
             model.sendDroppedFiles(urls)
             return true
-        }
-        .onAppear {
-            if model.selectedNearbyDevice == nil, let connectedTarget {
-                model.selectDevice(connectedTarget)
-            }
         }
     }
 }
@@ -465,11 +467,16 @@ private struct TaskControlRow: View {
     }
 }
 
+private struct HistoryClearTarget: Equatable {
+    let key: String
+    let name: String
+}
+
 private struct MacTransferHistoryContent: View {
     let model: TransferViewModel
     @State private var filter: HistoryStatusFilter = .all
     @State private var confirmingClearAll = false
-    @State private var pendingClearPeer: String?
+    @State private var pendingClearPeer: HistoryClearTarget?
     private var filtered: [TransferListItem] {
         let items: [TransferListItem]
         switch filter {
@@ -486,10 +493,13 @@ private struct MacTransferHistoryContent: View {
         }
         return items.sorted { $0.updatedAt > $1.updatedAt }
     }
-    private var groups: [(String, [TransferListItem])] {
-        Dictionary(grouping: filtered, by: \.peerName)
-            .map { ($0.key, $0.value.sorted { $0.updatedAt > $1.updatedAt }) }
-            .sorted { ($0.1.first?.updatedAt ?? .distantPast) > ($1.1.first?.updatedAt ?? .distantPast) }
+    private var groups: [(key: String, name: String, items: [TransferListItem])] {
+        Dictionary(grouping: filtered, by: model.historyDeviceKey)
+            .map { key, values in
+                let items = values.sorted { $0.updatedAt > $1.updatedAt }
+                return (key, items.first?.peerName ?? "未知设备", items)
+            }
+            .sorted { ($0.items.first?.updatedAt ?? .distantPast) > ($1.items.first?.updatedAt ?? .distantPast) }
     }
     private var currentIDs: Set<UUID> { Set(model.currentTransfers.map(\.id)) }
 
@@ -502,7 +512,10 @@ private struct MacTransferHistoryContent: View {
                             .font(.system(size: 12, weight: filter == item ? .semibold : .medium))
                             .foregroundStyle(filter == item ? .white : Color.primary.opacity(0.72))
                             .frame(width: 98, height: 36)
-                            .background(filter == item ? MacAppTheme.accent : .clear, in: RoundedRectangle(cornerRadius: 9))
+                            .background(
+                                filter == item ? MacAppTheme.selectedTabSurface : .clear,
+                                in: RoundedRectangle(cornerRadius: 9)
+                            )
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -512,28 +525,30 @@ private struct MacTransferHistoryContent: View {
                 }
             }
             .padding(3)
-            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            .background(MacAppTheme.tabBarSurface, in: RoundedRectangle(cornerRadius: 12))
             .frame(maxWidth: .infinity, alignment: .leading)
             .contextMenu {
                 Button("清空全部历史", role: .destructive) { confirmingClearAll = true }
                     .disabled(model.historyTransfers.isEmpty)
             }
             if groups.isEmpty { Text("暂无历史记录").foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 180).glassCard(radius: 16) }
-            ForEach(groups, id: \.0) { peer, items in
+            ForEach(groups, id: \.key) { group in
                 VStack(spacing: 8) {
                     HStack {
-                        Label(peer, systemImage: "ipad").font(.system(size: 12, weight: .bold))
+                        Label(group.name, systemImage: "ipad").font(.system(size: 12, weight: .bold))
                         Spacer()
-                        Text("\(items.count) 条记录").font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text("\(group.items.count) 条记录").font(.system(size: 9)).foregroundStyle(.secondary)
                     }
                     .contentShape(Rectangle())
                     .contextMenu {
-                        Button("清空此设备的历史", role: .destructive) { pendingClearPeer = peer }
-                            .disabled(!model.historyTransfers.contains { $0.peerName == peer })
+                        Button("清空此设备的历史", role: .destructive) {
+                            pendingClearPeer = HistoryClearTarget(key: group.key, name: group.name)
+                        }
+                        .disabled(!model.historyTransfers.contains { model.historyDeviceKey($0) == group.key })
                         Button("清空全部历史", role: .destructive) { confirmingClearAll = true }
                             .disabled(model.historyTransfers.isEmpty)
                     }
-                    ForEach(items) { item in
+                    ForEach(group.items) { item in
                         Group {
                             if currentIDs.contains(item.id) {
                                 TaskControlRow(model: model, item: item)
@@ -544,7 +559,9 @@ private struct MacTransferHistoryContent: View {
                                         open: model.openTransferItem,
                                         reveal: model.revealTransferItem,
                                         delete: model.deleteHistoryItem,
-                                        clearPeer: { pendingClearPeer = peer },
+                                        clearPeer: {
+                                            pendingClearPeer = HistoryClearTarget(key: group.key, name: group.name)
+                                        },
                                         clearAll: { confirmingClearAll = true },
                                         retry: model.retryHistoryItem
                                     )
@@ -557,8 +574,10 @@ private struct MacTransferHistoryContent: View {
                 .glassCard(radius: 17)
                 .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                 .contextMenu {
-                    Button("清空此设备的历史", role: .destructive) { pendingClearPeer = peer }
-                        .disabled(!model.historyTransfers.contains { $0.peerName == peer })
+                    Button("清空此设备的历史", role: .destructive) {
+                        pendingClearPeer = HistoryClearTarget(key: group.key, name: group.name)
+                    }
+                    .disabled(!model.historyTransfers.contains { model.historyDeviceKey($0) == group.key })
                     Button("清空全部历史", role: .destructive) { confirmingClearAll = true }
                         .disabled(model.historyTransfers.isEmpty)
                 }
@@ -572,12 +591,12 @@ private struct MacTransferHistoryContent: View {
         }
         .confirmationDialog("清空该设备的传输历史？", isPresented: Binding(get: { pendingClearPeer != nil }, set: { if !$0 { pendingClearPeer = nil } }), titleVisibility: .visible) {
             Button("确认清空", role: .destructive) {
-                if let peer = pendingClearPeer { model.clearHistory(peerName: peer) }
+                if let peer = pendingClearPeer { model.clearHistory(deviceKey: peer.key) }
                 pendingClearPeer = nil
             }
             Button("取消", role: .cancel) { pendingClearPeer = nil }
         } message: {
-            Text("将删除 \(pendingClearPeer ?? "该设备") 的全部传输记录，已完成文件不会被删除。")
+            Text("将删除 \(pendingClearPeer?.name ?? "该设备") 的全部传输记录，已完成文件不会被删除。")
         }
     }
 }
@@ -632,9 +651,11 @@ private struct MacSettingsPage: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Link("查看隐私政策", destination: URL(string: "https://hmt.tppc.top/privacy.html")!)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                if let privacyURL = URL(string: "https://hmt.tppc.top/privacy.html") {
+                    Link("查看隐私政策", destination: privacyURL)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
             }
             .padding(18)
             .glassCard(radius: 18)
