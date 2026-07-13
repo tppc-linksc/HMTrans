@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Native status-item controller. It owns the drag target and a lightweight
-/// non-activating task panel, while the transfer engine remains in the model.
+/// 原生状态栏控制器，负责拖拽目标和轻量级非激活任务面板；传输引擎仍由模型管理。
 @MainActor
 final class MacStatusItemController {
     static let shared = MacStatusItemController()

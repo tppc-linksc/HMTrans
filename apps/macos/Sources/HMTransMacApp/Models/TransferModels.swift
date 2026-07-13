@@ -188,7 +188,7 @@ func prepareSendFileForTransfer(_ url: URL, transferID: UUID) throws -> Prepared
 
     return PreparedSendFile(
         url: archiveURL,
-        // Keep the internal ZIP name out of task lists and history.
+        // 不在任务列表和历史记录中展示内部 ZIP 名称。
         displayName: url.lastPathComponent,
         cleanupDirectory: tempDirectory,
         sourceKind: "folder",

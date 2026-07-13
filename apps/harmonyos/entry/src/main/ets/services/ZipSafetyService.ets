@@ -5,7 +5,7 @@ const MAX_EOCD_SEARCH: number = 65557
 const MAX_CENTRAL_DIRECTORY: number = 32 * 1024 * 1024
 const MAX_ARCHIVE_ENTRIES: number = 100000
 
-/** Rejects traversal and absolute paths before the platform ZIP extractor runs. */
+/** 在系统 ZIP 解压器运行前拒绝路径穿越和绝对路径。 */
 export function validateZipEntryName(rawName: string): void {
   const name = rawName.replace(/\\/g, '/')
   const components = name.split('/')
@@ -14,7 +14,7 @@ export function validateZipEntryName(rawName: string): void {
   }
 }
 
-/** Validates ZIP names before the system extractor can write any entry. */
+/** 在系统解压器写入任何条目前校验 ZIP 条目名称。 */
 export class ZipSafetyService {
   validate(archivePath: string): void {
     let file: fs.File | undefined
@@ -91,7 +91,7 @@ export class ZipSafetyService {
     return -1
   }
 
-  /** ZIP stores 64-bit counters little-endian; JavaScript numbers remain exact for practical local files. */
+  /** ZIP 以小端序保存 64 位计数；对实际本地文件规模，JavaScript 数值仍可保持精确。 */
   private readUint64(view: DataView, offset: number): number {
     const low = view.getUint32(offset, true)
     const high = view.getUint32(offset + 4, true)

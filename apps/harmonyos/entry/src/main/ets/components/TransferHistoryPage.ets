@@ -1,6 +1,6 @@
 import { TransferListItem, TransferState } from '../models/TransferListItem'
 
-/** Unified current/history presentation; task mutation is delegated upward. */
+/** 统一展示当前任务与历史记录，任务变更交由上层处理。 */
 @ComponentV2
 export struct TransferHistoryPage {
   @Param currentTransfers: Array<TransferListItem> = []
@@ -85,7 +85,7 @@ export struct TransferHistoryPage {
     .borderRadius(18).border({ width: 1, color: $r('app.color.border_subtle') })
   }
 
-  /** Touch rows expose destructive history actions with a native left swipe. */
+  /** 触摸列表通过原生左滑手势提供历史记录的删除操作。 */
   @Builder
   private HistoryListItem(item: TransferListItem) {
     if (this.isCurrent(item)) {

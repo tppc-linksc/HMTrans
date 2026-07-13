@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// Keeps user-driven file and receive-directory panels out of the networking controller.
+/// 将用户触发的文件与接收目录面板移出网络控制器。
 @MainActor
 extension TransferViewModel {
     func chooseFile() {

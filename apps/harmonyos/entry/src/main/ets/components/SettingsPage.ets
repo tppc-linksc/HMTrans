@@ -1,4 +1,4 @@
-/** Settings presentation; every switch and action delegates to a real service. */
+/** 设置页只负责展示，每个开关和操作都委托给真实服务。 */
 @ComponentV2
 export struct PadSettingsPage {
   @Param receiverEnabled: boolean = true

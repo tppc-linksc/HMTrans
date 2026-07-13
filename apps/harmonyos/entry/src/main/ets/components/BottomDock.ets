@@ -1,8 +1,8 @@
 import { HdsTabs, hdsMaterial } from '@kit.UIDesignKit'
 
 /**
- * HarmonyOS 6.1 native floating tabs. The system owns the immersive-light
- * material and EXQUISITE optical level instead of a hand-painted blur layer.
+ * HarmonyOS 6.1 原生悬浮标签栏。沉浸光感材质和 EXQUISITE 精致光学等级由系统提供，
+ * 不使用手工绘制的模糊背景层。
  */
 @ComponentV2
 export struct BottomDock {

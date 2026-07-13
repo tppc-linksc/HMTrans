@@ -1,6 +1,6 @@
 import { unifiedDataChannel } from '@kit.ArkData'
 
-/** Normalizes every ArkUI drag record into deduplicated picker-style URIs. */
+/** 将 ArkUI 拖拽记录统一转换为去重后的 Picker 风格 URI。 */
 export class DropUriService {
   extract(event: DragEvent): Array<string> {
     try {

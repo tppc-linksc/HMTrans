@@ -8,6 +8,7 @@ import { PadConnectionPage } from '../components/ConnectionPage'
 import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
 import { BottomDock } from '../components/BottomDock'
+import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
 import { PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { BackgroundTransferService } from '../services/BackgroundTransferService'
@@ -20,6 +21,7 @@ import { PadPreferencesService } from '../services/PadPreferencesService'
 import { TransferStateService } from '../services/TransferStateService'
 import { OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordinator'
 import { DiagnosticService } from '../services/DiagnosticService'
+import { NetworkChangeService } from '../services/NetworkChangeService'
 import { PadDialogService } from '../services/PadDialogService'
 import { TransferSnapshot, TransferStore } from '../persistence/TransferStore'
 import { errorText } from '../common/ErrorText'
@@ -36,7 +38,7 @@ const PRIVACY_POLICY_URL: string = 'https://hmt.tppc.top/privacy.html'
 @Entry
 @ComponentV2
 struct Index {
-  // Reactive view state stays here; file/network/storage work lives in services below.
+  // 这里只保留响应式界面状态；文件、网络和存储工作由下层服务负责。
   @Local targetIp: string = ''
   @Local portText: string = `${DEFAULT_PORT}`
   @Local localTcpPortText: string = `${DEFAULT_PORT}`
@@ -79,6 +81,7 @@ struct Index {
   private outgoingCoordinator: OutgoingTransferCoordinator =
     new OutgoingTransferCoordinator(this.transferService, this.archiveService)
   private diagnosticService: DiagnosticService = new DiagnosticService()
+  private networkChangeService: NetworkChangeService = new NetworkChangeService()
   private dialogService: PadDialogService = new PadDialogService()
   discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
@@ -120,6 +123,7 @@ struct Index {
       return
     }
     this.network().startDevicePruning()
+    this.networkChangeService.start(() => this.network().handleNetworkChanged())
     this.statusText = this.selectedDevice ? this.statusText : '正在重新发现设备'
     this.network().refreshNetworkName()
     this.network().ensureReceiverAndDiscovery().catch((err: Error) => {
@@ -130,6 +134,8 @@ struct Index {
   aboutToDisappear(): void {
     this.pageActive = false
     this.network().clearLifecycleTimers()
+    this.transfers().clearLifecycleTimers()
+    this.networkChangeService.stop()
     this.persistTransferState(true)
     this.network().stopDiscovery().catch(() => {})
     this.transferService.stopReceive().catch(() => {})
@@ -140,7 +146,7 @@ struct Index {
       if (this.contentUnlocked) {
         this.MainLayout()
       } else {
-        this.PrivacyBlankPage()
+        PadPrivacyBlankPage()
       }
       if (this.showPrivacyConsentDialog) {
         PrivacyConsentOverlay({
@@ -151,15 +157,6 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-  }
-
-  @Builder
-  private PrivacyBlankPage() {
-    Column()
-      .width('100%')
-      .height('100%')
-      .backgroundColor('#FFFFFF')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -341,7 +338,7 @@ struct Index {
     this.showToast('临时传输空间已清除')
   }
 
-  /** Re-requests a denied grant, then verifies writability without leaving a test file. */
+  /** 对已拒绝的授权再次发起申请，并在不残留测试文件的前提下验证可写性。 */
   private async checkReceiveDirectory(): Promise<void> {
     try {
       if (this.receiveDirectory.length === 0) {
@@ -366,7 +363,7 @@ struct Index {
     try {
       this.getUIContext().getPromptAction().showToast({ message, duration: 3000 })
     } catch (_err) {
-      // The page may already be leaving when an asynchronous permission check finishes.
+      // 异步权限检查结束时页面可能已开始退出。
     }
   }
 
@@ -492,7 +489,7 @@ struct Index {
     }
     await this.loadPreferences(context)
     await this.restoreTransferState(context)
-    // Seven-day cleanup excludes every resumable task restored from local state.
+    // 七天过期清理会跳过所有从本地状态恢复、仍可续传的任务。
     this.stagingStorageService.pruneExpired(
       `${context.filesDir}/HMTrans/Staging`,
       this.currentTransfers.flatMap((item: TransferListItem) => [item.id, item.groupId]),
@@ -503,11 +500,12 @@ struct Index {
     await this.prepareReceiveDirectory(context)
     await this.network().ensureReceiverAndDiscovery()
     this.network().startDevicePruning()
+    this.networkChangeService.start(() => this.network().handleNetworkChanged())
   }
 
-  // MARK: Privacy, storage and persisted preferences
+  // MARK: 隐私、存储与持久化偏好
 
-  /** Keeps notification and in-app pause/cancel mutations on the same task model. */
+  /** 让通知栏与应用内的暂停、取消操作修改同一份任务模型。 */
   private registerNotificationActions(context: common.UIAbilityContext): void {
     if (this.notificationActionsRegistered) return
     this.notificationActionsRegistered = true
@@ -655,7 +653,7 @@ struct Index {
     }
   }
 
-  /** Migrates legacy Picker-only tasks instead of retrying an expired URI forever. */
+  /** 迁移仅依赖旧 Picker 的任务，避免对已过期 URI 无限重试。 */
   private sourceUnavailableItem(item: TransferListItem): TransferListItem {
     return new TransferListItem({
       id: item.id, groupId: item.groupId, fileName: item.fileName, peerName: item.peerName,
@@ -705,7 +703,7 @@ struct Index {
     }, 1000)
   }
 
-  // MARK: Service switches and network lifecycle
+  // MARK: 服务开关与网络生命周期
 
   private setReceiverEnabled(enabled: boolean): void {
     this.receiverEnabled = enabled
@@ -837,9 +835,8 @@ struct Index {
     try {
       this.getUIContext().runScopedTask(task)
     } catch (_) {
-      // A failed scoped task normally means the page or its UI context has
-      // already been destroyed. Running the callback directly here would
-      // mutate stale reactive state from an arbitrary worker thread.
+      // 作用域任务失败通常意味着页面或其 UI 上下文已经销毁。
+      // 此时直接执行回调会从任意工作线程修改已经失效的响应式状态。
     }
   }
 
@@ -904,7 +901,7 @@ struct Index {
     return fallback
   }
 
-  /** Advertises the user-facing HarmonyOS version instead of the OpenHarmony build string. */
+  /** 对外广播用户可见的 HarmonyOS 版本，而不是 OpenHarmony 构建字符串。 */
   localSystemVersion(): string {
     const value = deviceInfo.displayVersion.trim()
     const version = value.match(/\d+(?:\.\d+){2,3}/)?.[0] ?? value

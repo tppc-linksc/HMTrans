@@ -1,6 +1,6 @@
 import Foundation
 
-/// Maintains app-private resumable artifacts without touching user downloads.
+/// 维护应用私有的可续传产物，不触碰用户下载文件。
 struct StagingMaintenanceService {
     private let fileManager = FileManager.default
 

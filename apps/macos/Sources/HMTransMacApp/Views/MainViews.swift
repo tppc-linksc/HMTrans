@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Secondary Settings scene retained for the standard macOS Settings command.
+/// 为标准 macOS“设置”命令保留的辅助设置场景。
 struct SettingsView: View {
     let model: TransferViewModel
 
@@ -27,8 +27,7 @@ struct ContentView: View {
     var body: some View { V02RootView(model: model) }
 }
 
-/// One history row owns its complete context menu so right-clicking never
-/// requires finding a narrow gap between nested cards.
+/// 每条历史记录自行管理完整右键菜单，用户无需在嵌套卡片的狭窄缝隙中寻找点击位置。
 struct FileRow: View {
     struct Actions {
         let open: (TransferListItem) -> Void

@@ -1,7 +1,7 @@
 import { uniformTypeDescriptor } from '@kit.ArkData'
 import { DeviceInfo } from '../common/Protocol'
 
-/** Presentational connection page; discovery and pairing remain controller-owned. */
+/** 连接页面只负责展示，发现与配对仍由控制器管理。 */
 @ComponentV2
 export struct PadConnectionPage {
   @Param compactLayout: boolean = false
@@ -57,7 +57,7 @@ export struct PadConnectionPage {
     .border({ width: 1, color: $r('app.color.border_subtle') })
   }
 
-  /** Sending belongs to the selected connected devices, matching the Mac connection page. */
+  /** 发送目标由已选中的连接设备决定，与 Mac 连接页逻辑一致。 */
   @Builder
   private FileSendSection() {
     Column({ space: 9 }) {
@@ -178,7 +178,7 @@ export struct PadConnectionPage {
     )
   }
 
-  /** Normalize Apple's advertised version into the concise product wording used by both clients. */
+  /** 将 Apple 广播的版本信息规范为双端一致的简洁产品文案。 */
   private systemVersionLabel(device: DeviceInfo): string {
     const raw = device.systemVersion ?? device.version
     if (device.platform !== 'macOS') return `${device.platform} ${raw}`

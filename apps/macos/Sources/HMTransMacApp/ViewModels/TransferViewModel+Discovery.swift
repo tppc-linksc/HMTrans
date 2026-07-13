@@ -1,8 +1,7 @@
 import Foundation
 import HMTransCore
 
-/// Device discovery and identity de-duplication are isolated from transfer
-/// state so a fallback TCP probe can never create a second physical device.
+/// 设备发现与身份去重独立于传输状态，确保回退 TCP 探测不会创建第二个物理设备。
 @MainActor
 extension TransferViewModel {
     func startDiscovery() {
@@ -49,9 +48,8 @@ extension TransferViewModel {
     }
 
     func mergeDiscoveredDevice(_ incoming: DeviceInfo) {
-        // Missing identity data means the packet is unverified, not that a
-        // paired installation changed identity. Revoke trust only when the
-        // peer supplied a concrete fingerprint that differs from the stored one.
+        // 缺少身份数据只表示数据包未验证，不代表已配对安装更换了身份。
+        // 仅当对端提供明确且不同于本地记录的指纹时才撤销信任。
         if TrustedDevicesStore.contains(incoming.deviceId),
            let fingerprint = incoming.identityFingerprint,
            !fingerprint.isEmpty,
@@ -115,7 +113,7 @@ extension TransferViewModel {
             while !Task.isCancelled {
                 self?.pruneStaleDevices()
                 self?.startFallbackNetworkScan()
-                // A four-second cadence avoids the old one-second idle wakeup.
+                // 四秒一次可避免旧实现每秒唤醒一次空闲应用。
                 try? await Task.sleep(for: .seconds(4))
             }
         }
@@ -192,9 +190,8 @@ extension TransferViewModel {
         if let existing = nearbyDevices.first(where: { $0.ip == ip }) {
             deviceLastSeenAt[existing.deviceId] = Date()
         }
-        // A successful TCP probe has no stable device ID or fingerprint. It
-        // may refresh an already discovered device, but must never fabricate a
-        // second clickable device that asks for pairing again.
+        // TCP 探测成功并不提供稳定设备 ID 或指纹。它可以刷新已发现设备，
+        // 但绝不能伪造第二个可点击并再次要求配对的设备。
     }
 
     private func discoveredDevice(_ lhs: DeviceInfo, matches rhs: DeviceInfo) -> Bool {

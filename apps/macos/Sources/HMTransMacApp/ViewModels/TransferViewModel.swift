@@ -11,6 +11,7 @@ final class TransferViewModel {
     private static let discoveryPortKey = "discoveryPort"
     private static let receiverEnabledKey = "receiverEnabled"
     private static let discoveryEnabledKey = "discoveryEnabled"
+    // 仅用于识别旧版本保存目录；拆开旧名称可避免它重新出现在当前品牌文案检索中。
     private static let legacyReceiveDirectoryName = "Pure" + "Send"
 
     var host: String = UserDefaults.standard.string(forKey: "lastHost") ?? ""
@@ -48,6 +49,7 @@ final class TransferViewModel {
     var transferControls: [UUID: TransferControl] = [:]
     let backgroundController = MacBackgroundTransferController()
     private let stagingMaintenance = StagingMaintenanceService()
+    private let networkChangeMonitor = MacNetworkChangeMonitor()
     let sharedPreparedSources = SharedPreparedSourceStore()
     let sendConcurrencyGate = AsyncConcurrencyGate(limit: 3)
     private var transferGeneration = 0
@@ -105,8 +107,7 @@ final class TransferViewModel {
 
     func markDeviceConfirmed(_ deviceID: String) {
         confirmedDeviceLastSeenAt[deviceID] = Date()
-        // Whole-value assignment reliably notifies SwiftUI that a card must
-        // move between the offline and connected visual groups.
+        // 整体赋值可以稳定触发 SwiftUI 刷新，让设备卡片在离线组和已连接组之间移动。
         var updated = connectedDeviceIDs
         updated.insert(deviceID)
         connectedDeviceIDs = updated
@@ -188,6 +189,7 @@ final class TransferViewModel {
         pruneTask?.cancel()
         pairingTask?.cancel()
         persistenceTask?.cancel()
+        networkChangeMonitor.stop()
         transferControls.values.forEach { $0.cancel() }
         store.saveImmediately(current: currentTransfers, history: historyTransfers)
     }
@@ -202,8 +204,21 @@ final class TransferViewModel {
         stagingMaintenance.pruneExpired(activeTransferIDs: activeArtifactIDs)
         clearLocalSavedTargetIfNeeded()
         ensureReceiverAndDiscovery()
+        networkChangeMonitor.start { [weak self] in
+            Task { @MainActor in self?.handleNetworkPathChanged() }
+        }
         startDevicePruning()
         startPairingCountdown()
+    }
+
+    /// 网络切换后重建发现和接收监听，避免继续绑定旧网卡地址。
+    private func handleNetworkPathChanged() {
+        guard didBootstrap else { return }
+        receiver.stop()
+        receiverRunning = false
+        stopDiscovery()
+        ensureReceiverAndDiscovery()
+        status = "网络已变化，正在重新发现设备"
     }
 
     func regeneratePairingCode() {
@@ -505,8 +520,7 @@ final class TransferViewModel {
         if selectedTargetDeviceIDs.isEmpty {
             useDevice(device)
         } else {
-            // Additional online devices are available but are not silently
-            // added to a multi-device send target set.
+            // 即使还有其他在线设备，也不会将其静默加入多设备发送目标集合。
             resumeWaitingTransfers(for: device)
         }
     }
@@ -592,8 +606,7 @@ final class TransferViewModel {
                     self.status = "设备未连接：\(device.name)"
                     return
                 }
-                // A listening TCP port has no device fingerprint. Keep the card
-                // offline until the directed discovery response confirms identity.
+                // 仅探测到 TCP 端口无法获得设备指纹；定向发现响应确认身份前，卡片保持离线。
                 self.discovery?.probe(address: device.address)
                 self.status = "设备可达，正在确认身份：\(device.name)"
             }
@@ -752,8 +765,7 @@ final class TransferViewModel {
                             fileType: prepared.sourceKind == "folder" ? "文件夹" : fileTypeLabel(prepared.displayName),
                             detail: prepared.cleanupDirectory == nil ? "准备发送" : "已压缩为 zip，准备发送"
                         )
-                        // Hashing can take noticeable time for multi-gigabyte
-                        // payloads, so expose the phase before Core starts it.
+                        // 多 GB 载荷的哈希计算可能耗时明显，因此在 Core 开始前先展示此阶段。
                         self?.markTransferVerifying(id: transferId)
                     }
                     try sendFile(

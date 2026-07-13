@@ -1,6 +1,6 @@
 /**
- * Converts ArkTS Error/BusinessError/unknown values into a useful diagnostic.
- * JSON.stringify(new Error()) is usually "{}", which hides the real failure.
+ * 将 ArkTS Error、BusinessError 或未知值转换为可用的诊断文本。
+ * JSON.stringify(new Error()) 通常只会得到“{}”，从而掩盖真实错误。
  */
 export function errorText(value: Object | Error | string | number | undefined | null): string {
   if (value === undefined) return 'unknown error'

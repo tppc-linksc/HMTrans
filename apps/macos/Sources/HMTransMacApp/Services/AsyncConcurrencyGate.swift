@@ -1,7 +1,6 @@
 import Foundation
 
-/// FIFO gate used to cap independent Mac network sessions without coupling
-/// their progress, errors, or retry state.
+/// 先进先出的并发闸门，用于限制相互独立的 Mac 网络会话，且不耦合各自的进度、错误和重试状态。
 actor AsyncConcurrencyGate {
     private let limit: Int
     private var active = 0

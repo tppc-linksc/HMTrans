@@ -1,8 +1,7 @@
 import Foundation
 
-/// Shares one persisted folder archive across every child in a multi-device
-/// transfer group. Cleanup happens only after the last child releases it, and
-/// any resumable child keeps the artifact alive.
+/// 在多设备传输组的所有子任务之间共享一个持久化文件夹归档。
+/// 仅在最后一个子任务释放后清理；任一可续传子任务都会保留该产物。
 final class SharedPreparedSourceStore: @unchecked Sendable {
     private struct Entry {
         let source: PreparedSendFile

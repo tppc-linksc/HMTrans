@@ -17,7 +17,7 @@ public enum HMTransError: Error, CustomStringConvertible {
     }
 }
 
-/// Thread-safe user control shared by UI commands and the file transfer loop.
+/// 界面命令与文件传输循环共享的线程安全用户控制器。
 public final class TransferControl: @unchecked Sendable {
     private let condition = NSCondition()
     private var paused = false
@@ -69,8 +69,7 @@ public final class TransferControl: @unchecked Sendable {
     }
 }
 
-/// The deployed 0.2 wire metadata. JSON is newline-delimited; file bytes follow
-/// only after ReceiveDecision has been returned by the receiver.
+/// 已部署的 0.2 线协议元数据。JSON 使用换行分隔，只有接收端返回 ReceiveDecision 后才发送文件字节。
 public struct FileMeta: Codable, Sendable {
     public let type: String
     public let app: String

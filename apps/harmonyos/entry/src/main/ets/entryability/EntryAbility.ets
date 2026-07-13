@@ -29,7 +29,7 @@ export default class EntryAbility extends UIAbility {
     })
   }
 
-  /** Bridges notification action buttons to the already-running ArkUI page. */
+  /** 将通知操作按钮桥接到已经运行的 ArkUI 页面。 */
   private dispatchTransferAction(want: Want): void {
     const action = want.parameters?.['hmtransAction']
     if (typeof action === 'string' && action.length > 0) {

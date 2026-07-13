@@ -73,8 +73,7 @@ export class DiscoveryService {
       throw new Error(errorText(err))
     }
 
-    // Use the LAN limited broadcast and paired-device unicast targets instead
-    // of continuously sweeping guessed private subnets.
+    // 使用局域网受限广播和已配对设备的单播地址，不持续扫描猜测出的私有网段。
     const broadcastAddresses: Array<string> = ['255.255.255.255']
     const beaconTargets = this.uniqueTargets(broadcastAddresses.concat(knownTargets))
 
@@ -97,8 +96,7 @@ export class DiscoveryService {
     }
 
     await sendBeacon()
-    // Both clients expire a device after 12 seconds. A five-second heartbeat
-    // leaves room for one dropped packet without showing asymmetric state.
+    // 两端均在 12 秒后判定设备离线；5 秒心跳允许偶发丢包而不产生单边在线状态。
     this.timer = setInterval(sendBeacon, 5000)
   }
 
@@ -127,9 +125,8 @@ export class DiscoveryService {
   }
 
   private resolvePeerAddress(advertised: string, remote: string): string {
-    // On current HarmonyOS UDPSocket builds, remoteInfo.address can report the
-    // tablet's local interface address instead of the datagram sender. Prefer
-    // the peer's advertised LAN address and retain remoteInfo only as fallback.
+    // 当前 HarmonyOS UDPSocket 某些版本会把 remoteInfo.address 报告为平板本机网卡地址，
+    // 而不是数据报发送方地址。优先使用对端广播的局域网地址，仅将 remoteInfo 作为回退。
     return this.isUsableAddress(advertised) ? advertised : remote
   }
 

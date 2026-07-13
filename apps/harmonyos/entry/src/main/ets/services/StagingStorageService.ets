@@ -1,6 +1,6 @@
 import { fileIo as fs } from '@kit.CoreFileKit'
 
-/** Recursively manages only HMTrans app-private staging paths. */
+/** 仅递归管理 HMTrans 应用私有暂存路径。 */
 export class StagingStorageService {
   clear(path: string): void {
     this.removeRecursively(path)
@@ -26,8 +26,7 @@ export class StagingStorageService {
   }
 
   /**
-   * Removes abandoned private artifacts after the retention window while
-   * preserving every task that is still active, paused, or waiting to resume.
+   * 超过保留期后删除已废弃的私有产物，同时保留仍在活动、暂停或等待恢复的任务。
    */
   pruneExpired(root: string, activeTransferIds: Array<string>, retentionMs: number): void {
     const cutoff = Date.now() - retentionMs

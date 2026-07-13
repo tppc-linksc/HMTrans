@@ -146,9 +146,8 @@ export class TransferStore {
       return
     }
     await this.store.executeSql('PRAGMA journal_mode=WAL')
-    // v0.2 persists transfers as one atomic snapshot. These unused prototype
-    // tables were never read or written and only implied a migration that did
-    // not exist, so remove them without touching devices/history/diagnostics.
+    // v0.2 将传输状态作为一个原子快照持久化。这些原型表从未被读写，且暗示了并不存在的迁移，
+    // 因此将其删除，但不触碰设备、历史和诊断数据。
     await this.store.executeSql('DROP TABLE IF EXISTS transfer_groups')
     await this.store.executeSql('DROP TABLE IF EXISTS transfers')
     await this.store.executeSql('DROP TABLE IF EXISTS checkpoints')

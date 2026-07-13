@@ -115,8 +115,7 @@ final class TransferStore: @unchecked Sendable {
         }
     }
 
-    /// Records a stable, local-only diagnostic event. Messages must already be
-    /// free of file contents and pairing codes before entering this method.
+    /// 记录稳定且仅保存在本机的诊断事件。调用前必须确保消息不含文件内容和配对码。
     func recordDiagnostic(
         code: String,
         module: String,
@@ -183,9 +182,8 @@ final class TransferStore: @unchecked Sendable {
     }
 
     private func migrate() {
-        // Version 2 keeps only tables that have an implemented read/write
-        // path. Group/checkpoint/artifact metadata already lives inside the
-        // durable transfer payload and app-private staging files.
+        // 版本 2 只保留已有完整读写路径的表。分组、检查点和产物元数据已存于
+        // 持久化传输载荷与应用私有暂存文件中。
         execute("DROP TABLE IF EXISTS transfer_groups")
         execute("DROP TABLE IF EXISTS checkpoints")
         execute("DROP TABLE IF EXISTS artifacts")

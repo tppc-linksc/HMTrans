@@ -58,7 +58,7 @@ function directorySummaryTask(root: string): Array<number> {
 }
 
 export class ArchiveService {
-  /** A resumable outgoing task is valid only while its private staging copy exists. */
+  /** 只有私有暂存副本仍存在时，发送任务才具备续传条件。 */
   sourceExists(path: string | undefined): boolean {
     if (!path || path.length === 0) return false
     try {
@@ -74,7 +74,7 @@ export class ArchiveService {
     try { if (fs.listFileSync(parent).length === 0) fs.rmdirSync(parent) } catch (_) {}
   }
 
-  /** Copies picker content into app-private storage before networking starts. */
+  /** 网络传输开始前，将 Picker 内容复制到应用私有存储。 */
   async prepare(uri: string, context: common.UIAbilityContext, transferId: string): Promise<SendableSource> {
     const appRoot = `${context.filesDir}/HMTrans`
     const stagingRoot = `${appRoot}/Staging`
@@ -119,7 +119,7 @@ export class ArchiveService {
     return {
       uri: archivePath,
       originalUri: uri,
-      // The archive is an internal payload; UI and history keep folder semantics.
+      // 归档只是内部载荷，界面和历史记录仍保留文件夹语义。
       displayName: baseName,
       isArchive: true,
       fileSize: this.safeFileSize(archivePath),
@@ -130,7 +130,7 @@ export class ArchiveService {
     }
   }
 
-  /** Rebuilds a send source from a persisted task without reopening Picker URI. */
+  /** 从持久化任务重建发送源，无需重新打开 Picker URI。 */
   restore(stagingPath: string, originalUri: string | undefined, displayName: string,
     fileSize: number, fileType: string, sourceSize?: number, sourceFileCount?: number): SendableSource {
     if (!this.sourceExists(stagingPath)) {
@@ -159,9 +159,8 @@ export class ArchiveService {
   }
 
   /**
-   * Picker URIs can lose their grant after the Picker closes or the app restarts.
-   * Opening the URI while the grant is alive, then copying by file descriptor,
-   * leaves networking and resume logic with a normal app-private file path.
+   * Picker 关闭或应用重启后，Picker URI 可能失去授权。
+   * 在授权有效时打开 URI 并通过文件描述符复制，网络与续传逻辑即可使用普通的应用私有路径。
    */
   private async copyPickerSource(uri: string, stagedPath: string): Promise<void> {
     const temporaryPath = `${stagedPath}.copying`

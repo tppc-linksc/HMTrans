@@ -14,7 +14,7 @@ export interface PadDiagnosticSnapshot {
   status: string
 }
 
-/** Produces a support report while removing IP addresses and local paths. */
+/** 生成支持诊断报告，同时移除 IP 地址和本地路径。 */
 export class DiagnosticService {
   async copy(snapshot: PadDiagnosticSnapshot, store: TransferStore): Promise<void> {
     const errors = (await store.recentDiagnosticSummary()).map((value: string) => this.redact(value)).join('\n')

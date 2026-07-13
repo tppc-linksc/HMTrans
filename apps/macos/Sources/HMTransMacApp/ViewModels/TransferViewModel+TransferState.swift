@@ -2,8 +2,7 @@ import AppKit
 import Foundation
 import HMTransCore
 
-/// Task-state mutations live together so UI actions, persistence, and
-/// background activity always observe the same transition.
+/// 将任务状态变更集中管理，使界面操作、持久化和后台活动始终观察到同一次状态转换。
 @MainActor
 extension TransferViewModel {
     func redactDiagnosticText(_ value: String) -> String {
@@ -68,7 +67,7 @@ extension TransferViewModel {
             cancel(item)
             return
         }
-        // Snapshot first because cancel mutates currentTransfers.
+        // 取消操作会修改 currentTransfers，因此先创建快照。
         for row in currentTransfers.filter({ $0.groupId == groupID }) { cancel(row) }
     }
 

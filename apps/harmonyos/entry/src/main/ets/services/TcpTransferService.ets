@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit'
-import { fileIo as fs } from '@kit.CoreFileKit'
+import { fileIo as fs, statfs } from '@kit.CoreFileKit'
 import { zlib } from '@kit.BasicServicesKit'
 import { socket } from '@kit.NetworkKit'
 import { arrayBufferToString, sliceArrayBuffer } from '../common/Bytes'
@@ -27,6 +27,9 @@ import { ZipSafetyService } from './ZipSafetyService'
 
 const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
 const MAX_ACTIVE_CONNECTIONS: number = 16
+const CONTROL_RESPONSE_TIMEOUT_MS: number = 30 * 1000
+const VERIFY_RESULT_TIMEOUT_MS: number = 10 * 60 * 1000
+const STORAGE_SAFETY_MARGIN_BYTES: number = 64 * 1024 * 1024
 
 export interface TransferCallbacks {
   onStatus: (value: string) => void
@@ -36,6 +39,23 @@ export interface TransferCallbacks {
   onReceived?: (meta: FileMeta, path: string) => void
   onFailed?: (meta: FileMeta, reason: string) => void
   onTransferActivity?: (active: boolean) => void
+}
+
+/** 将发送参数收敛到一个对象，避免调用方因位置参数过多而传错字段。 */
+export interface SendFileOptions {
+  uri: string
+  host: string
+  port: number
+  callbacks: TransferCallbacks
+  senderDeviceId?: string
+  senderName?: string
+  displayName?: string
+  transferId?: string
+  sourceKind?: string
+  originalSourceName?: string
+  sourceSize?: number
+  sourceFileCount?: number
+  senderFingerprint?: string
 }
 
 interface MessageEnvelope {
@@ -66,6 +86,20 @@ class LineReader {
     }
     return lines
   }
+}
+
+/** 为控制响应增加明确上限，避免对端失联后任务永久挂起。 */
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(reason)), timeoutMs)
+    operation.then((value: T) => {
+      clearTimeout(timer)
+      resolve(value)
+    }).catch((err: Error) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+  })
 }
 
 class TransferSessionControl {
@@ -161,7 +195,7 @@ export class TcpTransferService {
     }
   }
 
-  /** Waits until cancelled file handles and sockets have left their finally blocks. */
+  /** 等待已取消任务的文件句柄与套接字退出 finally 清理段。 */
   async waitForIdle(timeoutMs: number = 3000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -177,7 +211,7 @@ export class TcpTransferService {
     try {
       await client.connect({ address: { address: host, port }, timeout: 10000 })
       await client.send({ data: encodeJsonLine(request) })
-      return await new Promise<PairingResponse>((resolve, reject) => {
+      return await withTimeout(new Promise<PairingResponse>((resolve, reject) => {
         client.on('message', (info: socket.SocketMessageInfo) => {
           const lines = reader.append(info.message)
           if (lines.length > 0) {
@@ -185,27 +219,26 @@ export class TcpTransferService {
           }
         })
         client.on('error', (err) => reject(err))
-      })
+      }), CONTROL_RESPONSE_TIMEOUT_MS, 'pairing_response_timeout')
     } finally {
       await client.close().catch(() => {})
     }
   }
 
-  async sendFileToMac(
-    uri: string,
-    host: string,
-    port: number,
-    callbacks: TransferCallbacks,
-    senderDeviceId?: string,
-    senderName?: string,
-    displayName?: string,
-    transferId?: string,
-    sourceKind?: string,
-    originalSourceName?: string,
-    sourceSize?: number,
-    sourceFileCount?: number,
-    senderFingerprint?: string
-  ): Promise<void> {
+  async sendFileToMac(options: SendFileOptions): Promise<void> {
+    const uri = options.uri
+    const host = options.host
+    const port = options.port
+    const callbacks = options.callbacks
+    const senderDeviceId = options.senderDeviceId
+    const senderName = options.senderName
+    const displayName = options.displayName
+    const transferId = options.transferId
+    const sourceKind = options.sourceKind
+    const originalSourceName = options.originalSourceName
+    const sourceSize = options.sourceSize
+    const sourceFileCount = options.sourceFileCount
+    const senderFingerprint = options.senderFingerprint
     callbacks.onTransferActivity?.(true)
     const payloadName = displayName ?? fileNameFromUri(uri)
     callbacks.onStatus(`计算校验值：${payloadName}`)
@@ -236,7 +269,7 @@ export class TcpTransferService {
       await control.checkpoint()
       await client.send({ data: encodeJsonLine(meta) })
 
-      const decision = await new Promise<ReceiveDecision>((resolve, reject) => {
+      const decision = await withTimeout(new Promise<ReceiveDecision>((resolve, reject) => {
         client.on('message', (info: socket.SocketMessageInfo) => {
           const lines = reader.append(info.message)
           if (lines.length > 0) {
@@ -244,7 +277,7 @@ export class TcpTransferService {
           }
         })
         client.on('error', (err) => reject(err))
-      })
+      }), CONTROL_RESPONSE_TIMEOUT_MS, 'receive_decision_timeout')
 
       if (!decision.accepted) {
         callbacks.onStatus(`接收方拒绝：${decision.reason ?? '无原因'}`)
@@ -282,7 +315,7 @@ export class TcpTransferService {
         }
       }
 
-      const result = await new Promise<TransferResult>((resolve, reject) => {
+      const result = await withTimeout(new Promise<TransferResult>((resolve, reject) => {
         client.off('message')
         client.on('message', (info: socket.SocketMessageInfo) => {
           const lines = reader.append(info.message)
@@ -291,7 +324,7 @@ export class TcpTransferService {
           }
         })
         client.on('error', (err) => reject(err))
-      })
+      }), VERIFY_RESULT_TIMEOUT_MS, 'transfer_verify_timeout')
 
       if (result.type !== 'transfer_success') {
         throw new Error(`接收方报告失败：${result.reason ?? 'unknown'}`)
@@ -338,6 +371,59 @@ export class TcpTransferService {
       let targetFile: fs.File | undefined
       let received = 0
       let activityStarted = false
+
+      /** 完成统一的校验、发布和回执流程，零字节文件也会走到这里。 */
+      const finalizeIncoming = async (): Promise<void> => {
+        if (!meta || !targetFile || received < meta.fileSize) return
+        const finalMeta = meta
+        fs.closeSync(targetFile)
+        targetFile = undefined
+        const sha256 = await sha256FileAsync(targetPartPath)
+        if (sha256 === finalMeta.sha256) {
+          const publishedPath = await this.publishReceivedPayload(
+            context,
+            finalMeta,
+            targetPartPath,
+            receiveDirectory,
+            `${context.filesDir}/HMTrans/Staging`
+          )
+          try {
+            fs.unlinkSync(targetMetaPath)
+          } catch (_) {
+          }
+          if (finalMeta.sourceKind === 'folder' || fs.statSync(publishedPath).size === finalMeta.fileSize) {
+            await connection.send({ data: encodeJsonLine(createTransferResult(finalMeta.transferId, sha256)) })
+            callbacks.onStatus(`已保存：${publishedPath}`)
+            callbacks.onReceived?.(finalMeta, publishedPath)
+          } else {
+            const savedSize = fs.statSync(publishedPath).size
+            const reason = `saved_size_mismatch:${savedSize}/${finalMeta.fileSize}`
+            await connection.send({ data: encodeJsonLine(createTransferResult(finalMeta.transferId, sha256, reason)) })
+            callbacks.onStatus(`接收失败：文件保存校验失败 ${reason}`)
+            callbacks.onFailed?.(finalMeta, reason)
+          }
+        } else {
+          try {
+            fs.unlinkSync(targetPartPath)
+          } catch (_) {
+          }
+          try {
+            fs.unlinkSync(targetMetaPath)
+          } catch (_) {
+          }
+          await connection.send({
+            data: encodeJsonLine(createTransferResult(finalMeta.transferId, sha256, 'hash_mismatch')),
+          })
+          callbacks.onStatus('接收失败：SHA-256 不一致')
+          callbacks.onFailed?.(finalMeta, 'hash_mismatch')
+        }
+        await this.closeConnection(connection)
+        this.incomingConnections.delete(finalMeta.transferId)
+        if (activityStarted) {
+          callbacks.onTransferActivity?.(false)
+          activityStarted = false
+        }
+      }
 
       connection.on('message', async (info: socket.SocketMessageInfo) => {
         try {
@@ -420,6 +506,15 @@ export class TcpTransferService {
               } catch (_) {
               }
             }
+            const remainingBytes = meta.fileSize - resumeOffset
+            const availableBytes = statfs.getFreeSizeSync(stagingDir)
+            if (availableBytes < remainingBytes + STORAGE_SAFETY_MARGIN_BYTES) {
+              await connection.send({ data: encodeJsonLine(createReceiveDecision(false, 'insufficient_space')) })
+              callbacks.onStatus('接收失败：存储空间不足，请清理空间后继续')
+              callbacks.onFailed?.(meta, 'insufficient_space')
+              await this.closeConnection(connection)
+              return
+            }
             const metaFile = fs.openSync(targetMetaPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
             try {
               fs.writeSync(metaFile.fd, JSON.stringify(meta))
@@ -437,6 +532,7 @@ export class TcpTransferService {
             await connection.send({ data: encodeJsonLine(createReceiveDecision(true, undefined, resumeOffset)) })
             callbacks.onProgress(received, meta.fileSize, meta)
             callbacks.onStatus(`接收中：${safeName}`)
+            await finalizeIncoming()
             return
           }
 
@@ -448,53 +544,7 @@ export class TcpTransferService {
           received += info.message.byteLength
           callbacks.onProgress(received, meta.fileSize, meta)
 
-          if (received >= meta.fileSize) {
-            fs.closeSync(targetFile)
-            targetFile = undefined
-            const sha256 = await sha256FileAsync(targetPartPath)
-            if (sha256 === meta.sha256) {
-              const publishedPath = await this.publishReceivedPayload(
-                context,
-                meta,
-                targetPartPath,
-                receiveDirectory,
-                `${context.filesDir}/HMTrans/Staging`
-              )
-              try {
-                fs.unlinkSync(targetMetaPath)
-              } catch (_) {
-              }
-              if (meta.sourceKind === 'folder' || fs.statSync(publishedPath).size === meta.fileSize) {
-                await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256)) })
-                callbacks.onStatus(`已保存：${publishedPath}`)
-                callbacks.onReceived?.(meta, publishedPath)
-              } else {
-                const savedSize = fs.statSync(publishedPath).size
-                const reason = `saved_size_mismatch:${savedSize}/${meta.fileSize}`
-                await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256, reason)) })
-                callbacks.onStatus(`接收失败：文件保存校验失败 ${reason}`)
-                callbacks.onFailed?.(meta, reason)
-              }
-            } else {
-              try {
-                fs.unlinkSync(targetPartPath)
-              } catch (_) {
-              }
-              try {
-                fs.unlinkSync(targetMetaPath)
-              } catch (_) {
-              }
-              await connection.send({ data: encodeJsonLine(createTransferResult(meta.transferId, sha256, 'hash_mismatch')) })
-              callbacks.onStatus('接收失败：SHA-256 不一致')
-              callbacks.onFailed?.(meta, 'hash_mismatch')
-            }
-            await this.closeConnection(connection)
-            this.incomingConnections.delete(meta.transferId)
-            if (activityStarted) {
-              callbacks.onTransferActivity?.(false)
-              activityStarted = false
-            }
-          }
+          await finalizeIncoming()
         } catch (err) {
           const errorDetail = errorText(err)
           const storageFull = errorDetail.indexOf('ENOSPC') >= 0 || errorDetail.indexOf('No space') >= 0 ||
@@ -566,7 +616,7 @@ export class TcpTransferService {
     await server.close().catch(() => {})
   }
 
-  /** Extracts verified folders privately, then publishes one final directory. */
+  /** 在私有目录解压已校验的文件夹，最后只发布一个完整目录。 */
   private async publishReceivedPayload(context: common.UIAbilityContext, meta: FileMeta, payloadPath: string,
     receiveDirectory: string, stagingDir: string): Promise<string> {
     if (meta.sourceKind !== 'folder' || meta.payloadKind !== 'zip') {

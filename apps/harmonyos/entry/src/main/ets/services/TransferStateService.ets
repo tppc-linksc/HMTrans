@@ -6,7 +6,7 @@ export interface CompletionResult {
   historyItem?: TransferListItem
 }
 
-/** Pure task-list mutations kept outside the page so persistence is explicit. */
+/** 将纯任务列表变更放在页面外部，使持久化时机清晰可见。 */
 export class TransferStateService {
   upsert(current: Array<TransferListItem>, options: TransferListItemOptions, fallbackDeviceId: string): Array<TransferListItem> {
     const item = new TransferListItem(options)

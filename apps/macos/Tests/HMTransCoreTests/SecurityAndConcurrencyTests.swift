@@ -54,8 +54,7 @@ func stalledPeerTimesOut() async throws {
     listener.newConnectionHandler = { connection in
         connections.retain(connection)
         connection.start(queue: queue)
-        // Deliberately do not receive or reply: this models a TCP peer that
-        // remains connected but never returns the receive decision frame.
+        // 故意不读取也不回复，用来模拟保持连接却永远不返回接收决策帧的 TCP 对端。
     }
     listener.start(queue: queue)
     defer {

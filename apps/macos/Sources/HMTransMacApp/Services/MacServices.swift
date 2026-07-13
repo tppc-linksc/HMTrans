@@ -82,9 +82,8 @@ func promptForPairingCode(device: DeviceInfo) -> String? {
     return code
 }
 
-/// Bridges Core's synchronous admission callback to AppKit without a
-/// `DispatchQueue.main.sync` cycle. The receiver never waits for this worker
-/// queue during stop, and a missing UI response fails closed after `timeout`.
+/// 在不形成 `DispatchQueue.main.sync` 循环的情况下，将 Core 的同步接收回调桥接到 AppKit。
+/// 接收器停止时不会等待此工作队列，界面未在 `timeout` 内响应时按拒绝处理。
 func evaluateOnMain<T: Sendable>(
     timeout: TimeInterval,
     fallback: T,
@@ -178,9 +177,8 @@ func tcpPortIsOpen(host: String, port: UInt16, timeout: TimeInterval) -> Bool {
     return result == .success && box.isReady
 }
 
-/// Protects the probe result across Network.framework's callback queue and
-/// the caller thread. A semaphore coordinates timing, but it is not a Swift
-/// memory-isolation primitive, so the value itself remains lock protected.
+/// 在 Network.framework 回调队列与调用线程之间保护探测结果。
+/// 信号量只负责时序协调，不是 Swift 内存隔离原语，因此结果值仍由锁保护。
 private final class ProbeBox: @unchecked Sendable {
     private let lock = NSLock()
     private var ready = false

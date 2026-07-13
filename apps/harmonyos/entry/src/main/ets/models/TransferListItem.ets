@@ -1,4 +1,4 @@
-/** Stable persisted states shared by controllers and views. */
+/** 控制器与视图共享的稳定持久化状态。 */
 export enum TransferState {
   Preparing = '准备中',
   Active = '传输中',

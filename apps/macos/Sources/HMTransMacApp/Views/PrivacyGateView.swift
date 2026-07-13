@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Own privacy gate. No discovery, receiver or status item starts before consent.
+/// 自有隐私门；用户同意前不启动发现、接收器或状态栏入口。
 struct PrivacyGateView: View {
     private static let privacyVersion = "2026-07-13"
     let model: TransferViewModel

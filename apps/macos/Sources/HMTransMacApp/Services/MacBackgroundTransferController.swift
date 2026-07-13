@@ -1,7 +1,6 @@
 import Foundation
 
-/// Keeps the Mac awake only while file bytes are actively prepared,
-/// transferred, or verified. Idle discovery never owns an activity token.
+/// 仅在准备、传输或校验文件字节期间保持 Mac 唤醒；空闲发现不会持有活动令牌。
 @MainActor
 final class MacBackgroundTransferController {
     private var activity: NSObjectProtocol?

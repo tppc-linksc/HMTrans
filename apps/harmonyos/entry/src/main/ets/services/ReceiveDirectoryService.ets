@@ -4,7 +4,7 @@ import { errorText } from '../common/ErrorText'
 
 const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 
-/** Owns permission and writability checks for the single public destination. */
+/** 负责唯一公共接收目录的权限申请与可写性检查。 */
 export class ReceiveDirectoryService {
   async prepare(context: common.UIAbilityContext): Promise<string> {
     try {

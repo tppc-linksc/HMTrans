@@ -6,9 +6,8 @@ import { errorText } from '../common/ErrorText'
 const TRANSFER_NOTIFICATION_ID: number = 51888
 
 /**
- * Owns the HarmonyOS continuous data-transfer task.
- * A reference count prevents concurrent file sessions from stopping each
- * other's system background task. No task is held while the app is idle.
+ * 管理 HarmonyOS 连续数据传输任务。
+ * 引用计数可防止并发文件会话相互停止系统后台任务；应用空闲时不持有任务。
  */
 export class BackgroundTransferService {
   private activeSessionCount: number = 0
@@ -29,7 +28,7 @@ export class BackgroundTransferService {
     await this.startIfNeeded(context)
   }
 
-  /** Starts protection when the setting is enabled and at least one session is active. */
+  /** 设置开启且至少有一个活动会话时启动后台保护。 */
   private async startIfNeeded(context: common.UIAbilityContext): Promise<void> {
     if (!this.enabled || this.running || this.activeSessionCount === 0) {
       return
@@ -78,7 +77,7 @@ export class BackgroundTransferService {
     this.running = false
   }
 
-  /** Adds explicit task controls in addition to the system data-transfer notice. */
+  /** 在系统数据传输通知之外补充明确的任务控制入口。 */
   private async publishControls(context: common.UIAbilityContext): Promise<void> {
     try {
       const pauseAgent = await this.actionAgent(context, 'pause_all', 51881)

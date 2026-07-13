@@ -229,9 +229,8 @@ private struct MacConnectionPage: View {
                     .frame(maxWidth: .infinity, minHeight: 54)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 12)], spacing: 12) {
-                    // The same physical device moves between these groups.
-                    // Namespaced identities prevent SwiftUI from reusing an
-                    // offline card after its model has become connected.
+                    // 同一台物理设备会在这些分组之间移动。
+                    // 带命名空间的身份可防止模型变为已连接后，SwiftUI 仍复用离线卡片。
                     ForEach(connected) { device in
                         deviceCard(device, state: .alive).id("connected-\(device.deviceId)")
                     }

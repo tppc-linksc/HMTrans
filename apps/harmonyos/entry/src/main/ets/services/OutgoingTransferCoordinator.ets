@@ -24,7 +24,7 @@ export interface OutgoingTransferCallbacks {
   isSourceReferenced: (path: string) => boolean
 }
 
-/** Prepares one source, shares it across receivers, and caps Pad concurrency at two. */
+/** 每个源文件只准备一次，并在多个接收端间复用；Pad 端并发上限为两个。 */
 export class OutgoingTransferCoordinator {
   private transferService: TcpTransferService
   private archiveService: ArchiveService
@@ -84,10 +84,21 @@ export class OutgoingTransferCoordinator {
       onTransferActivity: callbacks.onActivity,
     }
     try {
-      await this.transferService.sendFileToMac(source.uri, device.ip, device.port, transferCallbacks,
-        identity.deviceId, identity.deviceName, source.displayName, transferId,
-        source.isArchive ? 'folder' : 'file', source.displayName, source.sourceSize, source.sourceFileCount,
-        identity.fingerprint)
+      await this.transferService.sendFileToMac({
+        uri: source.uri,
+        host: device.ip,
+        port: device.port,
+        callbacks: transferCallbacks,
+        senderDeviceId: identity.deviceId,
+        senderName: identity.deviceName,
+        displayName: source.displayName,
+        transferId,
+        sourceKind: source.isArchive ? 'folder' : 'file',
+        originalSourceName: source.displayName,
+        sourceSize: source.sourceSize,
+        sourceFileCount: source.sourceFileCount,
+        senderFingerprint: identity.fingerprint,
+      })
       callbacks.onComplete(transferId)
     } catch (err) {
       const detail = errorText(err)
@@ -96,7 +107,7 @@ export class OutgoingTransferCoordinator {
         detail.indexOf('接收方报告失败') >= 0 || detail.indexOf('insufficient_space') >= 0 ||
         detail.indexOf('13900002') >= 0 || detail.indexOf('Persistent staging source is missing') >= 0)
       if (permanent) {
-        // Keep the private source for explicit retry; staging maintenance expires it after seven days.
+        // 保留私有源文件供用户主动重试，暂存维护服务会在七天后清理。
         preserve = true
         callbacks.onPermanentFailure(transferId, detail)
       }

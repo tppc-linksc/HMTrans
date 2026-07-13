@@ -13,8 +13,7 @@ import { TransferStateService } from '../services/TransferStateService'
 import { TransferStore } from '../persistence/TransferStore'
 
 /**
- * Minimal bridge implemented by the ArkUI page.  The controller owns transfer
- * decisions while the page remains the single source of reactive UI state.
+ * ArkUI 页面实现的最小桥接接口。控制器负责传输决策，页面仍是响应式界面状态的唯一来源。
  */
 export interface PadTransferHost {
   statusText: string
@@ -39,7 +38,7 @@ export interface PadTransferHost {
   showToast(message: string): void
 }
 
-/** Coordinates file selection, multi-target sending and durable task controls. */
+/** 协调文件选择、多目标发送与可持久化的任务控制。 */
 export class PadTransferController {
   private host: PadTransferHost
   private transferService: TcpTransferService
@@ -49,6 +48,7 @@ export class PadTransferController {
   private dropUriService: DropUriService
   private transferStateService: TransferStateService
   private outgoingCoordinator: OutgoingTransferCoordinator
+  private automaticResumeTimers: Map<string, number> = new Map()
 
   constructor(
     host: PadTransferHost,
@@ -195,6 +195,7 @@ export class PadTransferController {
   }
 
   cancelTransfer(item: TransferListItem): void {
+    this.clearAutomaticResume(item.id)
     this.transferService.cancelTransfer(item.id)
     this.host.activeTransferDeviceIds.delete(item.id)
     this.host.currentTransfers = this.host.currentTransfers.filter((row: TransferListItem) => row.id !== item.id)
@@ -239,16 +240,26 @@ export class PadTransferController {
   }
 
   scheduleAutomaticResume(id: string): void {
-    setTimeout(() => {
+    this.clearAutomaticResume(id)
+    const timer = setTimeout(() => {
+      this.automaticResumeTimers.delete(id)
       const waiting = this.host.currentTransfers.some((item: TransferListItem) =>
         item.id === id && item.state === TransferState.Waiting)
       if (waiting && this.host.selectedDevice && !this.host.activeTransferDeviceIds.has(id)) {
         this.host.resumeWaitingTransfers(this.host.selectedDevice)
       }
     }, 2000)
+    this.automaticResumeTimers.set(id, timer)
+  }
+
+  /** 页面退出时撤销所有延迟恢复，避免销毁后的回调继续访问页面状态。 */
+  clearLifecycleTimers(): void {
+    this.automaticResumeTimers.forEach((timer: number) => clearTimeout(timer))
+    this.automaticResumeTimers.clear()
   }
 
   completeTransfer(id: string, success: boolean, detail: string, localPath?: string): void {
+    this.clearAutomaticResume(id)
     const historyDeviceId = this.host.activeTransferDeviceIds.get(id) ?? this.host.selectedDeviceId
     this.host.activeTransferDeviceIds.delete(id)
     const result = this.transferStateService.complete(this.host.currentTransfers, id, success, detail, localPath,
@@ -325,5 +336,11 @@ export class PadTransferController {
       isSourceReferenced: (path: string) => this.host.currentTransfers.some((item: TransferListItem) =>
         item.stagingPath === path),
     }
+  }
+
+  private clearAutomaticResume(id: string): void {
+    const timer = this.automaticResumeTimers.get(id)
+    if (timer !== undefined) clearTimeout(timer)
+    this.automaticResumeTimers.delete(id)
   }
 }

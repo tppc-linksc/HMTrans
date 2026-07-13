@@ -44,7 +44,7 @@ public func requestPairing(
     return try readJSONLine(connection: connection)
 }
 
-/// Sends one resumable file payload over the HMTrans v0.2-compatible TCP wire protocol.
+/// 通过兼容 HMTrans v0.2 的 TCP 线协议发送一个可续传文件载荷。
 public func sendFile(
     fileURL: URL,
     host: String,
@@ -128,7 +128,7 @@ public func sendFile(
     }
 }
 
-/// Receives a single file and returns after the first connection completes.
+/// 接收单个文件，并在首个连接完成后返回。
 public func receiveOneFile(
     port: UInt16 = defaultPort,
     outputDirectory: String = defaultReceiveDirectory(),
@@ -269,8 +269,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         return openConnectionCount == 0 && activeTransfers.isEmpty
     }
 
-    /// Pausing a receive closes only its data connection. The private part file
-    /// remains and the sender can negotiate the saved offset after resume.
+    /// 暂停接收只关闭数据连接；私有分片会保留，恢复后发送端可协商已保存偏移量。
     public func pauseTransfer(_ transferID: String) {
         lock.lock()
         pausedTransferIDs.insert(transferID)
@@ -547,8 +546,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
         }
         connection.start(queue: queue)
-        // The caller may use a shorter timeout for probes/tests; production
-        // connections still cap the TCP handshake at ten seconds.
+        // 调用方可为探测或测试使用更短超时；正式连接的 TCP 握手上限仍为十秒。
         let connectTimeout = min(10, operationTimeout)
         guard semaphore.wait(timeout: .now() + connectTimeout) == .success else {
             connection.cancel()
@@ -669,8 +667,7 @@ private func receiveFromConnection(
         try? FileManager.default.removeItem(at: metadataURL)
     }
 
-    // Keep a small safety margin so publishing metadata and the final rename do
-    // not fail after the receiver has already promised to accept the payload.
+    // 保留少量安全空间，避免接收端承诺接收后因发布元数据或最终重命名失败。
     let remainingBytes = max(0, meta.fileSize - resumeOffset)
     let safetyMargin: Int64 = 64 * 1_024 * 1_024
     if let available = try? stagingRoot.resourceValues(

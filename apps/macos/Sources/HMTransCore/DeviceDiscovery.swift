@@ -105,8 +105,7 @@ public final class DiscoveryService: @unchecked Sendable {
         }
     }
 
-    /// Sends a signed discovery beacon to a saved address. TCP reachability by
-    /// itself is not enough to call a device connected because it proves no identity.
+    /// 向已保存地址发送带身份信息的发现信标。TCP 可达性无法证明身份，不能单独作为已连接依据。
     public func probe(address: String) {
         lock.lock()
         let fd = socketFd
@@ -380,9 +379,8 @@ private func interfaceScore(_ interface: IPv4Interface) -> Int {
 }
 
 private func resolvedPeerIPv4(advertised: String, remote: String) -> String {
-    // Prefer the source address observed by recvfrom. The advertised address
-    // may be a valid but unreachable VPN/secondary-interface address; replying
-    // to it creates a one-sided "connected" state on multi-homed Macs.
+    // 优先使用 recvfrom 观察到的源地址。广播地址可能是有效但不可达的 VPN 或次要网卡地址；
+    // 在多网卡 Mac 上向其回复会造成单边“已连接”状态。
     isUsableIPv4(remote) ? remote : advertised
 }
 
@@ -411,8 +409,7 @@ private func addressString(from address: sockaddr_in) -> String {
 
 private func waitBeforeNextBeacon(fd: Int32) {
     guard fcntl(fd, F_GETFD) != -1 else { return }
-    // Let the kernel park the discovery worker instead of repeatedly waking a
-    // RunLoop or sleeping in short slices while the app is idle.
+    // 应用空闲时让内核挂起发现工作线程，避免反复唤醒 RunLoop 或进行短间隔休眠。
     var descriptor = pollfd(fd: fd, events: 0, revents: 0)
     _ = Darwin.poll(&descriptor, 1, 5_000)
 }

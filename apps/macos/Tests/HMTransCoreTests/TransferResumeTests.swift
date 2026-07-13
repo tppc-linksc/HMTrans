@@ -50,7 +50,8 @@ func interruptedTransferResumes() async throws {
     try sourceData.write(to: sourceURL)
 
     let transferID = "resume-test-\(UUID().uuidString)"
-    let port = UInt16.random(in: 52_000...59_000)
+    // 与并发双设备测试使用不重叠的端口段，避免 Swift Testing 并行执行时互相抢占监听端口。
+    let port = UInt16.random(in: 58_000...60_000)
     let receiver = PersistentFileReceiver()
     let receivedBox = ReceivedBox()
     try receiver.start(port: port, outputDirectory: outputDirectory.path, shouldAccept: { _ in true }) { result in

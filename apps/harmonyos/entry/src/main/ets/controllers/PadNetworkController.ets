@@ -4,77 +4,15 @@ import { wifiManager } from '@kit.ConnectivityKit'
 import { DeviceInfo, FileMeta, PairingRequest, createPairingRequest } from '../common/Protocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
-import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
-import { ArchiveService, SendableSource } from '../services/ArchiveService'
+import { TransferListItem, TransferState } from '../models/TransferListItem'
+import { SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
-import { TcpTransferService } from '../services/TcpTransferService'
-import { TransferStore } from '../persistence/TransferStore'
+import { PadNetworkHost } from './PadNetworkHost'
 
 const DEVICE_TTL_MS: number = 12000
 const DEVICE_PRUNE_INTERVAL_MS: number = 4000
 
-/** Reactive state and cross-controller operations supplied by the ArkUI page. */
-export interface PadNetworkHost {
-  transferService: TcpTransferService
-  transferStore: TransferStore
-  archiveService: ArchiveService
-  discoveryService?: DiscoveryService
-  deviceId: string
-  identityFingerprint: string
-  targetIp: string
-  portText: string
-  statusText: string
-  networkName: string
-  localDeviceDisplayName: string
-  nearbyDevices: Array<DeviceInfo>
-  selectedDeviceId: string
-  selectedDeviceIds: Array<string>
-  trustedDeviceIds: Array<string>
-  currentTransfers: Array<TransferListItem>
-  pairingCode: string
-  pairingSeconds: number
-  pairingTarget: DeviceInfo | undefined
-  pairingInput: string
-  receiverEnabled: boolean
-  discoveryEnabled: boolean
-  autoReceiveTrustedEnabled: boolean
-  receiverReady: boolean
-  receiveDirectory: string
-  trustedFingerprints: Map<string, string>
-  deviceLastSeenAt: Map<string, number>
-  confirmedDeviceLastSeenAt: Map<string, number>
-  activeTransferDeviceIds: Map<string, string>
-  pruneTimer?: number
-  pairingTimer?: number
-  persistenceTimer?: number
-  localTcpPort: number
-  discoveryPort: number
-
-  abilityContext(): common.UIAbilityContext
-  localDeviceName(): string
-  localSystemVersion(): string
-  runOnUi(task: () => void): void
-  updateBackgroundTransferActivity(active: boolean): void
-  trustDevice(deviceId?: string, fingerprint?: string): Promise<void>
-  rememberDevice(device: DeviceInfo): Promise<void>
-  isTrusted(deviceId?: string): boolean
-  identityMatches(deviceId?: string, fingerprint?: string): boolean
-  saveTarget(): Promise<void>
-  sendPreparedSource(source: SendableSource, device: DeviceInfo, reuseTransferId?: string,
-    groupId?: string, cleanupSource?: boolean): Promise<boolean>
-  markCurrentTransferState(id: string, state: string, detail: string): void
-  completeTransfer(id: string, success: boolean, detail: string, localPath?: string): void
-  updateCurrentTransfer(id: string, progress: number, detail: string): void
-  upsertCurrentTransfer(item: TransferListItemOptions): void
-  progressDetail(id: string, current: number, total: number): string
-  historyDeviceIdForIncoming(meta: FileMeta): string
-  markReceivedFilePublished(transferId: string, fileName: string, path: string): Promise<void>
-  updateHistoryDetail(id: string, detailPrefix: string): void
-  showToast(message: string): void
-  confirmReceive(sender: string, fileName: string, sizeText: string): Promise<boolean>
-}
-
-/** Owns receiver, discovery, liveness and pairing decisions outside the page. */
+/** 在页面之外管理接收、发现、在线状态与配对决策。 */
 export class PadNetworkController {
   private host: PadNetworkHost
 
@@ -111,7 +49,7 @@ export class PadNetworkController {
     })
   }
 
-  // MARK: Receiver and discovery callbacks
+  // MARK: 接收与发现回调
 
   showIncomingPrompt(meta: FileMeta): Promise<boolean> {
     const sender = meta.senderName ?? meta.senderPlatform ?? '未知设备'
@@ -257,9 +195,8 @@ export class PadNetworkController {
       await this.host.discoveryService.start(this.host.localDeviceName(), this.host.localTcpPort, this.host.discoveryPort, this.host.networkName,
         this.host.localSystemVersion(), {
         onDevice: (device: DeviceInfo) => {
-          // A packet without an identity fingerprint is unverified, but it is
-          // not proof that an already paired device changed identity. Only a
-          // concrete, different fingerprint may invalidate local trust.
+          // 缺少身份指纹的数据包只能视为未验证，不能据此认定已配对设备更换了身份。
+          // 只有收到明确且不同的指纹时，才可以撤销本地信任。
           if (this.host.isTrusted(device.deviceId) && device.identityFingerprint &&
             device.identityFingerprint.length > 0 &&
             !this.host.identityMatches(device.deviceId, device.identityFingerprint)) {
@@ -289,7 +226,7 @@ export class PadNetworkController {
             if (this.host.selectedDeviceIds.length === 0) {
               this.selectDevice(device)
             } else {
-              // Do not silently turn a one-device send into "send to all".
+              // 不把单设备任务静默扩大为“发送给全部设备”。
               this.resumeWaitingTransfers(device)
             }
           }
@@ -346,6 +283,18 @@ export class PadNetworkController {
       this.host.selectedDeviceId = ''
     }
     await this.startDiscovery()
+  }
+
+  /** 网络切换后重新绑定发现与接收服务，避免继续使用旧网卡地址。 */
+  handleNetworkChanged(): void {
+    this.host.runOnUi(() => {
+      this.host.statusText = '网络已变化，正在重新发现设备'
+      this.host.transferService.stopReceive().then(() => this.stopDiscovery())
+        .then(() => this.ensureReceiverAndDiscovery())
+        .catch((err: Error) => {
+          this.host.statusText = `网络服务恢复失败：${errorText(err)}`
+        })
+    })
   }
 
   async refreshNetworkName(): Promise<void> {
@@ -419,12 +368,12 @@ export class PadNetworkController {
     this.resumeWaitingTransfers(device)
   }
 
-  /** Connected means the peer explicitly acknowledged this Pad, not merely that one broadcast was heard. */
+  /** “已连接”要求对端明确确认本 Pad，不能仅凭收到一次广播判定。 */
   isBidirectionallyAlive(deviceId: string): boolean {
     return Date.now() - (this.host.confirmedDeviceLastSeenAt.get(deviceId) ?? 0) < DEVICE_TTL_MS
   }
 
-  // MARK: Pairing and transfer target selection
+  // MARK: 配对与传输目标选择
 
   toggleTransferTarget(device: DeviceInfo): void {
     if (!this.host.isTrusted(device.deviceId)) {

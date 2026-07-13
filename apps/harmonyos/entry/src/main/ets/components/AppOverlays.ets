@@ -1,4 +1,4 @@
-/** First-run privacy gate. No network or storage service starts behind it. */
+/** 首次启动隐私门；用户确认前不启动网络或存储服务。 */
 @ComponentV2
 export struct PrivacyConsentOverlay {
   @Param onOpenPolicy: () => void = () => {}
@@ -30,7 +30,7 @@ export struct PrivacyConsentOverlay {
   }
 }
 
-/** Six-digit pairing dialog; the parent owns validation and persistence. */
+/** 六位配对码对话框；校验与持久化由父组件负责。 */
 @ComponentV2
 export struct PairingOverlay {
   @Param deviceName: string = '设备'
@@ -62,7 +62,7 @@ export struct PairingOverlay {
   }
 }
 
-/** Edits both ports atomically so the two listeners always restart together. */
+/** 原子修改两个端口，确保两类监听始终同时重启。 */
 @ComponentV2
 export struct PortEditorOverlay {
   @Param udpPort: string = '51889'

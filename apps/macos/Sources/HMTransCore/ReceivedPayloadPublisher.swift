@@ -1,7 +1,6 @@
 import Foundation
 
-/// Publishes a verified payload atomically. Folder archives stay private until
-/// all archive paths have been validated and extraction has completed.
+/// 原子发布已经校验的载荷；文件夹归档在所有路径通过校验并完成解压前始终留在私有目录。
 func publishReceivedPayload(
     meta: FileMeta,
     payloadURL: URL,
@@ -82,8 +81,7 @@ private func validateZipEntries(_ archiveURL: URL) throws {
         }
     }
 
-    // ditto preserves symbolic links. Reject them before extraction so an
-    // archive cannot publish a link that escapes the chosen destination.
+    // ditto 会保留符号链接，因此在解压前拒绝它们，防止归档发布逃逸目标目录的链接。
     let longListing = try captureZipInfo(arguments: ["-l", archiveURL.path])
     for line in String(decoding: longListing, as: UTF8.self).split(separator: "\n") {
         if line.first == "l" {

@@ -21,7 +21,7 @@ export interface PadPreferencesSnapshot {
   discoveryEnabled: boolean
 }
 
-/** Typed persistence boundary for user settings and installation identity. */
+/** 用户设置与安装身份的强类型持久化边界。 */
 export class PadPreferencesService {
   async load(context: common.UIAbilityContext): Promise<PadPreferencesSnapshot> {
     const store = await preferences.getPreferences(context, NAME)

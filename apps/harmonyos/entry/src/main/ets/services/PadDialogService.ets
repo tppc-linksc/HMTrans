@@ -1,9 +1,8 @@
 import { UIContext } from '@kit.ArkUI'
 
 /**
- * Centralizes Pad confirmation dialogs so page state code only handles the
- * resulting decision. Keeping copy and destructive-button ordering here also
- * prevents subtly different dialogs from appearing for equivalent actions.
+ * 集中管理 Pad 确认对话框，让页面状态代码只处理最终选择。
+ * 文案和破坏性按钮顺序统一放在这里，也可避免同类操作出现细微不同的弹窗。
  */
 export class PadDialogService {
   async confirm(
@@ -48,7 +47,7 @@ export class PadDialogService {
     }
   }
 
-  /** Returns 0 for back, 1 for cancel-and-keep, and 2 for cancel-and-delete. */
+  /** 返回 0 表示返回，1 表示取消并保留，2 表示取消并删除。 */
   async cancellationPolicy(context: UIContext, title: string, message: string): Promise<number> {
     try {
       const result = await context.getPromptAction().showDialog({
