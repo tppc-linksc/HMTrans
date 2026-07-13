@@ -33,7 +33,7 @@ export struct TransferHistoryPage {
         this.FilterButton('失败', 'failed')
         this.FilterButton('已取消', 'cancelled')
       }
-      .layoutWeight(1).height(42).padding(3).backgroundColor($r('app.color.control_track')).borderRadius(12)
+      .width(496).height(42).padding(3).backgroundColor($r('app.color.control_track')).borderRadius(12)
       Blank()
       Text('清空记录').fontSize(11).fontWeight(FontWeight.Medium).fontColor($r('app.color.danger'))
         .height(36).padding({ left: 10, right: 4 }).textAlign(TextAlign.Center)
@@ -145,7 +145,7 @@ export struct TransferHistoryPage {
 
   @Builder
   private FilterButton(label: string, value: string) {
-    Button(label).layoutWeight(1).height(36).fontSize(12)
+    Button(label).width(98).height(36).fontSize(12)
       .fontWeight(this.historyFilter === value ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(this.historyFilter === value ? '#FFFFFF' : $r('app.color.text_secondary'))
       .backgroundColor(this.historyFilter === value ? $r('app.color.accent') : Color.Transparent).borderRadius(9)

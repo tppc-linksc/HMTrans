@@ -212,13 +212,28 @@ struct Index {
   @Builder
   private PageContent() {
     Column({ space: 18 }) {
-      if (this.activePage === 'connection') {
-        this.ConnectionPage()
-      } else if (this.activePage === 'history') {
-        this.TransferPage()
-      } else {
-        this.SettingsPage()
+      // 三个主页面常驻组件树，只切换可见性；避免每次点击 Dock 都销毁并重建
+      // 设备卡片、历史列表和设置控件，从而减少切页时的主线程抖动。
+      Stack({ alignContent: Alignment.TopStart }) {
+        Column() {
+          this.ConnectionPage()
+        }
+        .width('100%')
+        .visibility(this.activePage === 'connection' ? Visibility.Visible : Visibility.None)
+
+        Column() {
+          this.TransferPage()
+        }
+        .width('100%')
+        .visibility(this.activePage === 'history' ? Visibility.Visible : Visibility.None)
+
+        Column() {
+          this.SettingsPage()
+        }
+        .width('100%')
+        .visibility(this.activePage === 'settings' ? Visibility.Visible : Visibility.None)
       }
+      .width('100%')
     }
     .width('100%')
     .constraintSize({ minHeight: '100%' })
