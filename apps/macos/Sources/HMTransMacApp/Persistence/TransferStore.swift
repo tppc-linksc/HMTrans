@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SQLite3
 
 /// v0.2 本地状态仓库。文件字节始终留在 Staging；SQLite 只保存任务、设备和检查点元数据。
@@ -10,13 +11,18 @@ final class TransferStore: @unchecked Sendable {
     }
 
     private let queue = DispatchQueue(label: "HMTrans.TransferStore")
+    private let queueKey = DispatchSpecificKey<UInt8>()
+    private let log = Logger(subsystem: "com.linksc.hmtrans", category: "database")
     private var database: OpaquePointer?
+    private var persistedTransferRows: [String: String] = [:]
+    private var pendingError: String?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     init() {
         encoder.dateEncodingStrategy = .millisecondsSince1970
         decoder.dateDecodingStrategy = .millisecondsSince1970
+        queue.setSpecific(key: queueKey, value: 1)
         queue.sync {
             openDatabase()
             migrate()
@@ -24,11 +30,16 @@ final class TransferStore: @unchecked Sendable {
     }
 
     deinit {
-        queue.sync {
-            if let database {
+        let closeDatabase = { [self] in
+            if let database = self.database {
                 sqlite3_close(database)
             }
-            database = nil
+            self.database = nil
+        }
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            closeDatabase()
+        } else {
+            queue.sync(execute: closeDatabase)
         }
     }
 
@@ -38,12 +49,15 @@ final class TransferStore: @unchecked Sendable {
             var history: [TransferListItem] = []
             var devices: [PersistedDevice] = []
 
-            query("SELECT bucket, payload FROM transfers ORDER BY updated_at DESC") { statement in
-                guard let bucketText = sqlite3_column_text(statement, 0),
-                      let payloadText = sqlite3_column_text(statement, 1)
+            query("SELECT id, bucket, payload FROM transfers ORDER BY updated_at DESC") { statement in
+                guard let idText = sqlite3_column_text(statement, 0),
+                      let bucketText = sqlite3_column_text(statement, 1),
+                      let payloadText = sqlite3_column_text(statement, 2)
                 else { return }
+                let id = String(cString: idText)
                 let bucket = String(cString: bucketText)
                 let payload = Data(String(cString: payloadText).utf8)
+                persistedTransferRows[id] = bucket + "\u{0}" + String(cString: payloadText)
                 guard let item = try? decoder.decode(TransferListItem.self, from: payload) else { return }
                 if bucket == "history" { history.append(item) } else { current.append(item) }
             }
@@ -56,6 +70,13 @@ final class TransferStore: @unchecked Sendable {
                 }
             }
             return Snapshot(current: current, history: history, devices: devices)
+        }
+    }
+
+    func consumeLastError() -> String? {
+        queue.sync {
+            defer { pendingError = nil }
+            return pendingError
         }
     }
 
@@ -80,7 +101,7 @@ final class TransferStore: @unchecked Sendable {
                 bind(device.id, at: 1, statement: statement)
                 bind(text, at: 2, statement: statement)
                 sqlite3_bind_double(statement, 3, device.lastSeenAt.timeIntervalSince1970)
-                sqlite3_step(statement)
+                step(statement, operation: "upsert device")
             }
         }
     }
@@ -89,7 +110,7 @@ final class TransferStore: @unchecked Sendable {
         queue.async { [weak self] in
             self?.withStatement("DELETE FROM devices WHERE id = ?") { statement in
                 self?.bind(id, at: 1, statement: statement)
-                sqlite3_step(statement)
+                self?.step(statement, operation: "delete device")
             }
         }
     }
@@ -113,8 +134,9 @@ final class TransferStore: @unchecked Sendable {
                 self?.bind(deviceID, at: 5, statement: statement)
                 self?.bind(code, at: 6, statement: statement)
                 self?.bind(message, at: 7, statement: statement)
-                sqlite3_step(statement)
+                self?.step(statement, operation: "insert diagnostic event")
             }
+            self?.execute("DELETE FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY created_at DESC LIMIT 500)")
         }
     }
 
@@ -143,9 +165,15 @@ final class TransferStore: @unchecked Sendable {
             create: true
         ))?.appendingPathComponent("HMTrans", isDirectory: true)
         guard let root else { return }
-        try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        } catch {
+            report("create database directory", detail: error.localizedDescription)
+            return
+        }
         let path = root.appendingPathComponent("HMTrans.sqlite3").path
         guard sqlite3_open(path, &database) == SQLITE_OK else {
+            report("open database")
             database = nil
             return
         }
@@ -155,6 +183,8 @@ final class TransferStore: @unchecked Sendable {
     }
 
     private func migrate() {
+        // Version 1 is the first durable v0.2 schema. Future ALTER TABLE work
+        // must increment user_version and add an ordered migration here.
         execute("CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, payload TEXT NOT NULL, last_seen_at REAL NOT NULL)")
         execute("CREATE TABLE IF NOT EXISTS transfer_groups (id TEXT PRIMARY KEY, state TEXT NOT NULL, created_at REAL NOT NULL, completed_at REAL)")
         execute("CREATE TABLE IF NOT EXISTS transfers (id TEXT PRIMARY KEY, bucket TEXT NOT NULL, state TEXT NOT NULL, device_id TEXT, group_id TEXT, progress REAL NOT NULL, payload TEXT NOT NULL, updated_at REAL NOT NULL)")
@@ -162,12 +192,18 @@ final class TransferStore: @unchecked Sendable {
         execute("CREATE TABLE IF NOT EXISTS checkpoints (transfer_id TEXT PRIMARY KEY, confirmed_offset INTEGER NOT NULL, chunk_size INTEGER NOT NULL, last_chunk_hash TEXT, updated_at REAL NOT NULL, generation INTEGER NOT NULL DEFAULT 0)")
         execute("CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, path TEXT NOT NULL, purpose TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, ref_count INTEGER NOT NULL DEFAULT 1, expires_at REAL)")
         execute("CREATE TABLE IF NOT EXISTS diagnostic_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL NOT NULL, level TEXT NOT NULL, module TEXT NOT NULL, transfer_id TEXT, device_id TEXT, error_code TEXT, message TEXT NOT NULL)")
+        execute("PRAGMA user_version=1")
     }
 
-    private func insert(item: TransferListItem, bucket: String) {
+    @discardableResult
+    private func insert(item: TransferListItem, bucket: String) -> Bool {
         guard let payload = try? encoder.encode(item),
               let text = String(data: payload, encoding: .utf8)
-        else { return }
+        else {
+            report("encode transfer \(item.id)")
+            return false
+        }
+        var succeeded = false
         withStatement("INSERT OR REPLACE INTO transfers (id, bucket, state, device_id, group_id, progress, payload, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)") { statement in
             bind(item.id.uuidString, at: 1, statement: statement)
             bind(bucket, at: 2, statement: statement)
@@ -177,16 +213,48 @@ final class TransferStore: @unchecked Sendable {
             sqlite3_bind_double(statement, 6, item.progress)
             bind(text, at: 7, statement: statement)
             sqlite3_bind_double(statement, 8, item.updatedAt.timeIntervalSince1970)
-            sqlite3_step(statement)
+            succeeded = step(statement, operation: "upsert transfer")
         }
+        return succeeded
     }
 
     private func saveLocked(current: [TransferListItem], history: [TransferListItem]) {
-        execute("BEGIN IMMEDIATE TRANSACTION")
-        execute("DELETE FROM transfers")
-        for item in current { insert(item: item, bucket: "current") }
-        for item in history { insert(item: item, bucket: "history") }
-        execute("COMMIT")
+        guard execute("BEGIN IMMEDIATE TRANSACTION") else { return }
+        var nextRows: [String: String] = [:]
+        let rows = current.map { ($0, "current") } + history.map { ($0, "history") }
+        for (item, bucket) in rows {
+            guard let payload = try? encoder.encode(item),
+                  let text = String(data: payload, encoding: .utf8)
+            else {
+                report("encode transfer \(item.id)")
+                execute("ROLLBACK")
+                return
+            }
+            let id = item.id.uuidString
+            let fingerprint = bucket + "\u{0}" + text
+            nextRows[id] = fingerprint
+            if persistedTransferRows[id] != fingerprint,
+               !insert(item: item, bucket: bucket) {
+                execute("ROLLBACK")
+                return
+            }
+        }
+        for removedID in persistedTransferRows.keys where nextRows[removedID] == nil {
+            var removed = false
+            withStatement("DELETE FROM transfers WHERE id = ?") { statement in
+                bind(removedID, at: 1, statement: statement)
+                removed = step(statement, operation: "delete transfer")
+            }
+            if !removed {
+                execute("ROLLBACK")
+                return
+            }
+        }
+        guard execute("COMMIT") else {
+            execute("ROLLBACK")
+            return
+        }
+        persistedTransferRows = nextRows
     }
 
     private func query(_ sql: String, row: (OpaquePointer) -> Void) {
@@ -195,19 +263,51 @@ final class TransferStore: @unchecked Sendable {
         }
     }
 
-    private func execute(_ sql: String) {
-        guard let database else { return }
-        sqlite3_exec(database, sql, nil, nil, nil)
+    @discardableResult
+    private func execute(_ sql: String) -> Bool {
+        guard let database else {
+            report("execute SQL", detail: "database is unavailable")
+            return false
+        }
+        let result = sqlite3_exec(database, sql, nil, nil, nil)
+        if result != SQLITE_OK {
+            report("execute SQL")
+            return false
+        }
+        return true
     }
 
     private func withStatement(_ sql: String, body: (OpaquePointer) -> Void) {
-        guard let database else { return }
+        guard let database else {
+            report("prepare SQL", detail: "database is unavailable")
+            return
+        }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
               let statement
-        else { return }
+        else {
+            report("prepare SQL")
+            return
+        }
         defer { sqlite3_finalize(statement) }
         body(statement)
+    }
+
+    @discardableResult
+    private func step(_ statement: OpaquePointer, operation: String) -> Bool {
+        let result = sqlite3_step(statement)
+        guard result == SQLITE_DONE || result == SQLITE_ROW else {
+            report(operation)
+            return false
+        }
+        return true
+    }
+
+    private func report(_ operation: String, detail: String? = nil) {
+        let sqliteDetail = database.map { String(cString: sqlite3_errmsg($0)) }
+        let message = "\(operation): \(detail ?? sqliteDetail ?? "unknown SQLite error")"
+        pendingError = message
+        log.error("\(message, privacy: .public)")
     }
 
     private func bind(_ value: String?, at index: Int32, statement: OpaquePointer) {

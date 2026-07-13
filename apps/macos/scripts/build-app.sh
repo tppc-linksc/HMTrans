@@ -8,6 +8,10 @@ APP_DIR="$MAC_DIR/build/HMTrans.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+GIT_TAG_VERSION="$(git -C "$ROOT_DIR" describe --tags --exact-match 2>/dev/null | sed 's/^v//' || true)"
+GIT_COMMIT_COUNT="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || true)"
+VERSION="${HMT_VERSION:-${GIT_TAG_VERSION:-0.2.0}}"
+BUILD_NUMBER="${HMT_BUILD_NUMBER:-${GIT_COMMIT_COUNT:-2}}"
 
 if [ -z "${DEVELOPER_DIR:-}" ]; then
   if [ -d "/Applications/Xcode-beta.app/Contents/Developer" ]; then
@@ -31,7 +35,7 @@ if [ -d "$RESOURCE_BUNDLE" ]; then
   cp -R "$RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 fi
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -47,9 +51,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>$VERSION</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>$BUILD_NUMBER</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>LSMinimumSystemVersion</key>

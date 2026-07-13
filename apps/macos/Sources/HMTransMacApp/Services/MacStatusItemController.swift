@@ -10,6 +10,8 @@ final class MacStatusItemController {
     private var statusItem: NSStatusItem?
     private var panel: NSPanel?
     private weak var model: TransferViewModel?
+    private var hoverTask: Task<Void, Never>?
+    private var closeTask: Task<Void, Never>?
 
     func install(model: TransferViewModel) {
         self.model = model
@@ -20,9 +22,7 @@ final class MacStatusItemController {
         let dropView = StatusBarDropView(frame: button.bounds)
         dropView.autoresizingMask = [.width, .height]
         dropView.onClick = { [weak self] in self?.togglePanel() }
-        dropView.onHover = { [weak self] inside in
-            if inside { self?.showPanel() }
-        }
+        dropView.onHover = { [weak self] inside in self?.handleHover(inside) }
         dropView.onDragEntered = { [weak self] in self?.showPanel() }
         dropView.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
         button.addSubview(dropView)
@@ -45,15 +45,40 @@ final class MacStatusItemController {
         if panel?.isVisible == true { panel?.orderOut(nil) } else { showPanel() }
     }
 
+    private func handleHover(_ inside: Bool) {
+        hoverTask?.cancel()
+        closeTask?.cancel()
+        if inside {
+            hoverTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                self?.showPanel()
+            }
+        } else {
+            schedulePanelClose()
+        }
+    }
+
+    private func schedulePanelClose() {
+        closeTask?.cancel()
+        closeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            self?.panel?.orderOut(nil)
+        }
+    }
+
     private func showPanel() {
         guard let model, let button = statusItem?.button else { return }
         let panel = panel ?? makePanel(model: model)
         self.panel = panel
         if let window = button.window {
             let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+            let visibleFrame = window.screen?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? anchor
+            let proposedX = anchor.midX - panel.frame.width / 2
             let origin = NSPoint(
-                x: min(anchor.midX - panel.frame.width / 2, NSScreen.main?.visibleFrame.maxX ?? anchor.maxX),
-                y: anchor.minY - panel.frame.height - 8
+                x: min(max(proposedX, visibleFrame.minX + 8), visibleFrame.maxX - panel.frame.width - 8),
+                y: max(anchor.minY - panel.frame.height - 8, visibleFrame.minY + 8)
             )
             panel.setFrameOrigin(origin)
         }
@@ -75,7 +100,10 @@ final class MacStatusItemController {
         panel.hasShadow = true
         panel.contentView = NSHostingView(rootView: StatusTransferPanel(
             model: model,
-            showMainWindow: { _ = AppWindowController.showExistingMainWindow() }
+            showMainWindow: { _ = AppWindowController.showExistingMainWindow() },
+            onHover: { [weak self] inside in
+                if inside { self?.closeTask?.cancel() } else { self?.schedulePanelClose() }
+            }
         ))
         return panel
     }
@@ -135,16 +163,35 @@ private final class StatusBarDropView: NSView {
         let background = highlighted ? NSColor.controlAccentColor.withAlphaComponent(0.24) : .clear
         background.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
-        let configuration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
-        let image = NSImage(systemSymbolName: "arrow.left.arrow.right.circle.fill", accessibilityDescription: "HM互传")?
-            .withSymbolConfiguration(configuration)
-        image?.draw(in: NSRect(x: bounds.midX - 10, y: bounds.midY - 10, width: 20, height: 20))
+        StatusItemIconFactory.image(highlighted: highlighted)
+            .draw(in: NSRect(x: bounds.midX - 10, y: bounds.midY - 9, width: 20, height: 18))
+    }
+}
+
+private enum StatusItemIconFactory {
+    static func image(highlighted: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
+            let color = highlighted ? NSColor.controlAccentColor : NSColor.labelColor
+            color.setStroke()
+            let laptop = NSBezierPath(roundedRect: NSRect(x: 1.5, y: 6, width: 8, height: 7), xRadius: 1.2, yRadius: 1.2)
+            laptop.lineWidth = 1.5; laptop.stroke()
+            let base = NSBezierPath(); base.move(to: NSPoint(x: 0.7, y: 4.5)); base.line(to: NSPoint(x: 10.3, y: 4.5)); base.lineWidth = 1.5; base.stroke()
+            let tablet = NSBezierPath(roundedRect: NSRect(x: 13, y: 3, width: 5.5, height: 11), xRadius: 1.4, yRadius: 1.4)
+            tablet.lineWidth = 1.5; tablet.stroke()
+            let channel = NSBezierPath(); channel.move(to: NSPoint(x: 10.4, y: 10.2)); channel.line(to: NSPoint(x: 13, y: 10.2)); channel.move(to: NSPoint(x: 12, y: 11.2)); channel.line(to: NSPoint(x: 13, y: 10.2)); channel.line(to: NSPoint(x: 12, y: 9.2)); channel.lineWidth = 1.2; channel.stroke()
+            channel.move(to: NSPoint(x: 13, y: 7)); channel.line(to: NSPoint(x: 10.4, y: 7)); channel.move(to: NSPoint(x: 11.4, y: 8)); channel.line(to: NSPoint(x: 10.4, y: 7)); channel.line(to: NSPoint(x: 11.4, y: 6)); channel.stroke()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "HM互传"
+        return image
     }
 }
 
 private struct StatusTransferPanel: View {
     let model: TransferViewModel
     let showMainWindow: () -> Void
+    let onHover: (Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
@@ -200,5 +247,6 @@ private struct StatusTransferPanel: View {
         .frame(width: 330, height: 360)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.34)))
+        .onHover(perform: onHover)
     }
 }

@@ -137,7 +137,8 @@ export struct TransferPane {
           Text(item.state)
             .fontSize(12)
             .fontWeight(FontWeight.Bold)
-            .fontColor(item.state === '失败' ? '#EF4444' : item.state === '已完成' ? '#16A34A' : '#2563EB')
+            .fontColor(item.state === '失败' ? $r('app.color.danger') :
+              item.state === '已完成' ? $r('app.color.success') : $r('app.color.accent_strong'))
             .maxLines(1)
           if (item.state === '传输中' || item.state === '准备中' || item.state === '已暂停' || item.state === '等待重连') {
             Button(item.state === '已暂停' || item.state === '等待重连' ? '继续' : '暂停')
@@ -147,12 +148,12 @@ export struct TransferPane {
             Button('取消')
               .fontSize(11)
               .height(28)
-              .fontColor('#C2413A')
+              .fontColor($r('app.color.danger'))
               .onClick(() => this.onCancel(item))
             if (this.groupSize(item.groupId) > 1) {
               Button(item.state === '已暂停' ? '整组继续' : '整组暂停')
                 .fontSize(11).height(28).onClick(() => this.onToggleGroup(item))
-              Button('整组取消').fontSize(11).height(28).fontColor('#C2413A')
+              Button('整组取消').fontSize(11).height(28).fontColor($r('app.color.danger'))
                 .onClick(() => this.onCancelGroup(item))
             }
           }
@@ -176,7 +177,7 @@ export struct TransferPane {
         Progress({ value: item.progress, total: 100, type: ProgressType.Linear })
           .width('100%')
           .height(4)
-          .color('#2563EB')
+          .color($r('app.color.accent_strong'))
 
         Text(item.detail)
           .fontSize(11)

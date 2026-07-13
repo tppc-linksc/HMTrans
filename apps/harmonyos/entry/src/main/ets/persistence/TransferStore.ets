@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit'
 import { relationalStore } from '@kit.ArkData'
 import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
 import { DeviceInfo } from '../common/Protocol'
+import { errorText } from '../common/ErrorText'
 
 const DATABASE_NAME: string = 'HMTrans.db'
 const SNAPSHOT_KEY: string = 'transfer_snapshot'
@@ -20,6 +21,7 @@ export class TransferStore {
   private store?: relationalStore.RdbStore
 
   async initialize(context: common.UIAbilityContext): Promise<void> {
+    if (this.store) return
     this.store = await relationalStore.getRdbStore(context, {
       name: DATABASE_NAME,
       securityLevel: relationalStore.SecurityLevel.S1,
@@ -43,8 +45,8 @@ export class TransferStore {
         current: payload.current.map((item: TransferListItemOptions) => new TransferListItem(item)),
         history: payload.history.map((item: TransferListItemOptions) => new TransferListItem(item)),
       }
-    } catch (_) {
-      return empty
+    } catch (err) {
+      throw new Error(`传输快照读取失败：${errorText(err)}`)
     } finally {
       result.close()
     }
@@ -79,7 +81,8 @@ export class TransferStore {
         const payload = result.getString(result.getColumnIndex('payload'))
         devices.push(JSON.parse(payload) as DeviceInfo)
       }
-    } catch (_) {
+    } catch (err) {
+      throw new Error(`设备记录读取失败：${errorText(err)}`)
     } finally {
       result.close()
     }
@@ -97,6 +100,11 @@ export class TransferStore {
     )
   }
 
+  async removeDevice(deviceId: string): Promise<void> {
+    if (!this.store) return
+    await this.store.executeSql('DELETE FROM devices WHERE device_id = ?', [deviceId])
+  }
+
   async recordDiagnostic(code: string, message: string, transferId?: string): Promise<void> {
     if (!this.store) {
       return
@@ -104,6 +112,9 @@ export class TransferStore {
     await this.store.executeSql(
       'INSERT INTO diagnostic_events (transfer_id, code, message, created_at) VALUES (?, ?, ?, ?)',
       [transferId ?? null, code, message, Date.now()]
+    )
+    await this.store.executeSql(
+      'DELETE FROM diagnostic_events WHERE event_id NOT IN (SELECT event_id FROM diagnostic_events ORDER BY created_at DESC LIMIT 500)'
     )
   }
 
@@ -138,5 +149,6 @@ export class TransferStore {
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS artifacts (transfer_id TEXT PRIMARY KEY, staging_path TEXT, final_path TEXT, state TEXT NOT NULL, updated_at INTEGER NOT NULL)')
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS diagnostic_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, transfer_id TEXT, code TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL)')
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)')
+    await this.store.executeSql('PRAGMA user_version=1')
   }
 }

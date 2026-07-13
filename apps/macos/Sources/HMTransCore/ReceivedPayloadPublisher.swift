@@ -66,25 +66,57 @@ func uniqueDestinationURL(directory: URL, fileName: String) -> URL {
 }
 
 private func validateZipEntries(_ archiveURL: URL) throws {
+    let names = try captureZipInfo(arguments: ["-1", archiveURL.path])
+    let entries = String(decoding: names, as: UTF8.self).split(separator: "\n")
+    guard entries.count <= 100_000 else {
+        throw HMTransError.protocolError("文件夹压缩包条目过多")
+    }
+    for rawEntry in entries {
+        let entry = rawEntry.replacingOccurrences(of: "\\", with: "/")
+        let components = entry.split(separator: "/", omittingEmptySubsequences: false)
+        let hasDrivePrefix = entry.count >= 3
+            && entry[entry.index(entry.startIndex, offsetBy: 1)] == ":"
+            && entry[entry.index(entry.startIndex, offsetBy: 2)] == "/"
+        if entry.hasPrefix("/") || hasDrivePrefix || components.contains("..") {
+            throw HMTransError.protocolError("文件夹压缩包包含不安全路径")
+        }
+    }
+
+    // ditto preserves symbolic links. Reject them before extraction so an
+    // archive cannot publish a link that escapes the chosen destination.
+    let longListing = try captureZipInfo(arguments: ["-l", archiveURL.path])
+    for line in String(decoding: longListing, as: UTF8.self).split(separator: "\n") {
+        if line.first == "l" {
+            throw HMTransError.protocolError("文件夹压缩包包含符号链接")
+        }
+    }
+}
+
+private func captureZipInfo(arguments: [String], byteLimit: Int = 32 * 1_024 * 1_024) throws -> Data {
     let pipe = Pipe()
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
-    process.arguments = ["-1", archiveURL.path]
+    process.arguments = arguments
     process.standardOutput = pipe
     process.standardError = Pipe()
     try process.run()
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+
+    var output = Data()
+    while true {
+        let chunk = pipe.fileHandleForReading.readData(ofLength: 64 * 1_024)
+        if chunk.isEmpty { break }
+        guard output.count + chunk.count <= byteLimit else {
+            process.terminate()
+            process.waitUntilExit()
+            throw HMTransError.protocolError("文件夹压缩包目录信息过大")
+        }
+        output.append(chunk)
+    }
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
         throw HMTransError.protocolError("文件夹压缩包无法读取")
     }
-    for rawEntry in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-        let entry = rawEntry.replacingOccurrences(of: "\\", with: "/")
-        let components = entry.split(separator: "/", omittingEmptySubsequences: false)
-        if entry.hasPrefix("/") || components.contains("..") {
-            throw HMTransError.protocolError("文件夹压缩包包含不安全路径")
-        }
-    }
+    return output
 }
 
 private func runPublishingProcess(executable: String, arguments: [String]) throws {

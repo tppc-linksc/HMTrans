@@ -94,9 +94,8 @@ struct TransferListItem: Identifiable, Equatable, Codable, Sendable {
     }
 
     static func nowText() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date())
+        let components = Calendar.autoupdatingCurrent.dateComponents([.hour, .minute], from: Date())
+        return String(format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
     }
 }
 

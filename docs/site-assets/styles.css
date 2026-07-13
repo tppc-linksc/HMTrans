@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --bg: #f7f8f4;
   --surface: #ffffff;
   --surface-soft: #eef4ef;
@@ -33,6 +33,22 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+.skip-link {
+  position: fixed;
+  left: 16px;
+  top: 12px;
+  z-index: 100;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 img {
@@ -771,7 +787,7 @@ h3 {
   }
 
   .support-shell {
-    width: min(100% - 32px, 980px);
+    width: min(calc(100% - 32px), 980px);
   }
 
   .support-section {
@@ -786,5 +802,85 @@ h3 {
   .platform-row img {
     width: 48px;
     height: 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121614;
+    --surface: #1c211f;
+    --surface-soft: #24302b;
+    --ink: #edf3ef;
+    --muted: #aab5af;
+    --line: #35413b;
+    --green: #72b6a4;
+    --green-dark: #8bd0bd;
+    --coral: #f09a7d;
+    --gold: #f0c15a;
+    --blue: #8ab9e5;
+    --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  }
+
+  .site-header {
+    background: rgba(18, 22, 20, 0.92);
+    border-bottom-color: rgba(53, 65, 59, 0.86);
+  }
+
+  .hero {
+    background:
+      linear-gradient(90deg, rgba(18, 22, 20, 0.98), rgba(18, 22, 20, 0.80)),
+      radial-gradient(circle at 78% 42%, rgba(228, 169, 40, 0.14), transparent 32%),
+      #121614;
+  }
+
+  .lead,
+  .support-lead {
+    color: var(--ink);
+  }
+
+  .button.secondary,
+  .device {
+    background: rgba(28, 33, 31, 0.82);
+    border-color: var(--line);
+  }
+
+  .app-badge,
+  .policy-page {
+    background: var(--surface);
+  }
+
+  .site-notice,
+  .support-callout {
+    background: #2c211d;
+    border-color: rgba(240, 154, 125, 0.38);
+  }
+
+  .site-notice strong,
+  .support-callout strong,
+  .issue-pill {
+    color: #ffc0aa;
+  }
+
+  .issue-pill {
+    background: #3a2822;
+  }
+
+  .feature-icon,
+  .feature-card:nth-child(2) .feature-icon,
+  .feature-card:nth-child(3) .feature-icon,
+  .feature-card:nth-child(4) .feature-icon {
+    background: var(--surface-soft);
+    color: var(--ink);
   }
 }

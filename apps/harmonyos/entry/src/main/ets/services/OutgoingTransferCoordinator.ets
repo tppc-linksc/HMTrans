@@ -4,6 +4,7 @@ import { DeviceInfo, FileMeta, PairingRequest } from '../common/Protocol'
 import { TransferListItemOptions } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from './ArchiveService'
 import { TcpTransferService, TransferCallbacks } from './TcpTransferService'
+import { errorText } from '../common/ErrorText'
 
 export interface OutgoingIdentity {
   deviceId: string
@@ -44,7 +45,7 @@ export class OutgoingTransferCoordinator {
       } catch (err) {
         targets.forEach((device: DeviceInfo, deviceIndex: number) => {
           const id = `${groupId}-${fileIndex}-${deviceIndex}`
-          const detail = `准备失败：${JSON.stringify(err)}`
+          const detail = `准备失败：${errorText(err)}`
           callbacks.onPreparationFailure(this.failureOptions(uri, device, id, groupId, detail), device.deviceId, detail)
         })
         continue
@@ -89,7 +90,7 @@ export class OutgoingTransferCoordinator {
         identity.fingerprint)
       callbacks.onComplete(transferId)
     } catch (err) {
-      const detail = JSON.stringify(err)
+      const detail = errorText(err)
       const paused = detail.indexOf('receiver_paused') >= 0
       const permanent = !paused && (detail.indexOf('接收方拒绝') >= 0 || detail.indexOf('hash_mismatch') >= 0 ||
         detail.indexOf('接收方报告失败') >= 0 || detail.indexOf('insufficient_space') >= 0 ||

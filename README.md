@@ -19,15 +19,9 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 - 传输使用 TCP 原始文件流，完成后做 SHA-256 校验。
 - 默认保存到 Mac 的 `~/Downloads/HMTrans` 和 HarmonyOS 的 `Download/HMTrans`。
 
-## 截图
+## 当前界面
 
-### macOS
-
-![HMTrans macOS 主界面](docs/images/macos-main.png)
-
-### HarmonyOS / MatePad
-
-![HMTrans HarmonyOS 主界面](docs/images/harmonyos-main.png)
+双端当前都使用“连接 / 历史 / 设置”三个一级入口；发送区域位于连接页，活动任务与结束记录统一进入历史页。早期截图不再作为实现基线，完整交互以 [v0.2 产品与交互方案](docs/01-v0.2产品与交互方案.md) 和当前代码为准。
 
 ## 开源协议
 
@@ -95,7 +89,11 @@ HMTrans/
       build-profile.example.json5
       entry/src/main/ets/
         common/
+        components/
+        controllers/
+        models/
         pages/
+        persistence/
         services/
 ```
 
@@ -131,7 +129,7 @@ bash apps/macos/scripts/build-dmg.sh
 apps/macos/build/HMTrans.dmg
 ```
 
-当前仓库只提供未签名分发构建：可以直接生成 `.app` 和 `.dmg`，也可以通过 GitHub Release 分发，但因为没有 `Developer ID` 签名和 Apple notarization，其他 Mac 首次打开时可能出现“无法验证开发者”或安全提醒，用户需要右键 `Open` 或在系统“隐私与安全性”中手动允许。
+当前脚本只做 ad-hoc 本地签名：可以生成 `.app` 和 `.dmg`，但因为没有 `Developer ID` 和 Apple notarization，其他 Mac 首次打开时可能出现“无法验证开发者”或安全提醒，用户需要右键 `Open` 或在系统“隐私与安全性”中手动允许。项目不会把 ad-hoc 签名描述成正式开发者签名。
 
 GitHub Release 附件文件名需要固定为 `HMTrans.dmg`，官网直接下载链接依赖这个文件名。
 
@@ -149,7 +147,8 @@ apps/harmonyos
 cd apps/harmonyos
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
       /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
-      /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleHap
+      /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
+      --no-daemon --mode module -p module=entry@default -p product=default assembleHap
 ```
 
 产物位置：

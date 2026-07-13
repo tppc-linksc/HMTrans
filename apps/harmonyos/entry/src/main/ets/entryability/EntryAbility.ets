@@ -1,6 +1,7 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit'
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { window } from '@kit.ArkUI'
+import { errorText } from '../common/ErrorText'
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -23,7 +24,7 @@ export default class EntryAbility extends UIAbility {
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        hilog.error(0x0000, 'HMTrans', 'Failed to load content: %{public}s', JSON.stringify(err))
+        hilog.error(0x0000, 'HMTrans', 'Failed to load content: %{public}s', errorText(err))
       }
     })
   }

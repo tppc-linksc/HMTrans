@@ -14,14 +14,14 @@ export struct PrivacyConsentOverlay {
           .fontSize(14).lineHeight(22).fontColor($r('app.color.text_secondary')).width('100%')
         Row() {
           Text('查看').fontSize(14).fontColor($r('app.color.text_secondary'))
-          Text('《隐私政策》').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#2563EB')
+          Text('《隐私政策》').fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.accent_strong'))
             .onClick(this.onOpenPolicy)
         }.width('100%')
         Row({ space: 10 }) {
-          Button('不同意并退出').layoutWeight(1).height(44).fontSize(15).fontColor('#475569')
-            .backgroundColor('#EEF2F7').borderRadius(12).onClick(() => this.onResolve(false))
+          Button('不同意并退出').layoutWeight(1).height(44).fontSize(15).fontColor($r('app.color.text_secondary'))
+            .backgroundColor($r('app.color.control_track')).borderRadius(12).onClick(() => this.onResolve(false))
           Button('同意并继续').layoutWeight(1).height(44).fontSize(15).fontColor('#FFFFFF')
-            .backgroundColor('#2563EB').borderRadius(12).onClick(() => this.onResolve(true))
+            .backgroundColor($r('app.color.accent_strong')).borderRadius(12).onClick(() => this.onResolve(true))
         }.width('100%').margin({ top: 4 })
       }.width('88%').constraintSize({ maxWidth: 520 }).padding({ left: 22, right: 22, top: 22, bottom: 18 })
         .backgroundColor($r('app.color.surface_primary')).borderRadius(20).shadow({ radius: 20, color: '#0000001A', offsetY: 8 })
@@ -51,7 +51,7 @@ export struct PairingOverlay {
         Row({ space: 12 }) {
           Button('取消').layoutWeight(1).onClick(this.onCancel)
           Button('配对并连接').layoutWeight(1).enabled(this.input.length === 6).fontColor('#FFFFFF')
-            .backgroundColor('#287BCC').onClick(this.onSubmit)
+            .backgroundColor($r('app.color.accent')).onClick(this.onSubmit)
         }.width('100%')
       }.width('80%').constraintSize({ maxWidth: 480 }).padding(24).backgroundColor($r('app.color.surface_primary')).borderRadius(24)
         .shadow({ radius: 24, color: '#18283B33', offsetY: 10 })
@@ -79,7 +79,8 @@ export struct PortEditorOverlay {
           .fontSize(11).fontColor($r('app.color.text_secondary')).width('100%')
         Row({ space: 12 }) {
           Button('取消').layoutWeight(1).onClick(this.onCancel)
-          Button('保存并重启').layoutWeight(1).fontColor('#FFFFFF').backgroundColor('#287BCC').onClick(this.onSave)
+          Button('保存并重启').layoutWeight(1).fontColor('#FFFFFF')
+            .backgroundColor($r('app.color.accent')).onClick(this.onSave)
         }.width('100%')
       }.width('80%').constraintSize({ maxWidth: 480 }).padding(24).backgroundColor($r('app.color.surface_primary')).borderRadius(24)
         .shadow({ radius: 18, color: '#18283B29', offsetY: 8 })

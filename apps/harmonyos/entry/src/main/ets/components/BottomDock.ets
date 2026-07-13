@@ -54,7 +54,7 @@ export struct BottomDock {
       this.DockIcon(page)
       Text(label).fontSize(10)
         .fontWeight(this.activePage === page ? FontWeight.Bold : FontWeight.Regular)
-        .fontColor(this.activePage === page ? '#247BCD' : $r('app.color.text_secondary'))
+        .fontColor(this.activePage === page ? $r('app.color.accent') : $r('app.color.text_secondary'))
     }
     .width(66).height(44).justifyContent(FlexAlign.Center)
   }

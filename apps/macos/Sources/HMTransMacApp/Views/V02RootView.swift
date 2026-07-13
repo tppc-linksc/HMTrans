@@ -525,12 +525,14 @@ private struct MacTransferHistoryContent: View {
                             } else {
                                 FileRow(
                                     item: item,
-                                    openAction: model.openTransferItem,
-                                    revealAction: model.revealTransferItem,
-                                    deleteAction: model.deleteHistoryItem,
-                                    clearPeerAction: { pendingClearPeer = peer },
-                                    clearAllAction: { confirmingClearAll = true },
-                                    retryAction: model.retryHistoryItem
+                                    actions: .init(
+                                        open: model.openTransferItem,
+                                        reveal: model.revealTransferItem,
+                                        delete: model.deleteHistoryItem,
+                                        clearPeer: { pendingClearPeer = peer },
+                                        clearAll: { confirmingClearAll = true },
+                                        retry: model.retryHistoryItem
+                                    )
                                 )
                             }
                         }

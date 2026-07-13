@@ -1,5 +1,6 @@
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit'
 import { Environment, fileIo as fs } from '@kit.CoreFileKit'
+import { errorText } from '../common/ErrorText'
 
 const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 
@@ -20,7 +21,7 @@ export class ReceiveDirectoryService {
       this.verify(directory)
       return directory
     } catch (err) {
-      throw new Error(`下载目录准备失败：${JSON.stringify(err)}`)
+      throw new Error(`下载目录准备失败：${errorText(err)}`)
     }
   }
 
@@ -30,7 +31,7 @@ export class ReceiveDirectoryService {
     try {
       file = fs.openSync(testPath, fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.READ_WRITE)
     } catch (err) {
-      throw new Error(`接收目录不可写：${JSON.stringify(err)}`)
+      throw new Error(`接收目录不可写：${errorText(err)}`)
     } finally {
       if (file) try { fs.closeSync(file) } catch (_) {}
       try { fs.unlinkSync(testPath) } catch (_) {}

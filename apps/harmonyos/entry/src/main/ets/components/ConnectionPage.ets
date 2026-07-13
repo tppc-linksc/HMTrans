@@ -19,6 +19,7 @@ export struct PadConnectionPage {
   @Param onPairDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
   @Param onReconnectDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
   @Param onToggleTarget: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
+  @Param onForgetDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
   @Param selectedDeviceName: string = ''
   @Param onSelectFile: () => void = () => {}
   @Param onFilesDropped: (event: DragEvent) => void = (_event: DragEvent) => {}
@@ -59,15 +60,15 @@ export struct PadConnectionPage {
   @Builder
   private FileSendSection() {
     Column({ space: 9 }) {
-      Text('+').fontSize(38).fontColor('#2563EB').textAlign(TextAlign.Center)
-        .width(56).height(56).backgroundColor('#EAF4FF').borderRadius(28)
+      Text('+').fontSize(38).fontColor($r('app.color.accent_strong')).textAlign(TextAlign.Center)
+        .width(56).height(56).backgroundColor($r('app.color.accent_soft_surface')).borderRadius(28)
       Text(this.selectedDeviceName.length > 0 ? '点击选择文件或文件夹并发送' : '暂无已连接设备')
         .fontSize(17).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).textAlign(TextAlign.Center)
       Text(this.selectedDeviceName.length > 0 ? `发送给 ${this.selectedDeviceName}` : '请先在上方完成发现、配对并选择设备')
         .fontSize(12).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.Center).maxLines(2)
     }
     .width('100%').height(230).justifyContent(FlexAlign.Center).backgroundColor($r('app.color.surface_primary'))
-    .borderRadius(24).border({ width: 2, color: '#7FB4F8', style: BorderStyle.Dashed })
+    .borderRadius(24).border({ width: 2, color: $r('app.color.accent'), style: BorderStyle.Dashed })
     .enabled(this.selectedDeviceName.length > 0).onClick(this.onSelectFile)
     .allowDrop([
       uniformTypeDescriptor.UniformDataType.FILE,
@@ -82,12 +83,12 @@ export struct PadConnectionPage {
     Row({ space: 18 }) {
       Column({ space: 7 }) {
         Text('本机配对码').fontSize(13).fontColor($r('app.color.text_secondary'))
-        Text(this.pairingCode).fontSize(26).fontWeight(FontWeight.Bold).fontColor('#246BB3').letterSpacing(3)
+        Text(this.pairingCode).fontSize(26).fontWeight(FontWeight.Bold).fontColor($r('app.color.accent')).letterSpacing(3)
         Text('在对方 Mac 输入六位码完成首次配对').fontSize(11).fontColor($r('app.color.text_secondary'))
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Stack() {
         Progress({ value: this.pairingSeconds, total: 180, type: ProgressType.Ring })
-          .width(58).height(58).color('#3283D8')
+          .width(58).height(58).color($r('app.color.accent'))
         Column({ space: 0 }) {
           Text(`${this.pairingSeconds}`).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
           Text('秒').fontSize(9).fontColor($r('app.color.text_secondary'))
@@ -139,11 +140,13 @@ export struct PadConnectionPage {
         Text(device.deviceName).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).maxLines(1)
         Text(this.systemVersionLabel(device)).fontSize(9).fontColor($r('app.color.text_secondary')).maxLines(1)
         Text(state === 'alive' ? `已连接 · ${device.ip}` : state === 'paired' ? '已配对 · 点击重新连接' : '新设备 · 点击输入配对码')
-          .fontSize(10).fontColor(state === 'alive' ? '#18864B' : state === 'paired' ? '#287BCC' : '#6B7A90').maxLines(1)
+          .fontSize(10).fontColor(state === 'alive' ? $r('app.color.success') :
+            state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary')).maxLines(1)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Text(state === 'alive' && this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? '✓' : state === 'alive' ? '●' : '›')
         .fontSize(state === 'alive' ? 16 : 22)
-        .fontColor(state === 'alive' ? '#22A05A' : state === 'paired' ? '#287BCC' : '#94A1B2')
+        .fontColor(state === 'alive' ? $r('app.color.success') :
+          state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary'))
     }
     .width(this.compactLayout ? '100%' : 250).height(66).padding({ left: 11, right: 11 })
     .margin({ right: 10, bottom: 10 })
@@ -151,7 +154,7 @@ export struct PadConnectionPage {
       state === 'paired' ? $r('app.color.state_paired_surface') : $r('app.color.surface_primary'))
     .borderRadius(17)
     .border({ width: this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? 2 : 1,
-      color: this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? '#287BCC' :
+      color: this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? $r('app.color.accent') :
         state === 'alive' ? $r('app.color.state_connected_border') :
           state === 'paired' ? $r('app.color.state_paired_border') : $r('app.color.divider') })
     .onClick(() => {
@@ -159,6 +162,12 @@ export struct PadConnectionPage {
       else if (state === 'paired') this.onReconnectDevice(device)
       else this.onToggleTarget(device)
     })
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 600 })
+        .onAction(() => {
+          if (state !== 'new') this.onForgetDevice(device)
+        })
+    )
   }
 
   /** Normalize Apple's advertised version into the concise product wording used by both clients. */

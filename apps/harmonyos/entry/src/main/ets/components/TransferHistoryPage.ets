@@ -33,9 +33,9 @@ export struct TransferHistoryPage {
         this.FilterButton('失败', 'failed')
         this.FilterButton('已取消', 'cancelled')
       }
-      .height(42).padding(3).backgroundColor($r('app.color.control_track')).borderRadius(12)
+      .layoutWeight(1).height(42).padding(3).backgroundColor($r('app.color.control_track')).borderRadius(12)
       Blank()
-      Text('清空记录').fontSize(11).fontWeight(FontWeight.Medium).fontColor('#C2413A')
+      Text('清空记录').fontSize(11).fontWeight(FontWeight.Medium).fontColor($r('app.color.danger'))
         .height(36).padding({ left: 10, right: 4 }).textAlign(TextAlign.Center)
         .opacity(this.historyTransfers.length > 0 ? 1 : 0.4)
         .onClick(() => { if (this.historyTransfers.length > 0) this.onClearAll() })
@@ -63,7 +63,7 @@ export struct TransferHistoryPage {
         Text(peerName).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).margin({ left: 9 })
         Blank()
         Text(`${this.itemsForPeer(peerName).length} 条记录`).fontSize(10).fontColor($r('app.color.text_secondary'))
-        Text('清空本设备记录').fontSize(10).fontWeight(FontWeight.Medium).fontColor('#C2413A')
+        Text('清空本设备记录').fontSize(10).fontWeight(FontWeight.Medium).fontColor($r('app.color.danger'))
           .height(34).padding({ left: 12, right: 2 }).textAlign(TextAlign.Center)
           .opacity(this.historyItemsForPeer(peerName).length > 0 ? 1 : 0.45)
           .onClick(() => {
@@ -111,7 +111,7 @@ export struct TransferHistoryPage {
     Stack() {
       Image($r('app.media.icon_delete')).width(22).height(22)
     }
-    .width(64).height('100%').backgroundColor('#D94B45')
+    .width(64).height('100%').backgroundColor($r('app.color.danger'))
     .onClick(() => this.onDeleteHistory(item))
   }
 
@@ -119,31 +119,32 @@ export struct TransferHistoryPage {
   private HistoryRow(item: TransferListItem) {
     Row({ space: 12 }) {
       Text(item.fileType.length > 0 ? item.fileType : 'FILE').fontSize(9).fontWeight(FontWeight.Bold)
-        .fontColor('#2563EB').width(42).height(42).textAlign(TextAlign.Center)
-        .backgroundColor('#EEF6FD').borderRadius(11)
+        .fontColor($r('app.color.accent_strong')).width(42).height(42).textAlign(TextAlign.Center)
+        .backgroundColor($r('app.color.accent_surface')).borderRadius(11)
       Column({ space: 4 }) {
         Text(item.fileName).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).maxLines(1)
         Text(`${item.direction} · ${item.timeText} · ${item.detail}`).fontSize(10).fontColor($r('app.color.text_secondary')).maxLines(1)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Text(this.stateLabel(item)).fontSize(10).fontWeight(FontWeight.Bold)
-        .fontColor(item.state === '失败' ? '#D94B45' : item.state === '已完成' ? '#168A3F' : '#287BCC')
+        .fontColor(item.state === '失败' ? $r('app.color.danger') :
+          item.state === '已完成' ? $r('app.color.success') : $r('app.color.accent'))
       if (this.isCurrent(item)) {
         Button(item.state === '已暂停' || item.state === '等待重连' ? '继续' : '暂停')
-          .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor('#2563EB')
-          .backgroundColor('#EAF3FF').borderRadius(18).onClick(() => this.onTogglePause(item))
+          .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor($r('app.color.accent_strong'))
+          .backgroundColor($r('app.color.accent_soft_surface')).borderRadius(18).onClick(() => this.onTogglePause(item))
         Button('取消')
-          .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor('#C2413A')
-          .backgroundColor('#FDECEC').borderRadius(18).onClick(() => this.onCancel(item))
+          .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor($r('app.color.danger'))
+          .backgroundColor($r('app.color.danger_surface')).borderRadius(18).onClick(() => this.onCancel(item))
       }
     }.width('100%').height(68).padding({ left: 14, right: 14 })
   }
 
   @Builder
   private FilterButton(label: string, value: string) {
-    Button(label).width(96).height(36).fontSize(12)
+    Button(label).layoutWeight(1).height(36).fontSize(12)
       .fontWeight(this.historyFilter === value ? FontWeight.Bold : FontWeight.Medium)
-      .fontColor(this.historyFilter === value ? '#FFFFFF' : '#4D6076')
-      .backgroundColor(this.historyFilter === value ? '#287BCC' : Color.Transparent).borderRadius(9)
+      .fontColor(this.historyFilter === value ? '#FFFFFF' : $r('app.color.text_secondary'))
+      .backgroundColor(this.historyFilter === value ? $r('app.color.accent') : Color.Transparent).borderRadius(9)
       .onClick(() => this.onFilterChanged(value))
   }
 

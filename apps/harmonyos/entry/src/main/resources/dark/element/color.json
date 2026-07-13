@@ -63,6 +63,30 @@
     {
       "name": "scrim",
       "value": "#00000099"
+    },
+    {
+      "name": "accent",
+      "value": "#62A8F0"
+    },
+    {
+      "name": "accent_strong",
+      "value": "#73B4FF"
+    },
+    {
+      "name": "success",
+      "value": "#54C982"
+    },
+    {
+      "name": "danger",
+      "value": "#FF8178"
+    },
+    {
+      "name": "danger_surface",
+      "value": "#452724"
+    },
+    {
+      "name": "accent_soft_surface",
+      "value": "#24384D"
     }
   ]
 }

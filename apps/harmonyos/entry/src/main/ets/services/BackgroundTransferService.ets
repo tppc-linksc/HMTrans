@@ -1,6 +1,7 @@
 import { common, wantAgent } from '@kit.AbilityKit'
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit'
 import { notificationManager } from '@kit.NotificationKit'
+import { errorText } from '../common/ErrorText'
 
 const TRANSFER_NOTIFICATION_ID: number = 51888
 
@@ -14,12 +15,12 @@ export class BackgroundTransferService {
   private running: boolean = false
   private enabled: boolean = true
 
-  setEnabled(enabled: boolean, context: common.UIAbilityContext): void {
+  async setEnabled(enabled: boolean, context: common.UIAbilityContext): Promise<void> {
     this.enabled = enabled
     if (!enabled) {
-      this.stop(context).catch(() => {})
+      await this.stop(context)
     } else if (this.activeSessionCount > 0) {
-      this.startIfNeeded(context).catch(() => {})
+      await this.startIfNeeded(context)
     }
   }
 
@@ -52,7 +53,7 @@ export class BackgroundTransferService {
       this.running = true
     } catch (err) {
       this.running = false
-      throw new Error(`后台传输保护启动失败：${JSON.stringify(err)}`)
+      throw new Error(`后台传输保护启动失败：${errorText(err)}`)
     }
   }
 
@@ -99,7 +100,7 @@ export class BackgroundTransferService {
         ],
       })
     } catch (err) {
-      throw new Error(`后台通知发布失败：${JSON.stringify(err)}`)
+      throw new Error(`后台通知发布失败：${errorText(err)}`)
     }
   }
 
@@ -117,7 +118,7 @@ export class BackgroundTransferService {
         actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG],
       })
     } catch (err) {
-      throw new Error(`通知操作创建失败：${JSON.stringify(err)}`)
+      throw new Error(`通知操作创建失败：${errorText(err)}`)
     }
   }
 }

@@ -6,6 +6,8 @@ import { arrayBufferToString, sliceArrayBuffer } from '../common/Bytes'
 import {
   DEFAULT_CHUNK_SIZE,
   DEFAULT_PORT,
+  APP_NAME,
+  PROTOCOL_VERSION,
   FileMeta,
   PairingRequest,
   PairingResponse,
@@ -19,6 +21,11 @@ import {
   parseJsonLine,
 } from '../common/Protocol'
 import { fileNameFromUri, fileSize, sha256FileAsync } from './FileHashService'
+import { errorText } from '../common/ErrorText'
+import { ZipSafetyService } from './ZipSafetyService'
+
+const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
+const MAX_ACTIVE_CONNECTIONS: number = 16
 
 export interface TransferCallbacks {
   onStatus: (value: string) => void
@@ -39,11 +46,19 @@ class LineReader {
 
   append(data: ArrayBuffer): Array<string> {
     this.buffer += arrayBufferToString(data)
+    if (this.buffer.length > MAX_CONTROL_LINE_CHARS && this.buffer.indexOf('\n') < 0) {
+      this.buffer = ''
+      throw new Error('控制帧超过 64 KiB 上限')
+    }
     const lines: Array<string> = []
     while (true) {
       const index = this.buffer.indexOf('\n')
       if (index < 0) {
         break
+      }
+      if (index > MAX_CONTROL_LINE_CHARS) {
+        this.buffer = ''
+        throw new Error('控制帧超过 64 KiB 上限')
       }
       lines.push(this.buffer.substring(0, index))
       this.buffer = this.buffer.substring(index + 1)
@@ -117,6 +132,7 @@ export class TcpTransferService {
   private incomingConnections: Map<string, socket.TCPSocketConnection> = new Map()
   private pausedIncomingTransferIDs: Set<string> = new Set()
   private cancelledIncomingTransferIDs: Set<string> = new Set()
+  private zipSafetyService: ZipSafetyService = new ZipSafetyService()
 
   pauseTransfer(transferId: string): void {
     this.outgoingSessions.get(transferId)?.pause()
@@ -142,6 +158,16 @@ export class TcpTransferService {
       this.incomingConnections.delete(transferId)
       incoming.close().catch(() => {})
     }
+  }
+
+  /** Waits until cancelled file handles and sockets have left their finally blocks. */
+  async waitForIdle(timeoutMs: number = 3000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (this.outgoingSessions.size === 0 && this.incomingConnections.size === 0) return true
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    }
+    return this.outgoingSessions.size === 0 && this.incomingConnections.size === 0
   }
 
   async requestPairing(host: string, port: number, request: PairingRequest): Promise<PairingResponse> {
@@ -271,8 +297,8 @@ export class TcpTransferService {
       }
       callbacks.onStatus('发送完成，Mac 校验通过')
     } catch (err) {
-      callbacks.onStatus(`发送错误：${JSON.stringify(err)}`)
-      throw new Error(JSON.stringify(err))
+      callbacks.onStatus(`发送错误：${errorText(err)}`)
+      throw new Error(errorText(err))
     } finally {
       this.outgoingSessions.delete(meta.transferId)
       await client.close().catch(() => {})
@@ -292,11 +318,16 @@ export class TcpTransferService {
     const server = socket.constructTCPSocketServerInstance()
 
     server.on('error', (err) => {
-      callbacks.onStatus(`接收服务错误：${JSON.stringify(err)}`)
+      callbacks.onStatus(`接收服务错误：${errorText(err)}`)
       this.closeReceiver(server).catch(() => {})
     })
 
     server.on('connect', async (connection: socket.TCPSocketConnection) => {
+      if (this.activeConnections.length >= MAX_ACTIVE_CONNECTIONS) {
+        callbacks.onStatus('接收连接过多，已拒绝新的局域网连接')
+        await connection.close().catch(() => {})
+        return
+      }
       this.activeConnections.push(connection)
       const reader = new LineReader()
       let meta: FileMeta | undefined
@@ -318,13 +349,25 @@ export class TcpTransferService {
             const envelope = parseJsonLine<MessageEnvelope>(lines[0])
             if (envelope.type === 'pairing_request') {
               const request = parseJsonLine<PairingRequest>(lines[0])
-              const accepted = await callbacks.onPairing(request)
-              await connection.send({ data: encodeJsonLine(createPairingResponse(accepted, accepted ? undefined : 'invalid_pairing_code')) })
+              const compatible = request.app === APP_NAME && request.version === PROTOCOL_VERSION &&
+                request.requesterDeviceId.length > 0 && request.requesterFingerprint !== undefined &&
+                request.requesterFingerprint.length > 0
+              const accepted = compatible && await callbacks.onPairing(request)
+              const reason = accepted ? undefined : compatible ? 'invalid_pairing_code' : 'protocol_incompatible'
+              await connection.send({ data: encodeJsonLine(createPairingResponse(accepted, reason)) })
               await this.closeConnection(connection)
               return
             }
 
             meta = parseJsonLine<FileMeta>(lines[0])
+            if (meta.type !== 'file_meta' || meta.app !== APP_NAME || meta.version !== PROTOCOL_VERSION ||
+              meta.transferId.length === 0 || !Number.isSafeInteger(meta.fileSize) || meta.fileSize < 0 ||
+              !Number.isSafeInteger(meta.chunkSize) || meta.chunkSize <= 0 ||
+              !Number.isSafeInteger(meta.totalChunks) || meta.totalChunks < 0 || meta.sha256.length !== 64) {
+              await connection.send({ data: encodeJsonLine(createReceiveDecision(false, 'invalid_meta')) })
+              await this.closeConnection(connection)
+              return
+            }
             if (this.pausedIncomingTransferIDs.has(meta.transferId) ||
               this.cancelledIncomingTransferIDs.has(meta.transferId)) {
               const reason = this.pausedIncomingTransferIDs.has(meta.transferId) ? 'receiver_paused' : 'receiver_cancelled'
@@ -452,7 +495,7 @@ export class TcpTransferService {
             }
           }
         } catch (err) {
-          const errorDetail = JSON.stringify(err)
+          const errorDetail = errorText(err)
           const storageFull = errorDetail.indexOf('ENOSPC') >= 0 || errorDetail.indexOf('No space') >= 0 ||
             errorDetail.indexOf('errno:28') >= 0 || errorDetail.indexOf('code:28') >= 0
           const failureReason = storageFull ? 'insufficient_space' : `receive_exception:${errorDetail}`
@@ -492,7 +535,7 @@ export class TcpTransferService {
     } catch (err) {
       this.server = undefined
       await server.close().catch(() => {})
-      throw new Error(JSON.stringify(err))
+      throw new Error(errorText(err))
     }
   }
 
@@ -531,6 +574,7 @@ export class TcpTransferService {
       return destination
     }
 
+    this.zipSafetyService.validate(payloadPath)
     const unpackRoot = `${stagingDir}/${safeReceiveFileName(meta.transferId)}-unpack`
     try {
       fs.rmdirSync(unpackRoot)

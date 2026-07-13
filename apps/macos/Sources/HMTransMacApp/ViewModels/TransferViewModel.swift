@@ -50,6 +50,7 @@ final class TransferViewModel {
     private let stagingMaintenance = StagingMaintenanceService()
     let sharedPreparedSources = SharedPreparedSourceStore()
     let sendConcurrencyGate = AsyncConcurrencyGate(limit: 3)
+    private var transferGeneration = 0
     private var workspaceSleepObserver: NSObjectProtocol?
     private var workspaceWakeObserver: NSObjectProtocol?
     var pruneTask: Task<Void, Never>?
@@ -80,16 +81,6 @@ final class TransferViewModel {
     var localTCPPort: UInt16 { UInt16(localTCPPortText) ?? defaultPort }
     var localDiscoveryPort: UInt16 { UInt16(discoveryPortText) ?? discoveryPort }
 
-    var menuSummary: String {
-        if let device = selectedNearbyDevice {
-            return "已发现 \(device.deviceName)"
-        }
-        if !host.isEmpty {
-            return "目标 \(host):\(port)"
-        }
-        return receiverRunning ? "接收服务运行中" : "待机"
-    }
-
     var selectedNearbyDevice: DeviceInfo? {
         connectedDevices.first { $0.ip == host }
     }
@@ -104,27 +95,6 @@ final class TransferViewModel {
     var activeTransferTargets: [DeviceInfo] {
         let selected = connectedDevices.filter { selectedTargetDeviceIDs.contains($0.deviceId) }
         return selected.isEmpty ? connectedDevices : selected
-    }
-
-    var connectionTitle: String {
-        if let device = selectedNearbyDevice {
-            return device.deviceName
-        }
-        return host.isEmpty ? "未连接设备" : "已保存目标"
-    }
-
-    var connectionSubtitle: String {
-        if let device = selectedNearbyDevice {
-            return "\(device.ip) · Connected"
-        }
-        if !host.isEmpty {
-            return "\(host):\(port) · 等待发现"
-        }
-        return receiverRunning ? "正在搜索同一 Wi-Fi 设备" : "接收服务未开启"
-    }
-
-    var isConnectedToDiscoveredDevice: Bool {
-        selectedNearbyDevice != nil
     }
 
     func isBidirectionallyConnected(_ device: DeviceInfo) -> Bool {
@@ -275,6 +245,9 @@ final class TransferViewModel {
             return restored
         }
         historyTransfers = snapshot.history
+        if let databaseError = store.consumeLastError() {
+            status = "本地状态数据库异常：\(databaseError)"
+        }
         persistTransfers()
     }
 
@@ -361,12 +334,29 @@ final class TransferViewModel {
     }
 
     func clearTemporaryStorage() {
-        do {
-            transferControls.values.forEach { $0.cancel() }
-            transferControls.removeAll()
-            for (wireID, _) in receivingTransferIds {
-                receiver.cancelTransfer(wireID, deletePartial: true)
+        transferGeneration += 1
+        transferControls.values.forEach { $0.cancel() }
+        for (wireID, _) in receivingTransferIds {
+            receiver.cancelTransfer(wireID, deletePartial: true)
+        }
+        status = "正在停止未完成任务"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await sendConcurrencyGate.waitUntilIdle()
+            for _ in 0..<60 where !receiver.isIdle {
+                try? await Task.sleep(for: .milliseconds(50))
             }
+            guard receiver.isIdle else {
+                status = "仍有传输正在释放资源，请稍后重试"
+                return
+            }
+            finishClearingTemporaryStorage()
+        }
+    }
+
+    private func finishClearingTemporaryStorage() {
+        do {
+            transferControls.removeAll()
             receivingTransferIds.removeAll()
             currentTransfers.removeAll()
             let applicationSupport = try FileManager.default.url(
@@ -375,12 +365,9 @@ final class TransferViewModel {
                 appropriateFor: nil,
                 create: true
             )
-            let staging = applicationSupport
-                .appendingPathComponent("HMTrans", isDirectory: true)
+            let staging = applicationSupport.appendingPathComponent("HMTrans", isDirectory: true)
                 .appendingPathComponent("Staging", isDirectory: true)
-            if FileManager.default.fileExists(atPath: staging.path) {
-                try FileManager.default.removeItem(at: staging)
-            }
+            if FileManager.default.fileExists(atPath: staging.path) { try FileManager.default.removeItem(at: staging) }
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
             syncBackgroundActivity()
             store.saveImmediately(current: currentTransfers, history: historyTransfers)
@@ -700,12 +687,15 @@ final class TransferViewModel {
         let senderDeviceId = deviceId
         let senderName = deviceName
         let senderFingerprint = identityFingerprint
+        let generation = transferGeneration
 
         Task.detached { [weak self] in
             guard let gate = self?.sendConcurrencyGate,
                   let sourceStore = self?.sharedPreparedSources else { return }
             await gate.acquire()
             defer { Task { await gate.release() } }
+            let isCurrentGeneration = await MainActor.run { self?.transferGeneration == generation }
+            guard isCurrentGeneration else { return }
             guard tcpPortIsOpen(host: targetHost, port: targetPort, timeout: 0.8) else {
                 await MainActor.run {
                     self?.isSending = false

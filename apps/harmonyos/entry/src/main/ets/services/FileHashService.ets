@@ -3,6 +3,7 @@ import { fileIo as fs } from '@kit.CoreFileKit'
 import { cryptoFramework } from '@kit.CryptoArchitectureKit'
 import { DEFAULT_CHUNK_SIZE } from '../common/Protocol'
 import { sliceArrayBuffer, toHex } from '../common/Bytes'
+import { errorText } from '../common/ErrorText'
 
 export function fileNameFromUri(uri: string): string {
   const clean = decodeURIComponent(uri.split('?')[0])
@@ -26,7 +27,7 @@ export function fileSize(uri: string): number {
     file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
     return fs.statSync(file.fd).size
   } catch (err) {
-    throw new Error(`Unable to read file size: ${JSON.stringify(err)}`)
+    throw new Error(`Unable to read file size: ${errorText(err)}`)
   } finally {
     closeFileQuietly(file)
   }
@@ -53,7 +54,7 @@ function sha256FileTask(uri: string): string {
     const digest = md.digestSync()
     return toHex(digest.data)
   } catch (err) {
-    throw new Error(`Unable to hash file: ${JSON.stringify(err)}`)
+    throw new Error(`Unable to hash file: ${errorText(err)}`)
   } finally {
     if (file) {
       try {
@@ -68,6 +69,6 @@ export async function sha256FileAsync(uri: string): Promise<string> {
   try {
     return await taskpool.execute(sha256FileTask, uri) as string
   } catch (err) {
-    throw new Error(`Unable to run hash task: ${JSON.stringify(err)}`)
+    throw new Error(`Unable to run hash task: ${errorText(err)}`)
   }
 }

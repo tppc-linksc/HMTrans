@@ -13,7 +13,7 @@ Mac 端包含 Swift 共享传输核心、命令行测试入口和 SwiftUI 图形
 
 ## 当前能力
 
-- 启动后自动常驻监听 TCP 端口。
+- 用户同意应用自有隐私说明后，自动启动 TCP 接收和 UDP 发现。
 - UDP 自动发现同一局域网 HMTrans 设备。
 - 自动记住上次连接设备。
 - 支持选择文件发送。
@@ -73,14 +73,14 @@ bash apps/macos/scripts/build-dmg.sh
 apps/macos/build/HMTrans.dmg
 ```
 
-当前构建为未签名分发版本，没有 `Developer ID` 签名和 Apple notarization。别人下载后首次打开可能会被 macOS 安全策略拦截，需要右键 `Open` 或在系统“隐私与安全性”中手动允许。
+当前构建仅使用 ad-hoc 本地签名，没有 `Developer ID` 签名和 Apple notarization。别人下载后首次打开可能会被 macOS 安全策略拦截，需要右键 `Open` 或在系统“隐私与安全性”中手动允许。
 
 上传到 GitHub Release 的附件文件名需要固定为 `HMTrans.dmg`，以保证官网直链可用。
 
 ## v0.2 Mac 实现与待验收
 
-- 把发现、接收、发送和任务状态从窗口 ViewModel 拆到应用级协调器。
-- 使用系统 SQLite3 保存任务、检查点、设备和历史；身份密钥使用 Keychain。
+- `TransferViewModel` 按发现、文件入口和任务状态扩展拆分，socket、持久化、并发门、后台活动和状态栏面板由独立服务持有。
+- 使用系统 SQLite3 增量保存任务、设备、历史和诊断；随机安装指纹和设备信任关系保存在当前用户的本地偏好，不是账号或硬件密钥。
 - 窗口关闭、状态栏面板关闭和 Mac 睡眠唤醒后保持或恢复任务。
 - 重绘原生模板状态栏图标，以 AppKit `NSStatusItem` + `NSPanel` 实现拖拽快速发送和悬浮任务列表。
 - Finder、Dock、主窗口和状态栏拖拽必须共用同一持久任务入口。
@@ -91,6 +91,6 @@ apps/macos/build/HMTrans.dmg
 
 - `../../docs/01-v0.2产品与交互方案.md`
 - `../../docs/02-v0.2技术方案.md`
-- `../../docs/03-传输协议-v0.2.md`
+- `../../docs/03-v0.2传输协议.md`
 - `../../docs/04-v0.2开发计划.md`
 - `../../docs/05-v0.2验收清单.md`

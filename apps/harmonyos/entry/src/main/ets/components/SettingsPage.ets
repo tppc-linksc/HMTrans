@@ -66,7 +66,7 @@ export struct PadSettingsPage {
       }.alignItems(HorizontalAlign.Start)
       Blank()
       Toggle({ type: ToggleType.Switch, isOn: enabled }).width(46).height(24)
-        .selectedColor('#3283D8').onChange(onChange)
+        .selectedColor($r('app.color.accent')).onChange(onChange)
     }.width('100%').height(72)
   }
 
@@ -78,8 +78,9 @@ export struct PadSettingsPage {
         Text(subtitle).fontSize(11).fontColor($r('app.color.text_secondary'))
       }.alignItems(HorizontalAlign.Start)
       Blank()
-      Button(action).fontSize(12).fontColor(action === '清除' ? '#C2413A' : '#246BB3')
-        .backgroundColor(action === '清除' ? '#FCECE9' : '#EEF6FD').borderRadius(15).onClick(onClick)
+      Button(action).fontSize(12).fontColor(action === '清除' ? $r('app.color.danger') : $r('app.color.accent'))
+        .backgroundColor(action === '清除' ? $r('app.color.danger_surface') : $r('app.color.accent_surface'))
+        .borderRadius(15).onClick(onClick)
     }.width('100%').height(72)
   }
 

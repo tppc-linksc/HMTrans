@@ -1,6 +1,7 @@
 import { socket } from '@kit.NetworkKit'
 import { arrayBufferToString } from '../common/Bytes'
 import { DISCOVERY_PORT, DeviceInfo, createDeviceInfo } from '../common/Protocol'
+import { errorText } from '../common/ErrorText'
 
 export interface DiscoveryCallbacks {
   onDevice: (device: DeviceInfo) => void
@@ -56,7 +57,7 @@ export class DiscoveryService {
       if (err && err.code === 0) {
         return
       }
-      callbacks.onStatus(`发现服务错误：${JSON.stringify(err)}`)
+      callbacks.onStatus(`发现服务错误：${errorText(err)}`)
     })
 
     try {
@@ -68,8 +69,8 @@ export class DiscoveryService {
       this.udp = undefined
       await udp.close().catch(() => {
       })
-      callbacks.onStatus(`发现服务启动失败：${JSON.stringify(err)}`)
-      throw new Error(JSON.stringify(err))
+      callbacks.onStatus(`发现服务启动失败：${errorText(err)}`)
+      throw new Error(errorText(err))
     }
 
     // Use the LAN limited broadcast and paired-device unicast targets instead
@@ -157,7 +158,7 @@ export class DiscoveryService {
         port: this.discoveryPort,
       },
     }).catch((err: Error) => {
-      console.error(`[HMTrans.Discovery] acknowledgement failed peer=${deviceId}: ${JSON.stringify(err)}`)
+      console.error(`[HMTrans.Discovery] acknowledgement failed peer=${deviceId}: ${errorText(err)}`)
     })
   }
 }

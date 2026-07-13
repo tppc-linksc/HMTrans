@@ -6,6 +6,7 @@ actor AsyncConcurrencyGate {
     private let limit: Int
     private var active = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(limit: Int) {
         self.limit = max(1, limit)
@@ -24,8 +25,20 @@ actor AsyncConcurrencyGate {
     func release() {
         if waiters.isEmpty {
             active = max(0, active - 1)
+            if active == 0 {
+                let pending = idleWaiters
+                idleWaiters.removeAll()
+                pending.forEach { $0.resume() }
+            }
         } else {
             waiters.removeFirst().resume()
+        }
+    }
+
+    func waitUntilIdle() async {
+        guard active > 0 || !waiters.isEmpty else { return }
+        await withCheckedContinuation { continuation in
+            idleWaiters.append(continuation)
         }
     }
 }

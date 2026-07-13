@@ -1,6 +1,7 @@
 import pasteboard from '@ohos.pasteboard'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { TransferStore } from '../persistence/TransferStore'
+import { errorText } from '../common/ErrorText'
 
 export interface PadDiagnosticSnapshot {
   receiverReady: boolean
@@ -32,7 +33,7 @@ ${errors.length > 0 ? errors : '无'}`
     try {
       await pasteboard.getSystemPasteboard().setData(pasteboard.createData('text/plain', report))
     } catch (err) {
-      throw new Error(`诊断信息写入剪贴板失败：${JSON.stringify(err)}`)
+      throw new Error(`诊断信息写入剪贴板失败：${errorText(err)}`)
     }
   }
 

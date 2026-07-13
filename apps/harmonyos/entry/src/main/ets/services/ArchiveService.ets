@@ -1,7 +1,9 @@
 import { common } from '@kit.AbilityKit'
+import { taskpool } from '@kit.ArkTS'
 import { zlib } from '@kit.BasicServicesKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
 import { fileNameFromUri } from './FileHashService'
+import { errorText } from '../common/ErrorText'
 
 export interface SendableSource {
   uri: string
@@ -18,6 +20,41 @@ export interface SendableSource {
 interface DirectorySummary {
   size: number
   count: number
+}
+
+@Concurrent
+function copyPickerSourceTask(sourcePath: string, temporaryPath: string, stagedPath: string): void {
+  let source: fs.File | undefined
+  let target: fs.File | undefined
+  try {
+    try { fs.unlinkSync(temporaryPath) } catch (_) {}
+    source = fs.openSync(sourcePath, fs.OpenMode.READ_ONLY)
+    target = fs.openSync(temporaryPath, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+    fs.copyFileSync(source.fd, target.fd)
+    fs.closeSync(target); target = undefined
+    fs.closeSync(source); source = undefined
+    try { fs.unlinkSync(stagedPath) } catch (_) {}
+    fs.renameSync(temporaryPath, stagedPath)
+  } finally {
+    if (target) try { fs.closeSync(target) } catch (_) {}
+    if (source) try { fs.closeSync(source) } catch (_) {}
+  }
+}
+
+@Concurrent
+function directorySummaryTask(root: string): Array<number> {
+  let size = 0
+  let count = 0
+  const visit = (path: string): void => {
+    fs.listFileSync(path).forEach((name: string) => {
+      const child = `${path}/${name}`
+      const stat = fs.statSync(child)
+      if (stat.isDirectory()) visit(child)
+      else { count += 1; size += stat.size }
+    })
+  }
+  visit(root)
+  return [size, count]
 }
 
 export class ArchiveService {
@@ -50,7 +87,7 @@ export class ArchiveService {
       this.ensureDirectory(sourcesRoot)
       this.ensureDirectory(transferRoot)
       const stagedPath = `${transferRoot}/${displayName}`
-      this.copyPickerSource(uri, stagedPath)
+      await this.copyPickerSource(uri, stagedPath)
       return {
         uri: stagedPath,
         originalUri: uri,
@@ -67,7 +104,7 @@ export class ArchiveService {
     const archiveDir = `${context.filesDir}/HMTrans/Staging/Archives`
     this.ensureDirectory(archiveDir)
     const baseName = fileNameFromUri(uri)
-    const sourceSummary = this.directorySummary(uri)
+    const sourceSummary = await this.directorySummary(uri)
     const archivePath = `${archiveDir}/${transferId}-${baseName}.zip`
     try {
       await zlib.compressFile(uri, archivePath, {
@@ -76,7 +113,7 @@ export class ArchiveService {
         strategy: zlib.CompressStrategy.COMPRESS_STRATEGY_DEFAULT_STRATEGY,
       })
     } catch (err) {
-      throw new Error(`Unable to compress folder: ${JSON.stringify(err)}`)
+      throw new Error(`Unable to compress folder: ${errorText(err)}`)
     }
 
     return {
@@ -126,27 +163,13 @@ export class ArchiveService {
    * Opening the URI while the grant is alive, then copying by file descriptor,
    * leaves networking and resume logic with a normal app-private file path.
    */
-  private copyPickerSource(uri: string, stagedPath: string): void {
+  private async copyPickerSource(uri: string, stagedPath: string): Promise<void> {
     const temporaryPath = `${stagedPath}.copying`
-    let source: fs.File | undefined
-    let target: fs.File | undefined
     try {
-      try { fs.unlinkSync(temporaryPath) } catch (_) {}
-      source = fs.openSync(uri, fs.OpenMode.READ_ONLY)
-      target = fs.openSync(temporaryPath, fs.OpenMode.WRITE_ONLY | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
-      fs.copyFileSync(source.fd, target.fd)
-      fs.closeSync(target)
-      target = undefined
-      fs.closeSync(source)
-      source = undefined
-      try { fs.unlinkSync(stagedPath) } catch (_) {}
-      fs.renameSync(temporaryPath, stagedPath)
+      await taskpool.execute(copyPickerSourceTask, uri, temporaryPath, stagedPath)
     } catch (err) {
       try { fs.unlinkSync(temporaryPath) } catch (_) {}
-      throw new Error(`Unable to persist selected file: ${JSON.stringify(err)}`)
-    } finally {
-      if (target) try { fs.closeSync(target) } catch (_) {}
-      if (source) try { fs.closeSync(source) } catch (_) {}
+      throw new Error(`Unable to persist selected file: ${errorText(err)}`)
     }
   }
 
@@ -182,22 +205,8 @@ export class ArchiveService {
     }
   }
 
-  private directorySummary(root: string): DirectorySummary {
-    let size = 0
-    let count = 0
-    const visit = (path: string): void => {
-      fs.listFileSync(path).forEach((name: string) => {
-        const child = `${path}/${name}`
-        const stat = fs.statSync(child)
-        if (stat.isDirectory()) {
-          visit(child)
-        } else {
-          count += 1
-          size += stat.size
-        }
-      })
-    }
-    visit(root)
-    return { size, count }
+  private async directorySummary(root: string): Promise<DirectorySummary> {
+    const values = await taskpool.execute(directorySummaryTask, root) as Array<number>
+    return { size: values[0] ?? 0, count: values[1] ?? 0 }
   }
 }

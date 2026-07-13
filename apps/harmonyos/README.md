@@ -46,6 +46,7 @@ entry/src/main/module.json5
 entry/src/main/ets/entryability/EntryAbility.ets
 entry/src/main/ets/common/Protocol.ets
 entry/src/main/ets/components/       页面组件、原生 HdsTabs Dock 和交互弹层
+entry/src/main/ets/controllers/      网络/配对、发送与任务控制器
 entry/src/main/ets/persistence/      任务、设备、历史和诊断事件
 entry/src/main/ets/services/         发现、传输、目录、归档、后台和诊断服务
 entry/src/main/ets/pages/Index.ets
@@ -69,7 +70,8 @@ cp build-profile.example.json5 build-profile.json5
 cd apps/harmonyos
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
-  /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleHap
+  /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
+  --no-daemon --mode module -p module=entry@default -p product=default assembleHap
 ```
 
 绑定测试设备的调试包（DevEco Studio 运行前选择 `development` Product）：
@@ -77,7 +79,8 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
 ```sh
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
-  /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js assembleHap -p product=development
+  /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
+  --no-daemon --mode module -p module=entry@default -p product=development assembleHap
 ```
 
 产物：
@@ -122,7 +125,7 @@ hdc shell bm uninstall -n com.linksc.puresend
 
 - 使用应用自己的隐私弹窗，同意前不启动局域网服务，不再依赖托管隐私确认流程。
 - 把 UDP 发现、TCP 接收和下载目录拆成独立状态，局部失败可见、可重试。
-- 使用 relationalStore 保存任务、检查点、设备和历史，未完成文件保存在私有持久目录。
+- 使用 relationalStore 保存设备、任务/历史快照和诊断事件，未完成文件及恢复元数据保存在私有持久目录。
 - 活动传输使用 `dataTransfer` 后台能力和通知；空闲时不持续长时保活。
 - 支持暂停、继续、取消、断点续传、进程重启恢复、文件夹还原和多设备任务。
 - 移除每秒轮询和向大量硬编码网段持续广播的空闲高耗电行为。
@@ -132,6 +135,6 @@ hdc shell bm uninstall -n com.linksc.puresend
 
 - `../../docs/01-v0.2产品与交互方案.md`
 - `../../docs/02-v0.2技术方案.md`
-- `../../docs/03-传输协议-v0.2.md`
+- `../../docs/03-v0.2传输协议.md`
 - `../../docs/04-v0.2开发计划.md`
 - `../../docs/05-v0.2验收清单.md`

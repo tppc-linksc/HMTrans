@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Own privacy gate. No discovery, receiver or status item starts before consent.
 struct PrivacyGateView: View {
-    private static let privacyVersion = "2026-07-12"
+    private static let privacyVersion = "2026-07-13"
     let model: TransferViewModel
     @AppStorage("privacyAcceptedVersion") private var acceptedVersion = ""
 

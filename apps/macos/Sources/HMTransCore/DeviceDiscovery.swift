@@ -411,9 +411,10 @@ private func addressString(from address: sockaddr_in) -> String {
 
 private func waitBeforeNextBeacon(fd: Int32) {
     guard fcntl(fd, F_GETFD) != -1 else { return }
-    // Discovery runs on a utility queue; a coarse sleep avoids the old 100 ms
-    // RunLoop wakeup that consumed energy while no transfer was active.
-    Thread.sleep(forTimeInterval: 5)
+    // Let the kernel park the discovery worker instead of repeatedly waking a
+    // RunLoop or sleeping in short slices while the app is idle.
+    var descriptor = pollfd(fd: fd, events: 0, revents: 0)
+    _ = Darwin.poll(&descriptor, 1, 5_000)
 }
 
 private func lastErrnoText() -> String {

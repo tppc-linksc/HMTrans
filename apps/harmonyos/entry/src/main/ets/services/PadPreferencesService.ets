@@ -75,9 +75,9 @@ export class PadPreferencesService {
     await store.flush()
   }
 
-  saveBoolean(context: common.UIAbilityContext, key: string, value: boolean): void {
-    preferences.getPreferences(context, NAME).then((store) => {
-      store.put(key, value).then(() => store.flush()).catch(() => {})
-    }).catch(() => {})
+  async saveBoolean(context: common.UIAbilityContext, key: string, value: boolean): Promise<void> {
+    const store = await preferences.getPreferences(context, NAME)
+    await store.put(key, value)
+    await store.flush()
   }
 }
