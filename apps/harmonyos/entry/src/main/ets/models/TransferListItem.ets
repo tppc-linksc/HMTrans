@@ -1,3 +1,15 @@
+/** Stable persisted states shared by controllers and views. */
+export enum TransferState {
+  Preparing = '准备中',
+  Active = '传输中',
+  Verifying = '校验中',
+  Paused = '已暂停',
+  Waiting = '等待重连',
+  Done = '已完成',
+  Failed = '失败',
+  Cancelled = '已取消',
+}
+
 export interface TransferListItemOptions {
   id: string
   fileName: string
@@ -5,7 +17,7 @@ export interface TransferListItemOptions {
   direction: string
   progress: number
   detail: string
-  state: string
+  state: TransferState | string
   timeText: string
   startedAt: number
   fileSize: number

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@ohos/hypium'
 import { createFileMeta, createPairingRequest, createReceiveDecision, encodeJsonLine } from '../main/ets/common/Protocol'
 import { TransferListItem } from '../main/ets/models/TransferListItem'
 import { TransferStateService } from '../main/ets/services/TransferStateService'
+import { validateZipEntryName } from '../main/ets/services/ZipSafetyService'
 
 export default function protocolAndStateTest(): void {
   describe('HMTrans protocol and state', () => {
@@ -34,6 +35,15 @@ export default function protocolAndStateTest(): void {
       expect(result.current.length).assertEqual(0)
       expect(result.historyItem?.state).assertEqual('已完成')
       expect(result.historyItem?.progress).assertEqual(100)
+    })
+
+    it('rejects zip traversal and absolute entry names', 0, () => {
+      expect(() => validateZipEntryName('../escape.txt')).assertThrowError('文件夹归档包含不安全路径')
+      expect(() => validateZipEntryName('safe/../../escape.txt')).assertThrowError('文件夹归档包含不安全路径')
+      expect(() => validateZipEntryName('/absolute/file.txt')).assertThrowError('文件夹归档包含不安全路径')
+      expect(() => validateZipEntryName('C:/absolute/file.txt')).assertThrowError('文件夹归档包含不安全路径')
+      expect(() => validateZipEntryName('safe\\..\\escape.txt')).assertThrowError('文件夹归档包含不安全路径')
+      validateZipEntryName('folder/nested/photo.jpg')
     })
   })
 }

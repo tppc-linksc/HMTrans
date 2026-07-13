@@ -752,6 +752,9 @@ final class TransferViewModel {
                             fileType: prepared.sourceKind == "folder" ? "文件夹" : fileTypeLabel(prepared.displayName),
                             detail: prepared.cleanupDirectory == nil ? "准备发送" : "已压缩为 zip，准备发送"
                         )
+                        // Hashing can take noticeable time for multi-gigabyte
+                        // payloads, so expose the phase before Core starts it.
+                        self?.markTransferVerifying(id: transferId)
                     }
                     try sendFile(
                         fileURL: prepared.url,
@@ -767,19 +770,23 @@ final class TransferViewModel {
                         sourceSize: prepared.sourceSize,
                         sourceFileCount: prepared.sourceFileCount,
                         senderFingerprint: senderFingerprint,
-                        control: control
-                    ) { current, total in
-                        Task { @MainActor in
-                            self?.progress = total == 0 ? 1 : Double(current) / Double(total)
-                            self?.status = "发送中 \(Int((self?.progress ?? 0) * 100))%：\(prepared.displayName)"
-                            self?.updateCurrentTransfer(
-                                id: transferId,
-                                progress: self?.progress ?? 0,
-                                current: current,
-                                total: total
-                            )
+                        control: control,
+                        onProgress: { current, total in
+                            Task { @MainActor in
+                                if let currentIndex = self?.currentTransfers.firstIndex(where: { $0.id == transferId }) {
+                                    self?.currentTransfers[currentIndex].state = .active
+                                }
+                                self?.progress = total == 0 ? 1 : Double(current) / Double(total)
+                                self?.status = "发送中 \(Int((self?.progress ?? 0) * 100))%：\(prepared.displayName)"
+                                self?.updateCurrentTransfer(
+                                    id: transferId,
+                                    progress: self?.progress ?? 0,
+                                    current: current,
+                                    total: total
+                                )
+                            }
                         }
-                    }
+                    )
                     await MainActor.run {
                         self?.transferControls.removeValue(forKey: transferId)
                         self?.completeTransfer(id: transferId, success: true, detail: "发送完成")
@@ -877,49 +884,45 @@ final class TransferViewModel {
                 port: localTCPPort,
                 outputDirectory: receiveDirectory,
                 onPairingRequest: { request in
-                    let validate = {
-                        MainActor.assumeIsolated {
-                            let accepted = request.code.filter(\.isNumber) == self.pairingCode.filter(\.isNumber)
-                                && self.pairingSeconds > 0
-                                && request.requesterFingerprint?.isEmpty == false
-                            if accepted {
-                                let device = DeviceInfo(
-                                    deviceName: request.requesterName,
-                                    platform: request.requesterPlatform,
-                                    ip: request.requesterIP,
+                    evaluateOnMain(timeout: 5, fallback: false) {
+                        let accepted = request.code.filter(\.isNumber) == self.pairingCode.filter(\.isNumber)
+                            && self.pairingSeconds > 0
+                            && request.requesterFingerprint?.isEmpty == false
+                        if accepted {
+                            let device = DeviceInfo(
+                                deviceName: request.requesterName,
+                                platform: request.requesterPlatform,
+                                ip: request.requesterIP,
                                 port: request.requesterPort,
                                 deviceId: request.requesterDeviceId,
                                 systemVersion: request.requesterSystemVersion,
                                 identityFingerprint: request.requesterFingerprint
-                                )
-                                TrustedDevicesStore.insert(
-                                    request.requesterDeviceId,
-                                    fingerprint: request.requesterFingerprint
-                                )
-                                self.deviceLastSeenAt[device.deviceId] = Date()
-                                self.markDeviceConfirmed(device.deviceId)
-                                self.mergeDiscoveredDevice(device)
-                                self.useDevice(device)
-                                self.status = "已与 \(device.deviceName) 完成配对"
-                            }
-                            return accepted
+                            )
+                            TrustedDevicesStore.insert(
+                                request.requesterDeviceId,
+                                fingerprint: request.requesterFingerprint
+                            )
+                            self.deviceLastSeenAt[device.deviceId] = Date()
+                            self.markDeviceConfirmed(device.deviceId)
+                            self.mergeDiscoveredDevice(device)
+                            self.useDevice(device)
+                            self.status = "已与 \(device.deviceName) 完成配对"
                         }
+                        return accepted
                     }
-                    let accepted = Thread.isMainThread ? validate() : DispatchQueue.main.sync(execute: validate)
-                    return accepted
                 },
                 shouldAccept: { meta in
                     if meta.senderDeviceId == self.deviceId {
                         return false
                     }
-                    let readSetting = {
-                        MainActor.assumeIsolated { self.autoReceiveTrustedDevices }
+                    let autoReceive = evaluateOnMain(timeout: 5, fallback: false) {
+                        self.autoReceiveTrustedDevices
                     }
-                    let autoReceive = Thread.isMainThread ? readSetting() : DispatchQueue.main.sync(execute: readSetting)
                     guard confirmIncomingFile(meta) else { return false }
                     if autoReceive { return true }
-                    let prompt = { MainActor.assumeIsolated { promptForIncomingFile(meta) } }
-                    return Thread.isMainThread ? prompt() : DispatchQueue.main.sync(execute: prompt)
+                    return evaluateOnMain(timeout: 600, fallback: false) {
+                        promptForIncomingFile(meta)
+                    }
                 },
                 onProgress: { [weak self] meta, current, total in
                     Task { @MainActor in

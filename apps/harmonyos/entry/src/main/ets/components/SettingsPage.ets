@@ -67,6 +67,8 @@ export struct PadSettingsPage {
       Blank()
       Toggle({ type: ToggleType.Switch, isOn: enabled }).width(46).height(24)
         .selectedColor($r('app.color.accent')).onChange(onChange)
+        .accessibilityText(title)
+        .accessibilityDescription(`${subtitle}，当前${enabled ? '开启' : '关闭'}`)
     }.width('100%').height(72)
   }
 
@@ -81,6 +83,7 @@ export struct PadSettingsPage {
       Button(action).fontSize(12).fontColor(action === '清除' ? $r('app.color.danger') : $r('app.color.accent'))
         .backgroundColor(action === '清除' ? $r('app.color.danger_surface') : $r('app.color.accent_surface'))
         .borderRadius(15).onClick(onClick)
+        .accessibilityText(`${action}${title}`)
     }.width('100%').height(72)
   }
 
@@ -94,5 +97,6 @@ export struct PadSettingsPage {
       Blank()
       Text('›').fontSize(24).fontColor($r('app.color.text_secondary'))
     }.width('100%').height(72).onClick(onClick)
+      .accessibilityText(title).accessibilityDescription(`${subtitle}，点按修改`)
   }
 }

@@ -44,6 +44,7 @@ export struct PadConnectionPage {
       Text('当前网络').fontSize(13).fontColor($r('app.color.text_secondary')).width('100%')
       Row({ space: 8 }) {
         Image($r('app.media.icon_wifi_discovery')).width(22).height(22)
+          .accessibilityText('Wi-Fi')
         Text(this.networkName).fontSize(19).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
       }.width('100%')
       Text(this.targetIp.length > 0 ? this.targetIp : '自动获取地址')
@@ -70,6 +71,8 @@ export struct PadConnectionPage {
     .width('100%').height(230).justifyContent(FlexAlign.Center).backgroundColor($r('app.color.surface_primary'))
     .borderRadius(24).border({ width: 2, color: $r('app.color.accent'), style: BorderStyle.Dashed })
     .enabled(this.selectedDeviceName.length > 0).onClick(this.onSelectFile)
+    .accessibilityText(this.selectedDeviceName.length > 0 ? '选择文件或文件夹并发送' : '暂无已连接设备')
+    .accessibilityDescription(this.selectedDeviceName.length > 0 ? `发送给 ${this.selectedDeviceName}` : '请先连接设备')
     .allowDrop([
       uniformTypeDescriptor.UniformDataType.FILE,
       uniformTypeDescriptor.UniformDataType.FOLDER,
@@ -94,6 +97,8 @@ export struct PadConnectionPage {
           Text('秒').fontSize(9).fontColor($r('app.color.text_secondary'))
         }
       }.width(58).height(58).onClick(this.onRegenerateCode)
+        .accessibilityText(`配对码剩余 ${this.pairingSeconds} 秒`)
+        .accessibilityDescription('点按立即生成新的六位配对码')
     }
     .width(this.compactLayout ? '100%' : '49%').height(124).padding(18)
     .backgroundColor($r('app.color.surface_translucent')).backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
@@ -162,6 +167,9 @@ export struct PadConnectionPage {
       else if (state === 'paired') this.onReconnectDevice(device)
       else this.onToggleTarget(device)
     })
+    .accessibilityText(`${device.deviceName}，${state === 'alive' ? '已连接' : state === 'paired' ? '已配对未连接' : '未配对'}`)
+    .accessibilityDescription(state === 'alive' ? '点按选择或取消发送目标，长按可忘记设备' :
+      state === 'paired' ? '点按重新连接，长按可忘记设备' : '点按输入配对码')
     .gesture(
       LongPressGesture({ repeat: false, duration: 600 })
         .onAction(() => {

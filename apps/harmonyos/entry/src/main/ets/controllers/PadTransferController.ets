@@ -3,7 +3,7 @@ import { picker } from '@kit.CoreFileKit'
 import { DeviceInfo, FileMeta } from '../common/Protocol'
 import { formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
-import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { DropUriService } from '../services/DropUriService'
 import { OutgoingTransferCallbacks, OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordinator'
@@ -152,16 +152,16 @@ export class PadTransferController {
 
   toggleTransferPause(item: TransferListItem): void {
     if (item.direction === '接收') {
-      if (item.state === '已暂停') {
+      if (item.state === TransferState.Paused) {
         this.transferService.resumeTransfer(item.id)
-        this.markCurrentTransferState(item.id, '等待重连', '接收已恢复，等待发送端重连')
+        this.markCurrentTransferState(item.id, TransferState.Waiting, '接收已恢复，等待发送端重连')
       } else {
         this.transferService.pauseTransfer(item.id)
-        this.markCurrentTransferState(item.id, '已暂停', '接收已暂停，分片已保留')
+        this.markCurrentTransferState(item.id, TransferState.Paused, '接收已暂停，分片已保留')
       }
       return
     }
-    if (item.state === '等待重连') {
+    if (item.state === TransferState.Waiting) {
       const matched = this.host.freshDevices.filter((device: DeviceInfo) => device.deviceId === item.deviceId)
       const device = matched.length > 0 ? matched[0] : this.host.selectedDevice
       if (!device) {
@@ -171,21 +171,26 @@ export class PadTransferController {
       this.host.resumeWaitingTransfers(device)
       return
     }
-    if (item.state === '已暂停') {
+    if (item.state === TransferState.Paused) {
       this.transferService.resumeTransfer(item.id)
-      this.markCurrentTransferState(item.id, '传输中', '正在继续传输')
+      this.markCurrentTransferState(item.id, TransferState.Active, '正在继续传输')
     } else {
       this.transferService.pauseTransfer(item.id)
-      this.markCurrentTransferState(item.id, '已暂停', '已暂停网络发送')
+      this.markCurrentTransferState(item.id, TransferState.Paused, '已暂停网络发送')
     }
   }
 
   toggleTransferGroup(item: TransferListItem): void {
     const rows = this.host.currentTransfers.filter((row: TransferListItem) => row.groupId === item.groupId)
-    const shouldPause = rows.some((row: TransferListItem) => row.state !== '已暂停' && row.state !== '等待重连')
+    const shouldPause = rows.some((row: TransferListItem) => row.state !== TransferState.Paused &&
+      row.state !== TransferState.Waiting)
     rows.forEach((row: TransferListItem) => {
-      if (shouldPause && row.state !== '已暂停' && row.state !== '等待重连') this.toggleTransferPause(row)
-      if (!shouldPause && (row.state === '已暂停' || row.state === '等待重连')) this.toggleTransferPause(row)
+      if (shouldPause && row.state !== TransferState.Paused && row.state !== TransferState.Waiting) {
+        this.toggleTransferPause(row)
+      }
+      if (!shouldPause && (row.state === TransferState.Paused || row.state === TransferState.Waiting)) {
+        this.toggleTransferPause(row)
+      }
     })
   }
 
@@ -193,7 +198,7 @@ export class PadTransferController {
     this.transferService.cancelTransfer(item.id)
     this.host.activeTransferDeviceIds.delete(item.id)
     this.host.currentTransfers = this.host.currentTransfers.filter((row: TransferListItem) => row.id !== item.id)
-    this.appendHistory(item.copyWith(item.progress, '用户取消', '已取消', nowText()),
+    this.appendHistory(item.copyWith(item.progress, '用户取消', TransferState.Cancelled, nowText()),
       item.deviceId.length > 0 ? item.deviceId : this.host.selectedDeviceId)
   }
 
@@ -236,7 +241,7 @@ export class PadTransferController {
   scheduleAutomaticResume(id: string): void {
     setTimeout(() => {
       const waiting = this.host.currentTransfers.some((item: TransferListItem) =>
-        item.id === id && item.state === '等待重连')
+        item.id === id && item.state === TransferState.Waiting)
       if (waiting && this.host.selectedDevice && !this.host.activeTransferDeviceIds.has(id)) {
         this.host.resumeWaitingTransfers(this.host.selectedDevice)
       }
@@ -265,7 +270,7 @@ export class PadTransferController {
     return meta.senderDeviceId ?? ''
   }
 
-  async publishReceivedMedia(transferId: string, _fileName: string, _path: string): Promise<void> {
+  async markReceivedFilePublished(transferId: string, _fileName: string, _path: string): Promise<void> {
     this.host.runOnUi(() => this.updateHistoryDetail(transferId, '已保存到下载目录 HMTrans'))
   }
 
@@ -275,7 +280,7 @@ export class PadTransferController {
   }
 
   progressDetail(id: string, current: number, total: number): string {
-    if (total <= 0) return '传输中'
+    if (total <= 0) return TransferState.Active
     const matched = this.host.currentTransfers.filter((row: TransferListItem) => row.id === id)
     const startedAt = matched.length > 0 ? matched[0].startedAt : Date.now()
     const speed = current / Math.max((Date.now() - startedAt) / 1000, 0.15)
@@ -288,7 +293,7 @@ export class PadTransferController {
       onBegin: (options: TransferListItemOptions, deviceId: string) => this.host.runOnUi(() => {
         this.host.activeTransferDeviceIds.set(options.id, deviceId)
         if (this.host.currentTransfers.some((item: TransferListItem) => item.id === options.id)) {
-          this.markCurrentTransferState(options.id, '准备中', '正在协商断点')
+          this.markCurrentTransferState(options.id, TransferState.Preparing, '正在协商断点')
         } else {
           options.timeText = nowText()
           this.upsertCurrentTransfer(options)
@@ -306,7 +311,7 @@ export class PadTransferController {
       }),
       onWaiting: (id: string, _detail: string) => this.host.runOnUi(() => {
         this.host.activeTransferDeviceIds.delete(id)
-        this.markCurrentTransferState(id, '等待重连', '连接中断，已保存断点')
+        this.markCurrentTransferState(id, TransferState.Waiting, '连接中断，已保存断点')
         this.scheduleAutomaticResume(id)
       }),
       onActivity: (active: boolean) => this.host.updateBackgroundTransferActivity(active),

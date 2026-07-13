@@ -82,6 +82,48 @@ func promptForPairingCode(device: DeviceInfo) -> String? {
     return code
 }
 
+/// Bridges Core's synchronous admission callback to AppKit without a
+/// `DispatchQueue.main.sync` cycle. The receiver never waits for this worker
+/// queue during stop, and a missing UI response fails closed after `timeout`.
+func evaluateOnMain<T: Sendable>(
+    timeout: TimeInterval,
+    fallback: T,
+    operation: @escaping @MainActor @Sendable () -> T
+) -> T {
+    if Thread.isMainThread {
+        return MainActor.assumeIsolated { operation() }
+    }
+    let semaphore = DispatchSemaphore(value: 0)
+    let result = MainThreadResultBox<T>()
+    DispatchQueue.main.async {
+        guard result.beginIfActive() else { return }
+        result.store(operation())
+        semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + timeout) == .success else {
+        result.cancel()
+        return fallback
+    }
+    return result.value ?? fallback
+}
+
+private final class MainThreadResultBox<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: T?
+    private var active = true
+
+    var value: T? { lock.withLock { storedValue } }
+    func beginIfActive() -> Bool {
+        lock.withLock {
+            guard active else { return false }
+            active = false
+            return true
+        }
+    }
+    func cancel() { lock.withLock { active = false } }
+    func store(_ value: T) { lock.withLock { storedValue = value } }
+}
+
 func fallbackScanCandidates(savedHost: String) -> [String] {
     let trimmed = savedHost.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, !isLocalIPv4Address(trimmed) else { return [] }
@@ -117,13 +159,12 @@ func tcpPortIsOpen(host: String, port: UInt16, timeout: TimeInterval) -> Bool {
     let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
     let queue = DispatchQueue(label: "HMTrans.PortProbe", qos: .utility)
     let semaphore = DispatchSemaphore(value: 0)
-    final class ProbeBox: @unchecked Sendable { var ready = false }
     let box = ProbeBox()
 
     connection.stateUpdateHandler = { state in
         switch state {
         case .ready:
-            box.ready = true
+            box.markReady()
             semaphore.signal()
         case .failed, .cancelled:
             semaphore.signal()
@@ -134,7 +175,23 @@ func tcpPortIsOpen(host: String, port: UInt16, timeout: TimeInterval) -> Bool {
     connection.start(queue: queue)
     let result = semaphore.wait(timeout: .now() + timeout)
     connection.cancel()
-    return result == .success && box.ready
+    return result == .success && box.isReady
+}
+
+/// Protects the probe result across Network.framework's callback queue and
+/// the caller thread. A semaphore coordinates timing, but it is not a Swift
+/// memory-isolation primitive, so the value itself remains lock protected.
+private final class ProbeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ready = false
+
+    var isReady: Bool {
+        lock.withLock { ready }
+    }
+
+    func markReady() {
+        lock.withLock { ready = true }
+    }
 }
 
 func ipv4String(from address: sockaddr_in) -> String {

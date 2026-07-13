@@ -4,7 +4,7 @@ import { wifiManager } from '@kit.ConnectivityKit'
 import { DeviceInfo, FileMeta, PairingRequest, createPairingRequest } from '../common/Protocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
-import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
 import { TcpTransferService } from '../services/TcpTransferService'
@@ -68,7 +68,7 @@ export interface PadNetworkHost {
   upsertCurrentTransfer(item: TransferListItemOptions): void
   progressDetail(id: string, current: number, total: number): string
   historyDeviceIdForIncoming(meta: FileMeta): string
-  publishReceivedMedia(transferId: string, fileName: string, path: string): Promise<void>
+  markReceivedFilePublished(transferId: string, fileName: string, path: string): Promise<void>
   updateHistoryDetail(id: string, detailPrefix: string): void
   showToast(message: string): void
   confirmReceive(sender: string, fileName: string, sizeText: string): Promise<boolean>
@@ -101,7 +101,7 @@ export class PadNetworkController {
       direction: '接收',
       progress: 0,
       detail: `等待接收 · ${sourceSummary} · 载荷 ${formatBytes(meta.fileSize)}`,
-      state: '传输中',
+      state: TransferState.Active,
       timeText: nowText(),
       startedAt: Date.now(),
       fileSize: meta.fileSize,
@@ -157,7 +157,7 @@ export class PadNetworkController {
           this.host.runOnUi(() => {
             this.host.completeTransfer(meta.transferId, true, `已保存到 ${path}`, path)
           })
-          this.host.publishReceivedMedia(meta.transferId, meta.fileName, path).catch((err: Error) => {
+          this.host.markReceivedFilePublished(meta.transferId, meta.fileName, path).catch((err: Error) => {
             this.host.runOnUi(() => {
               this.host.updateHistoryDetail(meta.transferId, `文件打开索引更新失败：${errorText(err)}`)
             })
@@ -449,13 +449,13 @@ export class PadNetworkController {
   resumeWaitingTransfers(device: DeviceInfo): void {
     const candidates = this.host.currentTransfers.filter((item: TransferListItem) => {
       const hasSource = this.host.archiveService.sourceExists(item.stagingPath)
-      return item.direction === '发送' && item.state === '等待重连' && hasSource &&
+      return item.direction === '发送' && item.state === TransferState.Waiting && hasSource &&
         (item.deviceId.length === 0 || item.deviceId === device.deviceId ||
           item.peerName === device.deviceName) && !this.host.activeTransferDeviceIds.has(item.id)
     })
     candidates.forEach((item: TransferListItem) => {
       this.host.activeTransferDeviceIds.set(item.id, device.deviceId)
-      this.host.markCurrentTransferState(item.id, '准备中', '设备已恢复，正在协商断点')
+      this.host.markCurrentTransferState(item.id, TransferState.Preparing, '设备已恢复，正在协商断点')
       this.resumeTransferItem(item, device).catch((err: Error) => {
         this.host.runOnUi(() => {
           this.host.activeTransferDeviceIds.delete(item.id)
@@ -463,7 +463,7 @@ export class PadNetworkController {
           if (detail.indexOf('Persistent staging source is missing') >= 0 || detail.indexOf('13900002') >= 0) {
             this.host.completeTransfer(item.id, false, '源文件不可用，请重新选择文件发送')
           } else {
-            this.host.markCurrentTransferState(item.id, '等待重连', '网络仍未恢复，稍后自动重试')
+            this.host.markCurrentTransferState(item.id, TransferState.Waiting, '网络仍未恢复，稍后自动重试')
           }
         })
       })

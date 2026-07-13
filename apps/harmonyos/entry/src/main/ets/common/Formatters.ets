@@ -9,8 +9,9 @@ export function fileTypeLabel(fileName: string): string {
 }
 
 export function fileNameFromUri(uri: string): string {
-  const index = uri.lastIndexOf('/')
-  return index >= 0 ? uri.substring(index + 1) : uri
+  const clean = decodeURIComponent(uri.split('?')[0])
+  const segments = clean.split('/')
+  return segments[segments.length - 1] || `HMTrans-${Date.now()}`
 }
 
 export function nowText(): string {

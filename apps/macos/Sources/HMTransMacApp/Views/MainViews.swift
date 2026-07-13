@@ -71,6 +71,9 @@ struct FileRow: View {
         .contentShape(RoundedRectangle(cornerRadius: 14))
         .background(MacAppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(MacAppTheme.subtleBorder))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.fileName)，\(item.direction.rawValue)，\(item.peerName)，\(item.state.rawValue)")
+        .accessibilityValue(item.detail)
         .contextMenu { contextMenu }
     }
 

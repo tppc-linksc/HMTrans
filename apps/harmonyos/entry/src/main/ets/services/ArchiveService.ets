@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit'
 import { taskpool } from '@kit.ArkTS'
 import { zlib } from '@kit.BasicServicesKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
-import { fileNameFromUri } from './FileHashService'
+import { fileNameFromUri } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 
 export interface SendableSource {

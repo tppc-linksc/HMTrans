@@ -3,7 +3,7 @@ import { preferences } from '@kit.ArkData'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { DEFAULT_PORT, DISCOVERY_PORT, DeviceInfo, FileMeta } from '../common/Protocol'
 import { nowText } from '../common/Formatters'
-import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { PadConnectionPage } from '../components/ConnectionPage'
 import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
@@ -82,6 +82,7 @@ struct Index {
   private dialogService: PadDialogService = new PadDialogService()
   discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
+  private pageActive: boolean = false
   private notificationActionsRegistered: boolean = false
   private privacyAccepted: boolean = false
   private privacyConsentResolver?: (agreed: boolean) => void
@@ -100,6 +101,7 @@ struct Index {
   private networkController?: PadNetworkController
 
   aboutToAppear(): void {
+    this.pageActive = true
     if (this.bootstrapped) {
       return
     }
@@ -113,6 +115,7 @@ struct Index {
   }
 
   onPageShow(): void {
+    this.pageActive = true
     if (!this.bootstrapped || !this.privacyAccepted) {
       return
     }
@@ -125,6 +128,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.pageActive = false
     this.network().clearLifecycleTimers()
     this.persistTransferState(true)
     this.network().stopDiscovery().catch(() => {})
@@ -393,7 +397,7 @@ struct Index {
       return
     }
     this.historyTransfers = this.historyTransfers.filter((row: TransferListItem) => row.id !== item.id)
-    const resumed = item.copyWith(item.progress, '用户重试，正在协商断点', '等待重连', nowText())
+    const resumed = item.copyWith(item.progress, '用户重试，正在协商断点', TransferState.Waiting, nowText())
     this.currentTransfers = [resumed].concat(this.currentTransfers.filter((row: TransferListItem) => row.id !== item.id))
     this.persistTransferState(true); this.resumeWaitingTransfers(matches[0])
   }
@@ -511,9 +515,9 @@ struct Index {
       this.runOnUi(() => {
         if (action === 'pause_all') {
           const active = this.currentTransfers.filter((row: TransferListItem) =>
-            row.state === '传输中' || row.state === '准备中')
+            row.state === TransferState.Active || row.state === TransferState.Preparing)
           const rows = active.length > 0 ? active : this.currentTransfers.filter((row: TransferListItem) =>
-            row.state === '已暂停' || row.state === '等待重连')
+            row.state === TransferState.Paused || row.state === TransferState.Waiting)
           rows.forEach((row: TransferListItem) => this.toggleTransferPause(row))
           this.statusText = active.length > 0 ? '已从通知暂停全部活动任务' : '已从通知继续可恢复任务'
         } else if (action === 'cancel_all') {
@@ -635,8 +639,10 @@ struct Index {
           unavailableHistory.push(this.sourceUnavailableItem(item))
           return
         }
-        if (item.state === '传输中' || item.state === '准备中' || item.state === '校验中') {
-          restoredCurrent.push(item.copyWith(item.progress, '应用重新打开，等待设备连接后继续', '等待重连', nowText()))
+        if (item.state === TransferState.Active || item.state === TransferState.Preparing ||
+          item.state === TransferState.Verifying) {
+          restoredCurrent.push(item.copyWith(item.progress, '应用重新打开，等待设备连接后继续',
+            TransferState.Waiting, nowText()))
           return
         }
         restoredCurrent.push(item)
@@ -654,7 +660,7 @@ struct Index {
     return new TransferListItem({
       id: item.id, groupId: item.groupId, fileName: item.fileName, peerName: item.peerName,
       direction: item.direction, progress: item.progress,
-      detail: '源文件授权已失效，请重新选择文件发送', state: '失败', timeText: nowText(),
+      detail: '源文件授权已失效，请重新选择文件发送', state: TransferState.Failed, timeText: nowText(),
       startedAt: item.startedAt, fileSize: item.fileSize, fileType: item.fileType,
       localPath: item.localPath, stagingPath: item.stagingPath, deviceId: item.deviceId,
       errorCode: 'SRC-MISSING-001', confirmedOffset: item.confirmedOffset,
@@ -827,10 +833,13 @@ struct Index {
   }
 
   runOnUi(task: () => void): void {
+    if (!this.pageActive) return
     try {
       this.getUIContext().runScopedTask(task)
     } catch (_) {
-      task()
+      // A failed scoped task normally means the page or its UI context has
+      // already been destroyed. Running the callback directly here would
+      // mutate stale reactive state from an arbitrary worker thread.
     }
   }
 
@@ -974,8 +983,8 @@ struct Index {
     return this.transfers().historyDeviceIdForIncoming(meta)
   }
 
-  publishReceivedMedia(transferId: string, fileName: string, path: string): Promise<void> {
-    return this.transfers().publishReceivedMedia(transferId, fileName, path)
+  markReceivedFilePublished(transferId: string, fileName: string, path: string): Promise<void> {
+    return this.transfers().markReceivedFilePublished(transferId, fileName, path)
   }
 
   updateHistoryDetail(id: string, detailPrefix: string): void {

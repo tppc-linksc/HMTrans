@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { fileNameFromUri, fileTypeLabel } from '../common/Formatters'
 import { DeviceInfo, FileMeta, PairingRequest } from '../common/Protocol'
-import { TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from './ArchiveService'
 import { TcpTransferService, TransferCallbacks } from './TcpTransferService'
 import { errorText } from '../common/ErrorText'
@@ -70,7 +70,7 @@ export class OutgoingTransferCoordinator {
     callbacks.onBegin({
       id: transferId, groupId: groupId ?? transferId, fileName: source.displayName, peerName: device.deviceName,
       direction: '发送', progress: 0, detail: source.isArchive ? '已压缩为 zip，准备发送' : '准备发送',
-      state: '传输中', timeText: '', startedAt: Date.now(), fileSize: source.fileSize,
+      state: TransferState.Active, timeText: '', startedAt: Date.now(), fileSize: source.fileSize,
       fileType: source.fileType, localPath: source.originalUri, stagingPath: source.uri,
       sourceSize: source.sourceSize, sourceFileCount: source.sourceFileCount,
     }, device.deviceId)
@@ -114,7 +114,7 @@ export class OutgoingTransferCoordinator {
     detail: string): TransferListItemOptions {
     const name = fileNameFromUri(uri)
     return { id, groupId, fileName: name, peerName: device.deviceName, direction: '发送', progress: 0, detail,
-      state: '失败', timeText: '', startedAt: Date.now(), fileSize: 0, fileType: fileTypeLabel(name), localPath: uri }
+      state: TransferState.Failed, timeText: '', startedAt: Date.now(), fileSize: 0, fileType: fileTypeLabel(name), localPath: uri }
   }
 
   private cleanup(source: SendableSource): void {

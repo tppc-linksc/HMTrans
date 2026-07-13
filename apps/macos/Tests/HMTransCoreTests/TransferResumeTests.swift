@@ -67,12 +67,12 @@ func interruptedTransferResumes() async throws {
                 host: "127.0.0.1",
                 port: port,
                 transferId: transferID,
-                control: control
-            ) { current, _ in
+                control: control,
+                onProgress: { current, _ in
                 if current >= 2 * 1_048_576 {
                     control.cancel()
                 }
-            }
+            })
         }
     }
     let firstSendResult = await firstSender.value
@@ -84,10 +84,10 @@ func interruptedTransferResumes() async throws {
         fileURL: sourceURL,
         host: "127.0.0.1",
         port: port,
-        transferId: transferID
-    ) { current, _ in
+        transferId: transferID,
+        onProgress: { current, _ in
         resumedOffset.record(current)
-    }
+    })
     for _ in 0..<100 where receivedBox.load() == nil {
         try await Task.sleep(for: .milliseconds(50))
     }

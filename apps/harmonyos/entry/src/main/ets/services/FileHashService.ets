@@ -5,12 +5,6 @@ import { DEFAULT_CHUNK_SIZE } from '../common/Protocol'
 import { sliceArrayBuffer, toHex } from '../common/Bytes'
 import { errorText } from '../common/ErrorText'
 
-export function fileNameFromUri(uri: string): string {
-  const clean = decodeURIComponent(uri.split('?')[0])
-  const segments = clean.split('/')
-  return segments[segments.length - 1] || `HMTrans-${Date.now()}`
-}
-
 function closeFileQuietly(file?: fs.File): void {
   if (!file) {
     return

@@ -39,7 +39,9 @@ export class TransferStore {
       if (!result.goToFirstRow()) {
         return empty
       }
-      const value = result.getString(result.getColumnIndex('value'))
+      const valueColumn = result.getColumnIndex('value')
+      if (valueColumn < 0) throw new Error('数据库缺少 app_state.value 列')
+      const value = result.getString(valueColumn)
       const payload = JSON.parse(value) as TransferSnapshotPayload
       return {
         current: payload.current.map((item: TransferListItemOptions) => new TransferListItem(item)),
@@ -78,7 +80,9 @@ export class TransferStore {
     const result = await this.store.querySql('SELECT payload FROM devices ORDER BY last_seen_at DESC')
     try {
       while (result.goToNextRow()) {
-        const payload = result.getString(result.getColumnIndex('payload'))
+        const payloadColumn = result.getColumnIndex('payload')
+        if (payloadColumn < 0) throw new Error('数据库缺少 devices.payload 列')
+        const payload = result.getString(payloadColumn)
         devices.push(JSON.parse(payload) as DeviceInfo)
       }
     } catch (err) {
@@ -142,13 +146,16 @@ export class TransferStore {
       return
     }
     await this.store.executeSql('PRAGMA journal_mode=WAL')
+    // v0.2 persists transfers as one atomic snapshot. These unused prototype
+    // tables were never read or written and only implied a migration that did
+    // not exist, so remove them without touching devices/history/diagnostics.
+    await this.store.executeSql('DROP TABLE IF EXISTS transfer_groups')
+    await this.store.executeSql('DROP TABLE IF EXISTS transfers')
+    await this.store.executeSql('DROP TABLE IF EXISTS checkpoints')
+    await this.store.executeSql('DROP TABLE IF EXISTS artifacts')
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL, platform TEXT NOT NULL, system_version TEXT NOT NULL, paired_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, payload TEXT NOT NULL)')
-    await this.store.executeSql('CREATE TABLE IF NOT EXISTS transfer_groups (group_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)')
-    await this.store.executeSql('CREATE TABLE IF NOT EXISTS transfers (transfer_id TEXT PRIMARY KEY, group_id TEXT NOT NULL, device_id TEXT NOT NULL, state TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER NOT NULL, confirmed_offset INTEGER NOT NULL, payload TEXT NOT NULL, updated_at INTEGER NOT NULL)')
-    await this.store.executeSql('CREATE TABLE IF NOT EXISTS checkpoints (transfer_id TEXT PRIMARY KEY, confirmed_offset INTEGER NOT NULL, digest TEXT, updated_at INTEGER NOT NULL)')
-    await this.store.executeSql('CREATE TABLE IF NOT EXISTS artifacts (transfer_id TEXT PRIMARY KEY, staging_path TEXT, final_path TEXT, state TEXT NOT NULL, updated_at INTEGER NOT NULL)')
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS diagnostic_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT, transfer_id TEXT, code TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL)')
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)')
-    await this.store.executeSql('PRAGMA user_version=1')
+    await this.store.executeSql('PRAGMA user_version=2')
   }
 }

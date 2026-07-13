@@ -1,4 +1,4 @@
-import { TransferListItem } from '../models/TransferListItem'
+import { TransferListItem, TransferState } from '../models/TransferListItem'
 
 /** Unified current/history presentation; task mutation is delegated upward. */
 @ComponentV2
@@ -39,6 +39,7 @@ export struct TransferHistoryPage {
         .height(36).padding({ left: 10, right: 4 }).textAlign(TextAlign.Center)
         .opacity(this.historyTransfers.length > 0 ? 1 : 0.4)
         .onClick(() => { if (this.historyTransfers.length > 0) this.onClearAll() })
+        .accessibilityText('清空全部历史记录')
     }.width('100%')
     if (this.filteredPeerNames().length === 0) {
       Column({ space: 10 }) {
@@ -69,6 +70,7 @@ export struct TransferHistoryPage {
           .onClick(() => {
             if (this.historyItemsForPeer(peerName).length > 0) this.onClearPeer(peerName)
           })
+          .accessibilityText(`清空 ${peerName} 的历史记录`)
       }.width('100%')
       List({ space: 0 }) {
         Repeat<TransferListItem>(this.itemsForPeer(peerName))
@@ -113,6 +115,7 @@ export struct TransferHistoryPage {
     }
     .width(64).height('100%').backgroundColor($r('app.color.danger'))
     .onClick(() => this.onDeleteHistory(item))
+    .accessibilityText(`删除 ${item.fileName} 的传输记录`)
   }
 
   @Builder
@@ -126,12 +129,13 @@ export struct TransferHistoryPage {
         Text(`${item.direction} · ${item.timeText} · ${item.detail}`).fontSize(10).fontColor($r('app.color.text_secondary')).maxLines(1)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Text(this.stateLabel(item)).fontSize(10).fontWeight(FontWeight.Bold)
-        .fontColor(item.state === '失败' ? $r('app.color.danger') :
-          item.state === '已完成' ? $r('app.color.success') : $r('app.color.accent'))
+        .fontColor(item.state === TransferState.Failed ? $r('app.color.danger') :
+          item.state === TransferState.Done ? $r('app.color.success') : $r('app.color.accent'))
       if (this.isCurrent(item)) {
-        Button(item.state === '已暂停' || item.state === '等待重连' ? '继续' : '暂停')
+        Button(item.state === TransferState.Paused || item.state === TransferState.Waiting ? '继续' : '暂停')
           .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor($r('app.color.accent_strong'))
           .backgroundColor($r('app.color.accent_soft_surface')).borderRadius(18).onClick(() => this.onTogglePause(item))
+          .accessibilityDescription(`${item.fileName}，${item.state}`)
         Button('取消')
           .height(36).padding({ left: 14, right: 14 }).fontSize(10).fontColor($r('app.color.danger'))
           .backgroundColor($r('app.color.danger_surface')).borderRadius(18).onClick(() => this.onCancel(item))
@@ -146,16 +150,17 @@ export struct TransferHistoryPage {
       .fontColor(this.historyFilter === value ? '#FFFFFF' : $r('app.color.text_secondary'))
       .backgroundColor(this.historyFilter === value ? $r('app.color.accent') : Color.Transparent).borderRadius(9)
       .onClick(() => this.onFilterChanged(value))
+      .accessibilityDescription(`仅显示${label}的传输记录`)
   }
 
   private retryIfAvailable(item: TransferListItem): void {
-    if (item.direction === '发送' && (item.state === '失败' || item.state === '已取消')) {
+    if (item.direction === '发送' && (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
       this.onRetryHistory(item)
     }
   }
 
   private stateLabel(item: TransferListItem): string {
-    if (item.direction === '发送' && (item.state === '失败' || item.state === '已取消')) {
+    if (item.direction === '发送' && (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
       return `${item.state} · 点按重试`
     }
     return item.state
@@ -163,9 +168,11 @@ export struct TransferHistoryPage {
 
   private filteredItems(): Array<TransferListItem> {
     if (this.historyFilter === 'current') return this.currentTransfers
-    if (this.historyFilter === 'done') return this.historyTransfers.filter((item) => item.state === '已完成')
-    if (this.historyFilter === 'failed') return this.historyTransfers.filter((item) => item.state === '失败')
-    if (this.historyFilter === 'cancelled') return this.historyTransfers.filter((item) => item.state === '已取消')
+    if (this.historyFilter === 'done') return this.historyTransfers.filter((item) => item.state === TransferState.Done)
+    if (this.historyFilter === 'failed') return this.historyTransfers.filter((item) => item.state === TransferState.Failed)
+    if (this.historyFilter === 'cancelled') {
+      return this.historyTransfers.filter((item) => item.state === TransferState.Cancelled)
+    }
     return this.currentTransfers.concat(this.historyTransfers)
   }
 

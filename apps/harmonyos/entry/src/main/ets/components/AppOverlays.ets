@@ -16,6 +16,7 @@ export struct PrivacyConsentOverlay {
           Text('查看').fontSize(14).fontColor($r('app.color.text_secondary'))
           Text('《隐私政策》').fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.accent_strong'))
             .onClick(this.onOpenPolicy)
+            .accessibilityText('查看完整隐私政策')
         }.width('100%')
         Row({ space: 10 }) {
           Button('不同意并退出').layoutWeight(1).height(44).fontSize(15).fontColor($r('app.color.text_secondary'))
@@ -48,6 +49,8 @@ export struct PairingOverlay {
           .fontSize(20).textAlign(TextAlign.Center).onChange((value: string) => {
             this.onInputChanged(value.replace(/\D/g, ''))
           })
+          .accessibilityText(`${this.deviceName} 的六位配对码`)
+          .accessibilityDescription('请从对方设备的连接页面读取')
         Row({ space: 12 }) {
           Button('取消').layoutWeight(1).onClick(this.onCancel)
           Button('配对并连接').layoutWeight(1).enabled(this.input.length === 6).fontColor('#FFFFFF')
@@ -93,6 +96,7 @@ export struct PortEditorOverlay {
       Text(label).fontSize(13).fontWeight(FontWeight.Medium).width('100%')
       TextInput({ text: value, placeholder }).type(InputType.Number).maxLength(5).height(46)
         .onChange((next: string) => onChange(next.replace(/\D/g, '')))
+        .accessibilityText(label)
     }.alignItems(HorizontalAlign.Start).width('100%')
   }
 }

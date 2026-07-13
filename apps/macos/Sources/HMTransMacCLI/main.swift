@@ -85,9 +85,9 @@ func runSend(_ options: Options) throws {
 
     let fileURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
     print("开始发送：\(fileURL.lastPathComponent)")
-    try sendFile(fileURL: fileURL, host: host, port: options.port) { current, total in
+    try sendFile(fileURL: fileURL, host: host, port: options.port, onProgress: { current, total in
         printProgress(prefix: "发送中", current: current, total: total)
-    }
+    })
     print("\n传输完成，接收方校验通过。")
 }
 
@@ -123,7 +123,7 @@ func runReceive(_ options: Options) throws {
 
 func usageText() -> String {
     """
-    HMTrans V0.1
+    HMTrans V0.2
 
     接收：
       swift run hmtrans receive [--port 51888] [--dir ~/Downloads/HMTrans]

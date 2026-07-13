@@ -183,16 +183,17 @@ final class TransferStore: @unchecked Sendable {
     }
 
     private func migrate() {
-        // Version 1 is the first durable v0.2 schema. Future ALTER TABLE work
-        // must increment user_version and add an ordered migration here.
+        // Version 2 keeps only tables that have an implemented read/write
+        // path. Group/checkpoint/artifact metadata already lives inside the
+        // durable transfer payload and app-private staging files.
+        execute("DROP TABLE IF EXISTS transfer_groups")
+        execute("DROP TABLE IF EXISTS checkpoints")
+        execute("DROP TABLE IF EXISTS artifacts")
         execute("CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, payload TEXT NOT NULL, last_seen_at REAL NOT NULL)")
-        execute("CREATE TABLE IF NOT EXISTS transfer_groups (id TEXT PRIMARY KEY, state TEXT NOT NULL, created_at REAL NOT NULL, completed_at REAL)")
         execute("CREATE TABLE IF NOT EXISTS transfers (id TEXT PRIMARY KEY, bucket TEXT NOT NULL, state TEXT NOT NULL, device_id TEXT, group_id TEXT, progress REAL NOT NULL, payload TEXT NOT NULL, updated_at REAL NOT NULL)")
         execute("CREATE INDEX IF NOT EXISTS idx_transfers_bucket_updated ON transfers(bucket, updated_at DESC)")
-        execute("CREATE TABLE IF NOT EXISTS checkpoints (transfer_id TEXT PRIMARY KEY, confirmed_offset INTEGER NOT NULL, chunk_size INTEGER NOT NULL, last_chunk_hash TEXT, updated_at REAL NOT NULL, generation INTEGER NOT NULL DEFAULT 0)")
-        execute("CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, path TEXT NOT NULL, purpose TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, ref_count INTEGER NOT NULL DEFAULT 1, expires_at REAL)")
         execute("CREATE TABLE IF NOT EXISTS diagnostic_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at REAL NOT NULL, level TEXT NOT NULL, module TEXT NOT NULL, transfer_id TEXT, device_id TEXT, error_code TEXT, message TEXT NOT NULL)")
-        execute("PRAGMA user_version=1")
+        execute("PRAGMA user_version=2")
     }
 
     @discardableResult

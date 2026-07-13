@@ -103,6 +103,15 @@ extension TransferViewModel {
         persistTransfers()
     }
 
+    func markTransferVerifying(id: UUID) {
+        guard let index = currentTransfers.firstIndex(where: { $0.id == id }) else { return }
+        currentTransfers[index].state = .verifying
+        currentTransfers[index].detail = "正在计算 SHA-256，确保原文件完整"
+        currentTransfers[index].updatedAt = Date()
+        syncBackgroundActivity()
+        persistTransfers()
+    }
+
     func markTransferWaiting(id: UUID, detail: String) {
         guard let index = currentTransfers.firstIndex(where: { $0.id == id }) else { return }
         currentTransfers[index].state = .waiting

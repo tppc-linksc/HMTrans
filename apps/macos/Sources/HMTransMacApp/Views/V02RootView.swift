@@ -76,6 +76,7 @@ struct V02RootView: View {
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
+                    .accessibilityLabel("切换到\(item.rawValue)页面")
                 }
             }
 
@@ -153,6 +154,8 @@ private struct MacConnectionPage: View {
                         Text("连接").font(.system(size: 12, weight: .semibold))
                         Toggle("", isOn: Binding(get: { model.discoveryEnabled }, set: model.setConnectionEnabled))
                             .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            .accessibilityLabel("连接服务")
+                            .accessibilityHint("同时控制设备发现、接收服务和已连接设备")
                     }
                 }
 
@@ -204,6 +207,8 @@ private struct MacConnectionPage: View {
                     Text("\(model.pairingSeconds)").font(.system(size: 11, weight: .bold))
                 }.frame(width: 56, height: 56)
             }.buttonStyle(.plain)
+                .accessibilityLabel("配对码剩余 \(model.pairingSeconds) 秒")
+                .accessibilityHint("立即生成新的六位配对码")
         }
         .padding(18).frame(maxWidth: .infinity, minHeight: 110, maxHeight: 110).glassCard(radius: 16)
     }
@@ -271,7 +276,10 @@ private struct MacConnectionPage: View {
                 model.selectedTargetDeviceIDs.contains(device.deviceId) ? MacAppTheme.accent : (state == .alive ? Color.green.opacity(0.34) : MacAppTheme.subtleBorder),
                 lineWidth: model.selectedTargetDeviceIDs.contains(device.deviceId) ? 1.5 : 1
             ))
-        }.buttonStyle(.plain)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(device.deviceName)，\(state == .alive ? "已连接" : "未连接")")
+        .accessibilityHint(state == .alive ? "选择或取消文件发送目标" : "输入配对码并连接")
     }
 
     private func persistedDeviceCard(_ device: PersistedDevice) -> some View {
@@ -289,6 +297,8 @@ private struct MacConnectionPage: View {
         .background(MacAppTheme.blueSurface, in: RoundedRectangle(cornerRadius: 15))
         .overlay(RoundedRectangle(cornerRadius: 15).stroke(MacAppTheme.accent.opacity(0.26), lineWidth: 1)) }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(device.name)，已配对但未连接")
+        .accessibilityHint("重新连接此设备")
     }
 }
 
@@ -404,6 +414,7 @@ private struct MacFileDrop: View {
         }
         .buttonStyle(.plain)
         .disabled(connectedTarget == nil)
+        .accessibilityLabel(connectedTarget.map { "选择文件或文件夹并发送给 \($0.deviceName)" } ?? "暂无已连接设备")
         .dropDestination(for: URL.self) { urls, _ in
             model.sendDroppedFiles(urls)
             return true
@@ -434,8 +445,12 @@ private struct TaskControlRow: View {
             VStack(alignment: .leading, spacing: 5) { Text(item.fileName).font(.system(size: 13, weight: .bold)).lineLimit(1); Text("\(item.direction.rawValue)到 \(item.peerName) · \(item.detail)").font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading)
             ProgressView(value: item.progress).frame(width: 180)
             Text(item.state.rawValue).font(.system(size: 10, weight: .semibold)).frame(width: 64)
-            Button { model.togglePause(item) } label: { Image(systemName: item.state == .paused ? "play.fill" : "pause.fill") }.buttonStyle(LiquidIconButtonStyle())
-            Button { model.cancel(item) } label: { Image(systemName: "xmark") }.buttonStyle(LiquidIconButtonStyle())
+            Button { model.togglePause(item) } label: { Image(systemName: item.state == .paused ? "play.fill" : "pause.fill") }
+                .buttonStyle(LiquidIconButtonStyle())
+                .accessibilityLabel(item.state == .paused ? "继续 \(item.fileName)" : "暂停 \(item.fileName)")
+            Button { model.cancel(item) } label: { Image(systemName: "xmark") }
+                .buttonStyle(LiquidIconButtonStyle())
+                .accessibilityLabel("取消 \(item.fileName)")
         }
         .padding(12)
         .glassCard(radius: 16)
@@ -494,6 +509,7 @@ private struct MacTransferHistoryContent: View {
                     .buttonStyle(.plain)
                     .frame(width: 98, height: 36)
                     .contentShape(Rectangle())
+                    .accessibilityLabel("显示\(item.rawValue)的传输记录")
                 }
             }
             .padding(3)
@@ -670,7 +686,15 @@ private struct MacSettingsPage: View {
         }
     }
 
-    private func settingsToggle(_ title: String, detail: String, isOn: Binding<Bool>) -> some View { settingsRow(title, detail: detail) { Toggle("", isOn: isOn).labelsHidden().toggleStyle(.switch) } }
+    private func settingsToggle(_ title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        settingsRow(title, detail: detail) {
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel(title)
+                .accessibilityHint(detail)
+        }
+    }
     private func settingsNavigationRow(_ title: String, detail: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
@@ -686,6 +710,8 @@ private struct MacSettingsPage: View {
             .overlay(alignment: .bottom) { Rectangle().fill(MacAppTheme.subtleBorder).frame(height: 1) }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
     }
     private func settingsRow<Trailing: View>(_ title: String, detail: String, @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack { VStack(alignment: .leading, spacing: 4) { Text(title).font(.system(size: 13, weight: .semibold)); Text(detail).font(.system(size: 10)).foregroundStyle(.secondary) }; Spacer(); trailing() }.padding(.vertical, 15).overlay(alignment: .bottom) { Rectangle().fill(MacAppTheme.subtleBorder).frame(height: 1) }

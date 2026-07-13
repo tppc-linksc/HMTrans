@@ -20,7 +20,8 @@ import {
   encodeJsonLine,
   parseJsonLine,
 } from '../common/Protocol'
-import { fileNameFromUri, fileSize, sha256FileAsync } from './FileHashService'
+import { fileNameFromUri } from '../common/Formatters'
+import { fileSize, sha256FileAsync } from './FileHashService'
 import { errorText } from '../common/ErrorText'
 import { ZipSafetyService } from './ZipSafetyService'
 

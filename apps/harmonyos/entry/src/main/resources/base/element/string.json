@@ -17,10 +17,6 @@
       "value": "HM互传"
     },
     {
-      "name": "media_write_reason",
-      "value": "用于将接收到的图片和视频保存到系统图库，方便在图库、视频和文件管理中查看。"
-    },
-    {
       "name": "download_write_reason",
       "value": "用于在下载目录创建 HMTrans 文件夹，并在传输和校验全部成功后发布接收结果，方便在文件管理器中查看。"
     }

@@ -57,19 +57,21 @@ export struct BottomDock {
         .fontColor(this.activePage === page ? $r('app.color.accent') : $r('app.color.text_secondary'))
     }
     .width(66).height(44).justifyContent(FlexAlign.Center)
+    .accessibilityText(label)
+    .accessibilityDescription(`切换到${label}页面`)
   }
 
   @Builder
   private DockIcon(page: string) {
     if (page === 'connection') {
       Image(this.activePage === page ? $r('app.media.icon_nav_connection_active') : $r('app.media.icon_nav_connection'))
-        .width(21).height(21)
+        .width(21).height(21).accessibilityText('连接')
     } else if (page === 'history') {
       Image(this.activePage === page ? $r('app.media.icon_nav_history_active') : $r('app.media.icon_nav_history'))
-        .width(21).height(21)
+        .width(21).height(21).accessibilityText('历史')
     } else {
       Image(this.activePage === page ? $r('app.media.icon_nav_settings_active') : $r('app.media.icon_nav_settings'))
-        .width(21).height(21)
+        .width(21).height(21).accessibilityText('设置')
     }
   }
 

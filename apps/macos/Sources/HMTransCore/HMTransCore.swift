@@ -59,6 +59,7 @@ public func sendFile(
     sourceSize: Int64? = nil,
     sourceFileCount: Int? = nil,
     senderFingerprint: String? = nil,
+    networkTimeout: TimeInterval = 30,
     control: TransferControl? = nil,
     onProgress: ProgressHandler? = nil
 ) throws {
@@ -89,7 +90,11 @@ public func sendFile(
         senderFingerprint: senderFingerprint
     )
 
-    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    let connection = try BlockingNetworkConnection.connect(
+        host: host,
+        port: port,
+        operationTimeout: networkTimeout
+    )
     control?.installCancellationHandler { connection.cancel() }
     defer { connection.cancel() }
 
@@ -416,19 +421,33 @@ private final class ListenerBox: @unchecked Sendable {
 private final class BlockingNetworkConnection: @unchecked Sendable {
     private let connection: NWConnection
     private let queue: DispatchQueue
+    private let operationTimeout: TimeInterval
     private var inbox = Data()
 
-    static func connect(host: String, port: UInt16) throws -> BlockingNetworkConnection {
+    static func connect(
+        host: String,
+        port: UInt16,
+        operationTimeout: TimeInterval = 30
+    ) throws -> BlockingNetworkConnection {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw HMTransError.usage("无效端口：\(port)")
         }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
-        return try BlockingNetworkConnection(existing: connection, role: "发送端")
+        return try BlockingNetworkConnection(
+            existing: connection,
+            role: "发送端",
+            operationTimeout: operationTimeout
+        )
     }
 
-    init(existing connection: NWConnection, role: String = "接收端") throws {
+    init(
+        existing connection: NWConnection,
+        role: String = "接收端",
+        operationTimeout: TimeInterval = 30
+    ) throws {
         self.connection = connection
         self.queue = DispatchQueue(label: "HMTrans.NWConnection.\(UUID().uuidString)", qos: .userInitiated)
+        self.operationTimeout = max(0.1, operationTimeout)
         try startAndWait(role: role)
     }
 
@@ -447,7 +466,10 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
             semaphore.signal()
         })
-        semaphore.wait()
+        guard semaphore.wait(timeout: .now() + operationTimeout) == .success else {
+            connection.cancel()
+            throw HMTransError.system("发送超时，对方设备可能已离线")
+        }
         try box.value.get()
     }
 
@@ -471,7 +493,9 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
     ) throws {
         if startingOffset == 0 {
             try? FileManager.default.removeItem(at: tempURL)
-            FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+            guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
+                throw HMTransError.system("无法创建临时接收文件：\(tempURL.lastPathComponent)")
+            }
         }
         let handle = try FileHandle(forWritingTo: tempURL)
         defer { try? handle.close() }
@@ -523,7 +547,10 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
         }
         connection.start(queue: queue)
-        guard semaphore.wait(timeout: .now() + 10) == .success else {
+        // The caller may use a shorter timeout for probes/tests; production
+        // connections still cap the TCP handshake at ten seconds.
+        let connectTimeout = min(10, operationTimeout)
+        guard semaphore.wait(timeout: .now() + connectTimeout) == .success else {
             connection.cancel()
             throw HMTransError.system("\(role)连接超时")
         }
@@ -545,7 +572,10 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        guard semaphore.wait(timeout: .now() + operationTimeout) == .success else {
+            connection.cancel()
+            throw HMTransError.system("接收超时，对方设备可能已离线")
+        }
         return try box.value.get()
     }
 }

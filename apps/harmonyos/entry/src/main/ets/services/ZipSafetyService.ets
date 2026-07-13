@@ -5,6 +5,15 @@ const MAX_EOCD_SEARCH: number = 65557
 const MAX_CENTRAL_DIRECTORY: number = 32 * 1024 * 1024
 const MAX_ARCHIVE_ENTRIES: number = 100000
 
+/** Rejects traversal and absolute paths before the platform ZIP extractor runs. */
+export function validateZipEntryName(rawName: string): void {
+  const name = rawName.replace(/\\/g, '/')
+  const components = name.split('/')
+  if (name.startsWith('/') || /^[A-Za-z]:\//.test(name) || components.indexOf('..') >= 0) {
+    throw new Error('文件夹归档包含不安全路径')
+  }
+}
+
 /** Validates ZIP names before the system extractor can write any entry. */
 export class ZipSafetyService {
   validate(archivePath: string): void {
@@ -56,21 +65,13 @@ export class ZipSafetyService {
       const end = offset + 46 + nameLength + extraLength + commentLength
       if (end > buffer.byteLength) throw new Error('ZIP 条目长度越界')
       const name = decoder.decodeToString(bytes.slice(offset + 46, offset + 46 + nameLength))
-      this.validateEntryName(name)
+      validateZipEntryName(name)
       const unixMode = (externalAttributes >>> 16) & 0xF000
       if (unixMode === 0xA000) throw new Error('文件夹归档包含符号链接')
       offset = end
       count += 1
     }
     if (count !== expectedCount) throw new Error('ZIP 条目数量不一致')
-  }
-
-  private validateEntryName(rawName: string): void {
-    const name = rawName.replace(/\\/g, '/')
-    const components = name.split('/')
-    if (name.startsWith('/') || /^[A-Za-z]:\//.test(name) || components.indexOf('..') >= 0) {
-      throw new Error('文件夹归档包含不安全路径')
-    }
   }
 
   private read(fd: number, offset: number, length: number): ArrayBuffer {

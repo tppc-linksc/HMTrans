@@ -1,5 +1,5 @@
 import { completionDetail, nowText } from '../common/Formatters'
-import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 
 export interface CompletionResult {
   current: Array<TransferListItem>
@@ -37,7 +37,7 @@ export class TransferStateService {
     return {
       current: remaining,
       historyItem: item.copyWith(success ? 100 : item.progress, completionDetail(detail, item),
-        success ? '已完成' : '失败', nowText()),
+        success ? TransferState.Done : TransferState.Failed, nowText()),
     }
   }
 

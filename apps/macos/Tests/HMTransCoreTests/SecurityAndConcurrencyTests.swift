@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import HMTransCore
 
@@ -15,6 +16,73 @@ private final class ReceivedURLBox: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return urls.first
     }
+}
+
+private final class StalledConnectionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connections: [NWConnection] = []
+
+    func retain(_ connection: NWConnection) {
+        lock.withLock { connections.append(connection) }
+    }
+
+    func cancelAll() {
+        lock.withLock {
+            connections.forEach { $0.cancel() }
+            connections.removeAll()
+        }
+    }
+}
+
+private final class ListenerReadyBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ready = false
+
+    var isReady: Bool { lock.withLock { ready } }
+    func markReady() { lock.withLock { ready = true } }
+}
+
+@Test("对端半开时网络读取会超时而不是永久阻塞")
+func stalledPeerTimesOut() async throws {
+    let queue = DispatchQueue(label: "HMTransTests.StalledPeer")
+    let listener = try NWListener(using: .tcp, on: .any)
+    let connections = StalledConnectionBox()
+    let listenerReady = ListenerReadyBox()
+    listener.stateUpdateHandler = { state in
+        if case .ready = state { listenerReady.markReady() }
+    }
+    listener.newConnectionHandler = { connection in
+        connections.retain(connection)
+        connection.start(queue: queue)
+        // Deliberately do not receive or reply: this models a TCP peer that
+        // remains connected but never returns the receive decision frame.
+    }
+    listener.start(queue: queue)
+    defer {
+        listener.cancel()
+        connections.cancelAll()
+    }
+
+    for _ in 0..<50 where !listenerReady.isReady {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(listenerReady.isReady)
+    let port = try #require(listener.port?.rawValue)
+    let source = FileManager.default.temporaryDirectory
+        .appendingPathComponent("HMTransTimeout-\(UUID()).bin")
+    try Data("timeout".utf8).write(to: source)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    let started = ContinuousClock.now
+    #expect(throws: HMTransError.self) {
+        try sendFile(
+            fileURL: source,
+            host: "127.0.0.1",
+            port: port,
+            networkTimeout: 0.2
+        )
+    }
+    #expect(started.duration(to: .now) < .seconds(2))
 }
 
 @Test("文件夹归档中的符号链接在解压前被拒绝")
