@@ -56,6 +56,7 @@ export interface PadNetworkActionHost {
   runOnUi(task: () => void): void
   updateBackgroundTransferActivity(active: boolean): void
   trustDevice(deviceId?: string, fingerprint?: string): Promise<void>
+  forgetTrustedDevice(deviceId: string, statusMessage: string): Promise<void>
   rememberDevice(device: DeviceInfo): Promise<void>
   isTrusted(deviceId?: string): boolean
   identityMatches(deviceId?: string, fingerprint?: string): boolean

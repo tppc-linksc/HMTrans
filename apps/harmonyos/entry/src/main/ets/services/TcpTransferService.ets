@@ -11,10 +11,13 @@ import {
   FileMeta,
   PairingRequest,
   PairingResponse,
+  UnpairRequest,
+  UnpairResponse,
   ReceiveDecision,
   TransferResult,
   createFileMeta,
   createPairingResponse,
+  createUnpairResponse,
   createReceiveDecision,
   createTransferResult,
   encodeJsonLine,
@@ -24,6 +27,7 @@ import { fileNameFromUri } from '../common/Formatters'
 import { fileSize, sha256FileAsync } from './FileHashService'
 import { errorText } from '../common/ErrorText'
 import { ZipSafetyService } from './ZipSafetyService'
+import { ControlLineInbox } from './ControlLineInbox'
 
 const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
 const MAX_ACTIVE_CONNECTIONS: number = 16
@@ -37,6 +41,7 @@ export interface TransferCallbacks {
   onProgress: (current: number, total: number, meta?: FileMeta) => void
   onIncoming: (meta: FileMeta) => Promise<boolean>
   onPairing: (request: PairingRequest) => Promise<boolean>
+  onUnpair?: (request: UnpairRequest) => Promise<boolean>
   onReceived?: (meta: FileMeta, path: string) => void
   onFailed?: (meta: FileMeta, reason: string) => void
   onInterrupted?: (meta: FileMeta, reason: string) => void
@@ -209,21 +214,34 @@ export class TcpTransferService {
 
   async requestPairing(host: string, port: number, request: PairingRequest): Promise<PairingResponse> {
     const client = socket.constructTCPSocketInstance()
-    const reader = new LineReader()
+    const inbox = new ControlLineInbox()
+    client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
+    client.on('error', (err) => inbox.fail(new Error(errorText(err))))
     try {
       await client.connect({ address: { address: host, port }, timeout: 10000 })
       await client.send({ data: encodeJsonLine(request) })
-      return await withTimeout(new Promise<PairingResponse>((resolve, reject) => {
-        client.on('message', (info: socket.SocketMessageInfo) => {
-          try {
-            const lines = reader.append(info.message)
-            if (lines.length > 0) resolve(parseJsonLine<PairingResponse>(lines[0]))
-          } catch (err) {
-            reject(new Error(errorText(err)))
-          }
-        })
-        client.on('error', (err) => reject(err))
-      }), CONTROL_RESPONSE_TIMEOUT_MS, 'pairing_response_timeout')
+      const line = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS, 'pairing_response_timeout')
+      const response = parseJsonLine<PairingResponse>(line)
+      if (response.type !== 'pairing_response') throw new Error('invalid_pairing_response')
+      return response
+    } finally {
+      await client.close().catch(() => {})
+    }
+  }
+
+  /** 通知仍在线的已配对设备立即撤销信任；通知失败不阻止本机完成删除。 */
+  async requestUnpair(host: string, port: number, request: UnpairRequest): Promise<UnpairResponse> {
+    const client = socket.constructTCPSocketInstance()
+    const inbox = new ControlLineInbox()
+    client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
+    client.on('error', (err) => inbox.fail(new Error(errorText(err))))
+    try {
+      await client.connect({ address: { address: host, port }, timeout: 10000 })
+      await client.send({ data: encodeJsonLine(request) })
+      const line = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS, 'unpair_response_timeout')
+      const response = parseJsonLine<UnpairResponse>(line)
+      if (response.type !== 'unpair_response') throw new Error('invalid_unpair_response')
+      return response
     } finally {
       await client.close().catch(() => {})
     }
@@ -252,7 +270,9 @@ export class TcpTransferService {
       sourceKind, originalSourceName, sourceSize, sourceFileCount, senderFingerprint)
 
     const client = socket.constructTCPSocketInstance()
-    const reader = new LineReader()
+    const inbox = new ControlLineInbox()
+    client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
+    client.on('error', (err) => inbox.fail(new Error(errorText(err))))
     const control = new TransferSessionControl()
     this.outgoingSessions.set(meta.transferId, control)
     control.setCancelHandler(() => {
@@ -273,17 +293,10 @@ export class TcpTransferService {
       await control.checkpoint()
       await client.send({ data: encodeJsonLine(meta) })
 
-      const decision = await withTimeout(new Promise<ReceiveDecision>((resolve, reject) => {
-        client.on('message', (info: socket.SocketMessageInfo) => {
-          try {
-            const lines = reader.append(info.message)
-            if (lines.length > 0) resolve(parseJsonLine<ReceiveDecision>(lines[0]))
-          } catch (err) {
-            reject(new Error(errorText(err)))
-          }
-        })
-        client.on('error', (err) => reject(err))
-      }), CONTROL_RESPONSE_TIMEOUT_MS, 'receive_decision_timeout')
+      const decisionLine = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS,
+        'receive_decision_timeout')
+      const decision = parseJsonLine<ReceiveDecision>(decisionLine)
+      if (decision.type !== 'receive_decision') throw new Error('invalid_receive_decision')
 
       if (!decision.accepted) {
         callbacks.onStatus(`接收方拒绝：${decision.reason ?? '无原因'}`)
@@ -321,19 +334,12 @@ export class TcpTransferService {
         }
       }
 
-      const result = await withTimeout(new Promise<TransferResult>((resolve, reject) => {
-        client.off('message')
-        client.on('message', (info: socket.SocketMessageInfo) => {
-          try {
-            const lines = reader.append(info.message)
-            if (lines.length > 0) resolve(parseJsonLine<TransferResult>(lines[0]))
-          } catch (err) {
-            reject(new Error(errorText(err)))
-          }
-        })
-        client.on('error', (err) => reject(err))
-      }), VERIFY_RESULT_TIMEOUT_MS, 'transfer_verify_timeout')
+      const resultLine = await withTimeout(inbox.nextLine(), VERIFY_RESULT_TIMEOUT_MS, 'transfer_verify_timeout')
+      const result = parseJsonLine<TransferResult>(resultLine)
 
+      if (result.transferId !== meta.transferId) {
+        throw new Error(`接收方回执任务不匹配：${result.transferId}`)
+      }
       if (result.type !== 'transfer_success') {
         throw new Error(`接收方报告失败：${result.reason ?? 'unknown'}`)
       }
@@ -488,6 +494,18 @@ export class TcpTransferService {
               const accepted = compatible && await callbacks.onPairing(request)
               const reason = accepted ? undefined : compatible ? 'invalid_pairing_code' : 'protocol_incompatible'
               await connection.send({ data: encodeJsonLine(createPairingResponse(accepted, reason)) })
+              await finishConnection()
+              return
+            }
+
+            if (envelope.type === 'unpair_request') {
+              const request = parseJsonLine<UnpairRequest>(lines[0])
+              const compatible = request.app === APP_NAME && request.version === PROTOCOL_VERSION &&
+                request.requesterDeviceId.length > 0 && request.requesterFingerprint.length > 0 &&
+                request.targetDeviceId.length > 0
+              const accepted = compatible && (callbacks.onUnpair ? await callbacks.onUnpair(request) : false)
+              const reason = accepted ? undefined : compatible ? 'identity_mismatch' : 'protocol_incompatible'
+              await connection.send({ data: encodeJsonLine(createUnpairResponse(accepted, reason)) })
               await finishConnection()
               return
             }

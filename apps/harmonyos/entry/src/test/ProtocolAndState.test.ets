@@ -1,8 +1,16 @@
 import { describe, expect, it } from '@ohos/hypium'
-import { createFileMeta, createPairingRequest, createReceiveDecision, encodeJsonLine } from '../main/ets/common/Protocol'
+import {
+  createFileMeta,
+  createPairingRequest,
+  createReceiveDecision,
+  createUnpairRequest,
+  encodeJsonLine,
+} from '../main/ets/common/Protocol'
 import { TransferListItem } from '../main/ets/models/TransferListItem'
 import { TransferStateService } from '../main/ets/services/TransferStateService'
 import { validateZipEntryName } from '../main/ets/services/ZipSafetyService'
+import { ControlLineInbox } from '../main/ets/services/ControlLineInbox'
+import { stringToArrayBuffer } from '../main/ets/common/Bytes'
 
 export default function protocolAndStateTest(): void {
   describe('HMTrans protocol and state', () => {
@@ -22,6 +30,14 @@ export default function protocolAndStateTest(): void {
       const decision = createReceiveDecision(true, undefined, 1048576)
       expect(decision.resumeOffset).assertEqual(1048576)
       expect(encodeJsonLine(meta).endsWith('\n')).assertTrue()
+    })
+
+    it('binds unpair request to both stable device identities', 0, () => {
+      const request = createUnpairRequest('pad-id', 'pad-fingerprint', 'mac-id')
+      expect(request.type).assertEqual('unpair_request')
+      expect(request.requesterDeviceId).assertEqual('pad-id')
+      expect(request.requesterFingerprint).assertEqual('pad-fingerprint')
+      expect(request.targetDeviceId).assertEqual('mac-id')
     })
 
     it('moves a completed task into durable history', 0, () => {
@@ -44,6 +60,16 @@ export default function protocolAndStateTest(): void {
       expect(() => validateZipEntryName('C:/absolute/file.txt')).assertThrowError('文件夹归档包含不安全路径')
       expect(() => validateZipEntryName('safe\\..\\escape.txt')).assertThrowError('文件夹归档包含不安全路径')
       validateZipEntryName('folder/nested/photo.jpg')
+    })
+
+    it('keeps an early final response until the sender awaits it', 0, async () => {
+      const inbox = new ControlLineInbox()
+      inbox.append(stringToArrayBuffer('{"type":"receive_decision","accepted":true}\n' +
+        '{"type":"transfer_success","transferId":"transfer-1"}\n'))
+      const decision = await inbox.nextLine()
+      const result = await inbox.nextLine()
+      expect(decision.indexOf('receive_decision') >= 0).assertTrue()
+      expect(result.indexOf('transfer_success') >= 0).assertTrue()
     })
   })
 }

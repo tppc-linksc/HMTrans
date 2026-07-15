@@ -1,7 +1,14 @@
 import { common } from '@kit.AbilityKit'
 import { settings } from '@kit.BasicServicesKit'
 import { wifiManager } from '@kit.ConnectivityKit'
-import { DeviceInfo, FileMeta, PairingRequest, createPairingRequest } from '../common/Protocol'
+import {
+  DeviceInfo,
+  FileMeta,
+  PairingRequest,
+  UnpairRequest,
+  createPairingRequest,
+  createUnpairRequest,
+} from '../common/Protocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 import { TransferListItem, TransferState } from '../models/TransferListItem'
@@ -163,6 +170,18 @@ export class PadNetworkController {
           }
           return accepted
         },
+        onUnpair: async (request: UnpairRequest) => {
+          const accepted = request.targetDeviceId === this.host.deviceId &&
+            this.host.identityMatches(request.requesterDeviceId, request.requesterFingerprint)
+          if (!accepted) return false
+          const device = this.host.nearbyDevices.find((row: DeviceInfo) =>
+            row.deviceId === request.requesterDeviceId)
+          await this.host.forgetTrustedDevice(
+            request.requesterDeviceId,
+            `${device?.deviceName ?? '对方设备'} 已解除配对`,
+          )
+          return true
+        },
       }, this.host.receiveDirectory)
       this.host.receiverReady = true
       this.host.statusText = '自动发现和接收服务已开启'
@@ -196,7 +215,12 @@ export class PadNetworkController {
     if (this.host.discoveryService) {
       return
     }
-    this.host.discoveryService = new DiscoveryService(this.host.deviceId, this.host.identityFingerprint)
+    this.host.discoveryService = new DiscoveryService(
+      this.host.deviceId,
+      this.host.identityFingerprint,
+      (device: DeviceInfo): boolean =>
+        this.host.identityMatches(device.deviceId, device.identityFingerprint),
+    )
     try {
       const knownTargets = this.host.targetIp.length > 0 ? [this.host.targetIp] : []
       await this.host.discoveryService.start(this.host.localDeviceName(), this.host.localTcpPort, this.host.discoveryPort, this.host.networkName,
@@ -460,6 +484,28 @@ export class PadNetworkController {
     this.restartDiscovery().catch((err: Error) => {
       this.host.statusText = `重新连接失败：${errorText(err)}`
     })
+  }
+
+  /** 用户主动移除设备时，先发出远端撤销通知，再立即清除本机状态。 */
+  async forgetDevice(device: DeviceInfo): Promise<void> {
+    const request = createUnpairRequest(
+      this.host.deviceId,
+      this.host.identityFingerprint,
+      device.deviceId,
+    )
+    this.host.transferService.requestUnpair(device.ip, device.port, request).then((response) => {
+      if (!response.accepted) {
+        this.host.transferStore.recordDiagnostic(
+          'PAIR-UNPAIR-REJECTED', response.reason ?? 'remote rejected unpair', undefined,
+        ).catch(() => {})
+      }
+    }).catch((err: Error) => {
+      // 本机已完成移除；远端若暂时不可达，会因收不到受信任确认心跳而在 TTL 内降为离线。
+      this.host.transferStore.recordDiagnostic(
+        'PAIR-UNPAIR-NOTIFY', errorText(err), undefined,
+      ).catch(() => {})
+    })
+    await this.host.forgetTrustedDevice(device.deviceId, `已移除设备：${device.deviceName}`)
   }
 
   async submitPairing(): Promise<void> {

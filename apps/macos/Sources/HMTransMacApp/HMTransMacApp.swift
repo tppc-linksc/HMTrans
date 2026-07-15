@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import HMTransCore
 import SwiftUI
@@ -45,8 +46,38 @@ private final class MainWindowCloseDelegate: NSObject, NSWindowDelegate {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+    private let instanceGuard = MacSingleInstanceGuard()
+    @Published private(set) var ownsInstanceLock = false
+    private var launchObserver: NSObjectProtocol?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if let existing = RunningHMTransCopies.otherCopy() {
+            refuseSecondInstance(existing: existing)
+            return
+        }
+        guard instanceGuard.acquire() else {
+            refuseSecondInstance(existing: RunningHMTransCopies.otherCopy())
+            return
+        }
+        ownsInstanceLock = true
+        launchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+                  application.bundleIdentifier == Bundle.main.bundleIdentifier,
+                  application.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            else { return }
+            // 旧版本不认识进程锁时，由已经运行的新版本请求后来副本退出。
+            application.terminate()
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard ownsInstanceLock else { return }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
@@ -55,12 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        guard ownsInstanceLock else { return }
         DispatchQueue.main.async {
             _ = AppWindowController.showExistingMainWindow()
         }
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        guard ownsInstanceLock else {
+            sender.reply(toOpenOrPrint: .failure)
+            return
+        }
         _ = AppWindowController.showExistingMainWindow()
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .hmTransOpenFiles, object: filenames)
@@ -69,10 +105,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard ownsInstanceLock else { return false }
         if AppWindowController.showExistingMainWindow() {
             return false
         }
         return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let launchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(launchObserver)
+        }
+    }
+
+    private func refuseSecondInstance(existing: NSRunningApplication?) {
+        RunningHMTransCopies.activate(existing)
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "HM互传已在运行"
+            alert.informativeText = "检测到另一个位置的 HMTrans.app。为避免设备重复发现和端口冲突，本副本不会启动。请先退出已有副本，再打开需要使用的版本。"
+            alert.addButton(withTitle: "知道了")
+            alert.runModal()
+            NSApp.terminate(nil)
+        }
     }
 }
 
@@ -92,9 +147,15 @@ struct HMTransMacApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            PrivacyGateView(model: model)
-                .frame(minWidth: 1040, minHeight: 720)
-                .background(MainWindowReader())
+            Group {
+                if appDelegate.ownsInstanceLock {
+                    PrivacyGateView(model: model)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(minWidth: 1040, minHeight: 720)
+            .background(MainWindowReader())
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 780)

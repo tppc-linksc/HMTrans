@@ -123,7 +123,7 @@ final class TransferViewModel {
         return """
         HM互传诊断信息
         生成时间：\(Date().formatted(date: .numeric, time: .standard))
-        应用版本：0.2.0
+        应用版本：\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知")
         系统版本：\(ProcessInfo.processInfo.operatingSystemVersionString)
         本机名称：\(deviceName)
         连接服务：\(receiverRunning ? "运行正常" : "已关闭或异常")
@@ -144,20 +144,9 @@ final class TransferViewModel {
 
     init() {
         deviceName = Host.current().localizedName ?? "Mac"
-        if let saved = UserDefaults.standard.string(forKey: "deviceId") {
-            deviceId = saved
-        } else {
-            let generated = "mac-\(UUID().uuidString)"
-            UserDefaults.standard.set(generated, forKey: "deviceId")
-            deviceId = generated
-        }
-        if let saved = UserDefaults.standard.string(forKey: "identityFingerprint"), !saved.isEmpty {
-            identityFingerprint = saved
-        } else {
-            let generated = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-            UserDefaults.standard.set(generated, forKey: "identityFingerprint")
-            identityFingerprint = generated
-        }
+        let pairingIdentity = PairingConfigurationStore.localIdentity()
+        deviceId = pairingIdentity.deviceID
+        identityFingerprint = pairingIdentity.fingerprint
 
         openFilesObserver = NotificationCenter.default.addObserver(forName: .hmTransOpenFiles, object: nil, queue: .main) { [weak self] notification in
             guard let filenames = notification.object as? [String] else { return }
@@ -625,18 +614,60 @@ final class TransferViewModel {
     }
 
     func forgetDevice(_ device: DeviceInfo) {
-        TrustedDevicesStore.remove(device.deviceId)
-        store.removeDevice(id: device.deviceId)
-        persistedDevices.removeAll { $0.id == device.deviceId }
-        nearbyDevices.removeAll { $0.deviceId == device.deviceId }
-        deviceLastSeenAt.removeValue(forKey: device.deviceId)
-        selectedTargetDeviceIDs.remove(device.deviceId)
-        if host == device.ip {
+        let requesterDeviceID = deviceId
+        let requesterFingerprint = identityFingerprint
+        if !isLocalIPv4Address(device.ip) {
+            Task.detached { [weak self] in
+                do {
+                    let response = try requestUnpair(
+                        host: device.ip,
+                        port: device.port,
+                        requesterDeviceId: requesterDeviceID,
+                        requesterFingerprint: requesterFingerprint,
+                        targetDeviceId: device.deviceId
+                    )
+                    if !response.accepted {
+                        await MainActor.run {
+                            self?.recordDiagnostic(
+                                code: "PAIR-UNPAIR-REJECTED",
+                                module: "pairing",
+                                message: response.reason ?? "remote rejected unpair",
+                                deviceID: device.deviceId
+                            )
+                        }
+                    }
+                } catch {
+                    // 本机删除不等待网络；对端会因收不到受信任确认心跳而在 TTL 内降级。
+                    await MainActor.run {
+                        self?.recordDiagnostic(
+                            code: "PAIR-UNPAIR-NOTIFY",
+                            module: "pairing",
+                            message: "\(error)",
+                            deviceID: device.deviceId
+                        )
+                    }
+                }
+            }
+        }
+        forgetDeviceLocally(deviceID: device.deviceId, deviceName: device.deviceName, address: device.ip)
+    }
+
+    /// 只清理本机信任与在线确认；远端请求走此路径时不会再次回送解除配对。
+    private func forgetDeviceLocally(deviceID: String, deviceName: String, address: String?) {
+        TrustedDevicesStore.remove(deviceID)
+        store.removeDevice(id: deviceID)
+        persistedDevices.removeAll { $0.id == deviceID }
+        confirmedDeviceLastSeenAt.removeValue(forKey: deviceID)
+        var updatedConnected = connectedDeviceIDs
+        updatedConnected.remove(deviceID)
+        connectedDeviceIDs = updatedConnected
+        selectedTargetDeviceIDs.remove(deviceID)
+        if let address, host == address {
             host = ""
             portText = String(defaultPort)
             rememberTarget()
-            status = "已删除设备：\(device.deviceName)"
         }
+        status = "已删除设备：\(deviceName)"
     }
 
     func reconnectPersistedDevice(_ device: PersistedDevice) {
@@ -753,6 +784,29 @@ final class TransferViewModel {
                             self.status = "已与 \(device.deviceName) 完成配对"
                         }
                         return accepted
+                    }
+                },
+                onUnpairRequest: { request in
+                    evaluateOnMain(timeout: 5, fallback: false) {
+                        let accepted = request.targetDeviceId == self.deviceId
+                            && TrustedDevicesStore.matches(
+                                request.requesterDeviceId,
+                                fingerprint: request.requesterFingerprint
+                            )
+                        guard accepted else { return false }
+                        let device = self.nearbyDevices.first {
+                            $0.deviceId == request.requesterDeviceId
+                        }
+                        let persisted = self.persistedDevices.first {
+                            $0.id == request.requesterDeviceId
+                        }
+                        self.forgetDeviceLocally(
+                            deviceID: request.requesterDeviceId,
+                            deviceName: device?.deviceName ?? persisted?.name ?? "对方设备",
+                            address: device?.ip ?? persisted?.address
+                        )
+                        self.status = "\(device?.deviceName ?? persisted?.name ?? "对方设备") 已解除配对"
+                        return true
                     }
                 },
                 shouldAccept: { meta in

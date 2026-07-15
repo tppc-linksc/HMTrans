@@ -226,6 +226,38 @@ func pairingRequiresCurrentCode() async throws {
     #expect(accepted.accepted)
 }
 
+@Test("解除配对只接受已验证身份发给本机的请求")
+func unpairRequiresTrustedIdentityAndTarget() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("HMTransUnpair-\(UUID())")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let port = UInt16.random(in: 49_001...52_000)
+    let receiver = PersistentFileReceiver()
+    try receiver.start(
+        port: port,
+        outputDirectory: root.path,
+        onUnpairRequest: {
+            $0.requesterDeviceId == "pad" && $0.requesterFingerprint == "trusted-fingerprint"
+                && $0.targetDeviceId == "mac"
+        },
+        shouldAccept: { _ in false },
+        onConnectionResult: { _ in }
+    )
+    defer { receiver.stop() }
+    try await Task.sleep(for: .milliseconds(250))
+
+    let rejected = try requestUnpair(
+        host: "127.0.0.1", port: port, requesterDeviceId: "pad",
+        requesterFingerprint: "wrong-fingerprint", targetDeviceId: "mac"
+    )
+    let accepted = try requestUnpair(
+        host: "127.0.0.1", port: port, requesterDeviceId: "pad",
+        requesterFingerprint: "trusted-fingerprint", targetDeviceId: "mac"
+    )
+    #expect(!rejected.accepted)
+    #expect(accepted.accepted)
+}
+
 @Test("两个设备可同时接收不同文件且内容保持一致")
 func twoDevicesReceiveDifferentFilesConcurrently() async throws {
     let manager = FileManager.default

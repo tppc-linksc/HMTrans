@@ -58,6 +58,7 @@ public final class DiscoveryService: @unchecked Sendable {
     private let transferPort: UInt16
     private let discoveryPort: UInt16
     private let identityFingerprint: String
+    private let shouldAcknowledge: @Sendable (DeviceInfo) -> Bool
 
     public init(
         deviceName: String = Host.current().localizedName ?? "Mac",
@@ -65,7 +66,8 @@ public final class DiscoveryService: @unchecked Sendable {
         transferPort: UInt16 = defaultPort,
         discoveryPort: UInt16 = 51_889,
         deviceId: String,
-        identityFingerprint: String = ""
+        identityFingerprint: String = "",
+        shouldAcknowledge: @escaping @Sendable (DeviceInfo) -> Bool = { _ in true }
     ) {
         self.deviceName = deviceName
         self.platform = platform
@@ -73,6 +75,7 @@ public final class DiscoveryService: @unchecked Sendable {
         self.discoveryPort = discoveryPort
         self.selfDeviceId = deviceId
         self.identityFingerprint = identityFingerprint
+        self.shouldAcknowledge = shouldAcknowledge
     }
 
     public func start(onDevice: @escaping @Sendable (DeviceInfo) -> Void) throws {
@@ -189,7 +192,11 @@ public final class DiscoveryService: @unchecked Sendable {
                     )
                 }
                 onDevice(device)
-                sendDirectedBeaconIfNeeded(fd: fd, deviceId: device.deviceId, address: peerIP)
+                // 广播只表示“附近可发现”；带确认 ID 的单播心跳只发给仍受信任的身份。
+                // 因此解除配对通知丢失时，也不会让另一端长期保持虚假的已连接状态。
+                if shouldAcknowledge(device) {
+                    sendDirectedBeaconIfNeeded(fd: fd, deviceId: device.deviceId, address: peerIP)
+                }
             } catch {
                 discoveryLog.error("Discovery packet decode failed: \(String(describing: error), privacy: .public)")
             }

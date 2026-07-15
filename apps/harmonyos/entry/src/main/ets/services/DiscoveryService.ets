@@ -15,10 +15,13 @@ export class DiscoveryService {
   private discoveryPort: number = DISCOVERY_PORT
   private identityFingerprint: string
   private directedReplyAt: Map<string, number> = new Map()
+  private shouldAcknowledge: (device: DeviceInfo) => boolean
 
-  constructor(deviceId: string, identityFingerprint: string) {
+  constructor(deviceId: string, identityFingerprint: string,
+    shouldAcknowledge: (device: DeviceInfo) => boolean = (_device: DeviceInfo): boolean => true) {
     this.deviceId = deviceId
     this.identityFingerprint = identityFingerprint
+    this.shouldAcknowledge = shouldAcknowledge
   }
 
   async start(
@@ -47,8 +50,12 @@ export class DiscoveryService {
         const advertisedAddress = device.ip
         device.ip = this.resolvePeerAddress(advertisedAddress, info.remoteInfo.address)
         callbacks.onDevice(device)
-        this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, networkName, systemVersion,
-          device.deviceId, device.ip)
+        // 普通广播只负责“发现”；只有双方仍互相信任时才回送带确认 ID 的单播心跳。
+        // 这样解除配对通知偶发失败时，对端也会在 TTL 内从“已连接”降为未配对设备。
+        if (this.shouldAcknowledge(device)) {
+          this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, networkName, systemVersion,
+            device.deviceId, device.ip)
+        }
       } catch (_) {
       }
     })

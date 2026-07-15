@@ -44,6 +44,27 @@ public func requestPairing(
     return try readJSONLine(connection: connection)
 }
 
+/// 通知在线对端撤销配对。调用方应无论通知结果如何都立即清理本机信任。
+public func requestUnpair(
+    host: String,
+    port: UInt16 = defaultPort,
+    requesterDeviceId: String,
+    requesterFingerprint: String,
+    targetDeviceId: String
+) throws -> UnpairResponse {
+    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    defer { connection.cancel() }
+    try sendJSONLine(
+        UnpairRequest(
+            requesterDeviceId: requesterDeviceId,
+            requesterFingerprint: requesterFingerprint,
+            targetDeviceId: targetDeviceId
+        ),
+        connection: connection
+    )
+    return try readJSONLine(connection: connection)
+}
+
 /// 通过兼容 HMTrans v0.2 的 TCP 线协议发送一个可续传文件载荷。
 public func sendFile(
     fileURL: URL,
@@ -201,6 +222,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         port: UInt16 = defaultPort,
         outputDirectory: String = defaultReceiveDirectory(),
         onPairingRequest: PairingRequestHandler? = nil,
+        onUnpairRequest: UnpairRequestHandler? = nil,
         shouldAccept: @escaping ReceiveDecisionHandler,
         onProgress: ReceiveProgressHandler? = nil,
         onConnectionResult: @escaping ReceiveCompletionHandler
@@ -233,6 +255,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
                 connection: connection,
                 outputDirectory: outputDirectory,
                 onPairingRequest: onPairingRequest,
+                onUnpairRequest: onUnpairRequest,
                 shouldAccept: shouldAccept,
                 onProgress: onProgress,
                 onConnectionResult: onConnectionResult
@@ -301,6 +324,7 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         connection: NWConnection,
         outputDirectory: String,
         onPairingRequest: PairingRequestHandler?,
+        onUnpairRequest: UnpairRequestHandler?,
         shouldAccept: @escaping ReceiveDecisionHandler,
         onProgress: ReceiveProgressHandler?,
         onConnectionResult: @escaping ReceiveCompletionHandler
@@ -331,6 +355,23 @@ public final class PersistentFileReceiver: @unchecked Sendable {
                         PairingResponse(
                             accepted: accepted,
                             reason: accepted ? nil : compatible ? "invalid_pairing_code" : "protocol_incompatible"
+                        ),
+                        connection: blocking
+                    )
+                    return
+                }
+                if envelope.type == "unpair_request" {
+                    let request = try JSONDecoder().decode(UnpairRequest.self, from: Data(firstLine.utf8))
+                    let compatible = request.app == "HMTrans"
+                        && request.version == hmTransProtocolVersion
+                        && !request.requesterDeviceId.isEmpty
+                        && !request.requesterFingerprint.isEmpty
+                        && !request.targetDeviceId.isEmpty
+                    let accepted = compatible && (onUnpairRequest?(request) ?? false)
+                    try sendJSONLine(
+                        UnpairResponse(
+                            accepted: accepted,
+                            reason: accepted ? nil : compatible ? "identity_mismatch" : "protocol_incompatible"
                         ),
                         connection: blocking
                     )

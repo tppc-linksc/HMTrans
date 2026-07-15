@@ -15,7 +15,10 @@ extension TransferViewModel {
             transferPort: localTCPPort,
             discoveryPort: localDiscoveryPort,
             deviceId: deviceId,
-            identityFingerprint: identityFingerprint
+            identityFingerprint: identityFingerprint,
+            shouldAcknowledge: { device in
+                TrustedDevicesStore.matches(device.deviceId, fingerprint: device.identityFingerprint)
+            }
         )
         discovery = service
         do {

@@ -10,7 +10,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 GIT_TAG_VERSION="$(git -C "$ROOT_DIR" describe --tags --exact-match 2>/dev/null | sed 's/^v//' || true)"
 GIT_COMMIT_COUNT="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || true)"
-VERSION="${HMT_VERSION:-${GIT_TAG_VERSION:-0.2.0}}"
+VERSION="${HMT_VERSION:-${GIT_TAG_VERSION:-0.2.1}}"
 BUILD_NUMBER="${HMT_BUILD_NUMBER:-${GIT_COMMIT_COUNT:-2}}"
 
 if [ -z "${DEVELOPER_DIR:-}" ]; then

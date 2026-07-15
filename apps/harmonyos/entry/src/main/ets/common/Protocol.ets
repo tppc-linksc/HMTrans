@@ -53,6 +53,22 @@ export interface PairingResponse {
   reason?: string | null
 }
 
+/** 已配对设备主动通知对端撤销双方的本地信任关系。 */
+export interface UnpairRequest {
+  type: 'unpair_request'
+  app: string
+  version: string
+  requesterDeviceId: string
+  requesterFingerprint: string
+  targetDeviceId: string
+}
+
+export interface UnpairResponse {
+  type: 'unpair_response'
+  accepted: boolean
+  reason?: string | null
+}
+
 export interface TransferResult {
   type: 'transfer_success' | 'transfer_failed'
   transferId: string
@@ -115,6 +131,26 @@ export function createPairingRequest(
 export function createPairingResponse(accepted: boolean, reason?: string): PairingResponse {
   return {
     type: 'pairing_response',
+    accepted,
+    reason: reason ?? null,
+  }
+}
+
+export function createUnpairRequest(requesterDeviceId: string, requesterFingerprint: string,
+  targetDeviceId: string): UnpairRequest {
+  return {
+    type: 'unpair_request',
+    app: APP_NAME,
+    version: PROTOCOL_VERSION,
+    requesterDeviceId,
+    requesterFingerprint,
+    targetDeviceId,
+  }
+}
+
+export function createUnpairResponse(accepted: boolean, reason?: string): UnpairResponse {
+  return {
+    type: 'unpair_response',
     accepted,
     reason: reason ?? null,
   }

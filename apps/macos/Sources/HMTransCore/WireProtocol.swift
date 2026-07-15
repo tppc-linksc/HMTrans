@@ -156,6 +156,40 @@ public struct PairingResponse: Codable, Sendable {
     }
 }
 
+/// 已配对设备发送的主动解除配对控制帧。接收端必须先校验稳定设备 ID 和身份指纹。
+public struct UnpairRequest: Codable, Sendable {
+    public let type: String
+    public let app: String
+    public let version: String
+    public let requesterDeviceId: String
+    public let requesterFingerprint: String
+    public let targetDeviceId: String
+
+    public init(
+        type: String = "unpair_request", app: String = "HMTrans", version: String = hmTransProtocolVersion,
+        requesterDeviceId: String, requesterFingerprint: String, targetDeviceId: String
+    ) {
+        self.type = type
+        self.app = app
+        self.version = version
+        self.requesterDeviceId = requesterDeviceId
+        self.requesterFingerprint = requesterFingerprint
+        self.targetDeviceId = targetDeviceId
+    }
+}
+
+public struct UnpairResponse: Codable, Sendable {
+    public let type: String
+    public let accepted: Bool
+    public let reason: String?
+
+    public init(type: String = "unpair_response", accepted: Bool, reason: String? = nil) {
+        self.type = type
+        self.accepted = accepted
+        self.reason = reason
+    }
+}
+
 public struct TransferResult: Codable, Sendable {
     public let type: String
     public let transferId: String
@@ -189,4 +223,5 @@ public typealias ProgressHandler = @Sendable (_ current: Int64, _ total: Int64) 
 public typealias ReceiveProgressHandler = @Sendable (_ meta: FileMeta, _ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveDecisionHandler = @Sendable (_ meta: FileMeta) -> Bool
 public typealias PairingRequestHandler = @Sendable (_ request: PairingRequest) -> Bool
+public typealias UnpairRequestHandler = @Sendable (_ request: UnpairRequest) -> Bool
 public typealias ReceiveCompletionHandler = @Sendable (_ result: Result<ReceivedFile?, Error>) -> Void

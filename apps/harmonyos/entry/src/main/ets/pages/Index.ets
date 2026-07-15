@@ -459,18 +459,9 @@ struct Index {
       '移除设备',
     ).then((confirmed: boolean) => {
       if (!confirmed) return
-      this.trustedDeviceIds = this.trustedDeviceIds.filter((id: string) => id !== device.deviceId)
-      this.trustedFingerprints.delete(device.deviceId)
-      this.persistedDevices = this.persistedDevices.filter((row: DeviceInfo) => row.deviceId !== device.deviceId)
-      this.selectedDeviceIds = this.selectedDeviceIds.filter((id: string) => id !== device.deviceId)
-      if (this.selectedDeviceId === device.deviceId) this.selectedDeviceId = ''
-      this.padPreferencesService.saveTrust(
-        this.abilityContext(), this.trustedDeviceIds, this.trustedFingerprints,
-      ).catch((err: Error) => { this.statusText = `移除设备失败：${errorText(err)}` })
-      this.transferStore.removeDevice(device.deviceId).catch((err: Error) => {
-        this.statusText = `设备记录删除失败：${errorText(err)}`
+      this.network().forgetDevice(device).catch((err: Error) => {
+        this.statusText = `移除设备失败：${errorText(err)}`
       })
-      this.statusText = `已移除设备：${device.deviceName}`
     })
   }
 
@@ -766,6 +757,26 @@ struct Index {
       this.statusText = `配对信任保存失败：${errorText(err)}`
       throw new Error(errorText(err))
     }
+  }
+
+  /** 只清理本机信任与在线确认；远端通知由网络控制器负责，避免相互回送解除配对。 */
+  async forgetTrustedDevice(deviceId: string, statusMessage: string): Promise<void> {
+    this.trustedDeviceIds = this.trustedDeviceIds.filter((id: string) => id !== deviceId)
+    this.trustedFingerprints.delete(deviceId)
+    this.persistedDevices = this.persistedDevices.filter((row: DeviceInfo) => row.deviceId !== deviceId)
+    this.selectedDeviceIds = this.selectedDeviceIds.filter((id: string) => id !== deviceId)
+    this.confirmedDeviceLastSeenAt.delete(deviceId)
+    if (this.selectedDeviceId === deviceId) this.selectedDeviceId = ''
+    const device = this.nearbyDevices.find((row: DeviceInfo) => row.deviceId === deviceId)
+    if (device && this.targetIp === device.ip) {
+      this.targetIp = ''
+      this.portText = '51888'
+      await this.saveTarget()
+    }
+    await this.padPreferencesService.saveTrust(this.abilityContext(), this.trustedDeviceIds,
+      this.trustedFingerprints)
+    await this.transferStore.removeDevice(deviceId)
+    this.statusText = statusMessage
   }
 
   async rememberDevice(device: DeviceInfo): Promise<void> {

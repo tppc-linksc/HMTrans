@@ -5,44 +5,20 @@ import Network
 import HMTransCore
 
 enum TrustedDevicesStore {
-    // v0.1 的信任可能只经过单边弹窗，不能迁移为 v0.2 的双端配对关系。
-    private static let key = "trustedDeviceIds.v3.deviceSnapshot"
-    private static let fingerprintKey = "trustedDeviceFingerprints.v1"
-
     static func contains(_ deviceId: String?) -> Bool {
-        guard let deviceId, !deviceId.isEmpty else { return false }
-        return Set(UserDefaults.standard.stringArray(forKey: key) ?? []).contains(deviceId)
-    }
-
-    static func insert(_ deviceId: String?) {
-        guard let deviceId, !deviceId.isEmpty else { return }
-        var ids = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        ids.insert(deviceId)
-        UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+        PairingConfigurationStore.contains(deviceId)
     }
 
     static func insert(_ deviceId: String?, fingerprint: String?) {
-        insert(deviceId)
-        guard let deviceId, let fingerprint, !fingerprint.isEmpty else { return }
-        var values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
-        values[deviceId] = fingerprint
-        UserDefaults.standard.set(values, forKey: fingerprintKey)
+        PairingConfigurationStore.insert(deviceId, fingerprint: fingerprint)
     }
 
     static func matches(_ deviceId: String?, fingerprint: String?) -> Bool {
-        guard contains(deviceId), let deviceId, let fingerprint, !fingerprint.isEmpty else { return false }
-        let values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
-        return values[deviceId] == fingerprint
+        PairingConfigurationStore.matches(deviceId, fingerprint: fingerprint)
     }
 
     static func remove(_ deviceId: String?) {
-        guard let deviceId, !deviceId.isEmpty else { return }
-        var ids = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        ids.remove(deviceId)
-        UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
-        var values = UserDefaults.standard.dictionary(forKey: fingerprintKey) as? [String: String] ?? [:]
-        values.removeValue(forKey: deviceId)
-        UserDefaults.standard.set(values, forKey: fingerprintKey)
+        PairingConfigurationStore.remove(deviceId)
     }
 }
 

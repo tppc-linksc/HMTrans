@@ -19,7 +19,7 @@ export class DiagnosticService {
   async copy(snapshot: PadDiagnosticSnapshot, store: TransferStore): Promise<void> {
     const errors = (await store.recentDiagnosticSummary()).map((value: string) => this.redact(value)).join('\n')
     const report = `HM互传诊断信息
-应用版本：0.2.0
+应用版本：0.2.1
 系统版本：${deviceInfo.osFullName}
 接收服务：${snapshot.receiverReady ? '运行正常' : '已关闭或异常'}
 自动发现：${snapshot.discoveryEnabled ? '已开启' : '已关闭'}
