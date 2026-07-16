@@ -6,7 +6,7 @@ import { DeviceInfo } from '../common/Protocol'
 export struct PadConnectionPage {
   @Param compactLayout: boolean = false
   @Param networkName: string = ''
-  @Param targetIp: string = ''
+  @Param localIp: string = ''
   @Param udpPort: number = 0
   @Param tcpPort: number = 0
   @Param pairingCode: string = ''
@@ -47,7 +47,7 @@ export struct PadConnectionPage {
           .accessibilityText('Wi-Fi')
         Text(this.networkName).fontSize(19).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
       }.width('100%')
-      Text(this.targetIp.length > 0 ? this.targetIp : '自动获取地址')
+      Text(this.localIp.length > 0 ? this.localIp : '正在获取本机地址')
         .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
     }
     .width(this.compactLayout ? '100%' : '49%').height(124).padding(18)

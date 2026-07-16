@@ -6,7 +6,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 这个工具来自我在做其他项目时遇到的传输困境：Mac 和 MatePad 之间临时传文件、截图、项目素材时，常见方案要么依赖云同步，要么步骤太多，要么不能稳定保留原文件。HMTrans 是一个 vibecoding 产品，目标很明确：把我自己每天常用的 Mac <-> MatePad 统一局域网下互传原始文件链路做顺手。
 
-双端当前统一为 `v0.2.1`：包含最终回执、Mac 单实例保护、安装级配对身份和双端实时解除配对等修复。macOS 版通过 GitHub Release 分发；HarmonyOS 提交审核时需上传本轮 `versionName=0.2.1`、`versionCode=4` 的 HAP。项目始终只做局域网本地传输，不增加云端和账号系统。
+双端当前统一为 `v0.2.1`：包含最终回执、Mac 单实例保护、安装级配对身份和双端实时解除配对等修复。macOS 版通过 GitHub Release 分发；HarmonyOS 提交审核时需上传本轮 `versionName=0.2.1`、`versionCode=5` 的 HAP。项目始终只做局域网本地传输，不增加云端和账号系统。
 
 ## 功能概览
 
@@ -29,7 +29,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 ## 版本状态
 
-当前 macOS Release 与仓库 HEAD 均为 `v0.2.1`；HarmonyOS 使用同一对外版本号和内部递增的 `versionCode=4` 提交应用市场审核。超大文件、长时间后台/锁屏、三台真机和性能能耗仍需按验收清单继续完成真机验证。
+当前 macOS Release 与仓库 HEAD 均为 `v0.2.1`；HarmonyOS 使用同一对外版本号和内部递增的 `versionCode=5` 提交应用市场审核。超大文件、长时间后台/锁屏、三台真机和性能能耗仍需按验收清单继续完成真机验证。
 
 `v0.2` 当前实现包括：
 

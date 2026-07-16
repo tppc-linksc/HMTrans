@@ -207,14 +207,21 @@ export function parseJsonLine<T>(line: string): T {
   return JSON.parse(line) as T
 }
 
-export function createDeviceInfo(deviceName: string, port: number, deviceId: string, networkName?: string,
-  systemVersion?: string, identityFingerprint?: string, acknowledgedDeviceId?: string): DeviceInfo {
+export function wifiIpAddress(value: number): string {
+  const address = value >>> 0
+  if (address === 0) return ''
+  return `${address & 0xFF}.${(address >>> 8) & 0xFF}.${(address >>> 16) & 0xFF}.${(address >>> 24) & 0xFF}`
+}
+
+export function createDeviceInfo(deviceName: string, port: number, deviceId: string, localIp: string,
+  networkName?: string, systemVersion?: string, identityFingerprint?: string,
+  acknowledgedDeviceId?: string): DeviceInfo {
   return {
     app: APP_NAME,
     version: PROTOCOL_VERSION,
     deviceName,
     platform: 'HarmonyOS',
-    ip: '0.0.0.0',
+    ip: localIp.length > 0 ? localIp : '0.0.0.0',
     port,
     deviceId,
     systemVersion,

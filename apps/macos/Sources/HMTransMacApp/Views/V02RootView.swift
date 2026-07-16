@@ -50,7 +50,9 @@ struct V02RootView: View {
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("HM互传").font(.system(size: 14, weight: .bold))
-                    Text("v0.2").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                    Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.1")")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,15 +151,7 @@ private struct MacConnectionPage: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
-                PageHeader(title: "连接", subtitle: "管理设备发现、连接与配对，并向已连接设备发送文件。") {
-                    HStack(spacing: 10) {
-                        Text("连接").font(.system(size: 12, weight: .semibold))
-                        Toggle("", isOn: Binding(get: { model.discoveryEnabled }, set: model.setConnectionEnabled))
-                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                            .accessibilityLabel("连接服务")
-                            .accessibilityHint("同时控制设备发现、接收服务和已连接设备")
-                    }
-                }
+                PageHeader(title: "连接", subtitle: "管理设备发现、连接与配对，并向已连接设备发送文件。") { EmptyView() }
 
                 HStack(spacing: 12) {
                     infoCard(
@@ -259,7 +253,7 @@ private struct MacConnectionPage: View {
                     Text(device.deviceName).font(.system(size: 13, weight: .bold))
                     Text(deviceSystemDescription(platform: device.platform, version: device.systemVersion))
                         .font(.system(size: 9)).foregroundStyle(.secondary)
-                    Text(state == .alive ? "已连接" : "未连接")
+                    Text(state == .alive ? "已连接" : "新设备 · 点击输入配对码")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(state == .alive ? .green : .secondary)
                 }
@@ -277,7 +271,16 @@ private struct MacConnectionPage: View {
             ))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(device.deviceName)，\(state == .alive ? "已连接" : "未连接")")
+        .contextMenu {
+            if state == .alive {
+                Button("移除配对设备", role: .destructive) {
+                    if confirmForgetDevice(named: device.deviceName) {
+                        model.forgetDevice(device)
+                    }
+                }
+            }
+        }
+        .accessibilityLabel("\(device.deviceName)，\(state == .alive ? "已连接" : "新设备，需要输入配对码")")
         .accessibilityHint(state == .alive ? "选择或取消文件发送目标" : "输入配对码并连接")
     }
 
@@ -288,7 +291,7 @@ private struct MacConnectionPage: View {
                 Text(device.name).font(.system(size: 13, weight: .bold))
                 Text(deviceSystemDescription(platform: device.platform, version: device.systemVersion))
                     .font(.system(size: 9)).foregroundStyle(.secondary)
-                Text("未连接").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                Text("已配对 · 点击重新连接").font(.system(size: 10, weight: .semibold)).foregroundStyle(MacAppTheme.accent)
             }
             Spacer()
         }
@@ -296,6 +299,13 @@ private struct MacConnectionPage: View {
         .background(MacAppTheme.blueSurface, in: RoundedRectangle(cornerRadius: 15))
         .overlay(RoundedRectangle(cornerRadius: 15).stroke(MacAppTheme.accent.opacity(0.26), lineWidth: 1)) }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("移除配对设备", role: .destructive) {
+                if confirmForgetDevice(named: device.name) {
+                    model.forgetPersistedDevice(device)
+                }
+            }
+        }
         .accessibilityLabel("\(device.name)，已配对但未连接")
         .accessibilityHint("重新连接此设备")
     }

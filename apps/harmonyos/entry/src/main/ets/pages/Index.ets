@@ -56,6 +56,7 @@ struct Index {
   @Local activePage: string = 'connection'
   @Local historyFilter: string = 'all'
   @Local networkName: string = '正在获取网络名称'
+  @Local localIp: string = ''
   @Local localDeviceDisplayName: string = ''
   @Local receiverEnabled: boolean = true
   @Local discoveryEnabled: boolean = true
@@ -255,7 +256,7 @@ struct Index {
     PadConnectionPage({
       compactLayout: this.compactLayout,
       networkName: this.networkName,
-      targetIp: this.targetIp,
+      localIp: this.localIp,
       udpPort: this.discoveryPort,
       tcpPort: this.localTcpPort,
       pairingCode: this.pairingCode,

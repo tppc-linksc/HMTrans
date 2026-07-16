@@ -2,7 +2,7 @@
   "app": {
     "bundleName": "com.HMTrans.app",
     "vendor": "linksc",
-    "versionCode": 4,
+    "versionCode": 5,
     "versionName": "0.2.1",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
