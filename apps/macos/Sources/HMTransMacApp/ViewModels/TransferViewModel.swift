@@ -371,8 +371,24 @@ final class TransferViewModel {
     }
 
     func historyDeviceKey(_ item: TransferListItem) -> String {
-        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID }
-        return "name:\(item.peerName)"
+        if let device = historyPersistedDevice(for: item) { return device.id }
+        let normalizedName = item.peerName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return "name:\(normalizedName)"
+    }
+
+    func historyDeviceName(_ item: TransferListItem) -> String {
+        historyPersistedDevice(for: item)?.name ?? item.peerName
+    }
+
+    private func historyPersistedDevice(for item: TransferListItem) -> PersistedDevice? {
+        let aliases = persistedDevices.filter {
+            deviceDisplayNamesAreAliases($0.name, item.peerName)
+        }
+        if aliases.count == 1 { return aliases[0] }
+        guard let deviceID = item.deviceId, !deviceID.isEmpty else { return nil }
+        return persistedDevices.first { $0.id == deviceID }
     }
 
     func clearTemporaryStorage() {
@@ -599,18 +615,27 @@ final class TransferViewModel {
         }
     }
 
-    /// 任务恢复必须使用稳定设备 ID；仅对没有 ID 的旧记录保留唯一名称匹配。
+    /// 任务恢复优先使用稳定设备 ID；测试包重装导致身份变化时，只允许唯一、已受信任的名称别名接管旧任务。
     func matchingNearbyDevice(for item: TransferListItem) -> DeviceInfo? {
-        let matches = nearbyDevices.filter {
+        let exactMatches = nearbyDevices.filter {
             transfer(item, belongsTo: $0) &&
             TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
         }
-        return matches.count == 1 ? matches[0] : nil
+        if exactMatches.count == 1 { return exactMatches[0] }
+        let aliasMatches = nearbyDevices.filter {
+            deviceDisplayNamesAreAliases(item.peerName, $0.deviceName) &&
+            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
+        }
+        return aliasMatches.count == 1 ? aliasMatches[0] : nil
     }
 
     private func transfer(_ item: TransferListItem, belongsTo device: DeviceInfo) -> Bool {
-        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID == device.deviceId }
-        return item.peerName == device.deviceName
+        if let deviceID = item.deviceId, !deviceID.isEmpty, deviceID == device.deviceId { return true }
+        let aliases = nearbyDevices.filter {
+            deviceDisplayNamesAreAliases(item.peerName, $0.deviceName) &&
+            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
+        }
+        return aliases.count == 1 && aliases[0].deviceId == device.deviceId
     }
 
     func forgetDevice(_ device: DeviceInfo) {

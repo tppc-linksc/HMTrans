@@ -507,7 +507,7 @@ private struct MacTransferHistoryContent: View {
         Dictionary(grouping: filtered, by: model.historyDeviceKey)
             .map { key, values in
                 let items = values.sorted { $0.updatedAt > $1.updatedAt }
-                return (key, items.first?.peerName ?? "未知设备", items)
+                return (key, items.first.map(model.historyDeviceName) ?? "未知设备", items)
             }
             .sorted { ($0.items.first?.updatedAt ?? .distantPast) > ($1.items.first?.updatedAt ?? .distantPast) }
     }
