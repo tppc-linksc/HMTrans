@@ -512,6 +512,7 @@ struct Index {
       return
     }
     await this.loadPreferences(context)
+    this.localDeviceDisplayName = await this.deviceIdentityService.loadUserVisibleDeviceName(context)
     await this.restoreTransferState(context)
     // 七天过期清理会跳过所有从本地状态恢复、仍可续传的任务。
     this.stagingStorageService.pruneExpired(
