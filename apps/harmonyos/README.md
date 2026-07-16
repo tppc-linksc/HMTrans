@@ -68,7 +68,9 @@ cp build-profile.example.json5 build-profile.json5
 
 ```sh
 cd apps/harmonyos
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
+JAVA_HOME=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home \
+PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
   /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
   --no-daemon --mode module -p module=entry@default -p product=default assembleHap
@@ -77,7 +79,9 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
 绑定测试设备的调试包（DevEco Studio 运行前选择 `development` Product）：
 
 ```sh
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
+JAVA_HOME=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home \
+PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
   /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
   --no-daemon --mode module -p module=entry@default -p product=development assembleHap

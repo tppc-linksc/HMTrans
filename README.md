@@ -145,7 +145,9 @@ apps/harmonyos
 
 ```sh
 cd apps/harmonyos
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
+JAVA_HOME=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home \
+PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
       /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
       /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
       --no-daemon --mode module -p module=entry@default -p product=default assembleHap

@@ -17,7 +17,7 @@ MOUNT_DIR=""
 
 cleanup() {
   if [ -n "$DEVICE_NAME" ]; then
-    hdiutil detach "$DEVICE_NAME" -quiet >/dev/null 2>&1 || true
+    diskutil eject "$DEVICE_NAME" >/dev/null 2>&1 || true
   fi
   rm -rf "$ICON_WORK_DIR"
   rm -f "$TEMP_DMG_PATH"
@@ -28,7 +28,7 @@ trap cleanup EXIT
 detach_existing_volumes() {
   local volume_path
   while IFS= read -r volume_path; do
-    hdiutil detach "$volume_path" -quiet >/dev/null 2>&1 || true
+    diskutil eject "$volume_path" >/dev/null 2>&1 || true
   done < <(find /Volumes -maxdepth 1 -type d -name "$VOLUME_NAME*" 2>/dev/null)
 }
 
@@ -125,14 +125,14 @@ APP_SIZE_MB="$(du -sm "$APP_PATH" | awk '{ print $1 }')"
 DMG_SIZE_MB="$((APP_SIZE_MB + 80))"
 
 rm -f "$DMG_PATH" "$TEMP_DMG_PATH"
-hdiutil create \
-  -size "${DMG_SIZE_MB}m" \
-  -volname "$VOLUME_NAME" \
-  -ov \
-  -fs HFS+ \
+diskutil image create blank \
+  --format RAW \
+  --size "${DMG_SIZE_MB}m" \
+  --volumeName "$VOLUME_NAME" \
+  --fs APFS \
   "$TEMP_DMG_PATH" >/dev/null
 
-ATTACH_OUTPUT="$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG_PATH")"
+ATTACH_OUTPUT="$(diskutil image attach --nobrowse "$TEMP_DMG_PATH")"
 DEVICE_NAME="$(printf '%s\n' "$ATTACH_OUTPUT" | awk '/\/Volumes\// { print $1; exit }')"
 MOUNT_DIR="$(printf '%s\n' "$ATTACH_OUTPUT" | awk '{ start = index($0, "/Volumes/"); if (start > 0) { print substr($0, start); exit } }')"
 
@@ -173,10 +173,10 @@ EOF
 
 apply_volume_icon
 sync
-hdiutil detach "$DEVICE_NAME" -quiet
+diskutil eject "$DEVICE_NAME" >/dev/null
 DEVICE_NAME=""
 MOUNT_DIR=""
-hdiutil convert "$TEMP_DMG_PATH" -ov -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" >/dev/null
+diskutil image create from --format UDZO "$TEMP_DMG_PATH" "$DMG_PATH" >/dev/null
 rm -f "$TEMP_DMG_PATH"
 
 echo "$DMG_PATH"
