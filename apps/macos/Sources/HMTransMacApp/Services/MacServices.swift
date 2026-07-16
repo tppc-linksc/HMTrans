@@ -62,6 +62,17 @@ func promptForPairingCode(device: DeviceInfo) -> String? {
     return code
 }
 
+@MainActor
+func confirmForgetDevice(named deviceName: String) -> Bool {
+    let alert = NSAlert()
+    alert.messageText = "移除 \(deviceName)？"
+    alert.informativeText = "将删除双方保存的配对关系；下次连接需要重新输入六位配对码。传输历史不会被删除。"
+    alert.addButton(withTitle: "移除设备")
+    alert.addButton(withTitle: "取消")
+    alert.alertStyle = .warning
+    return alert.runModal() == .alertFirstButtonReturn
+}
+
 /// 在不形成 `DispatchQueue.main.sync` 循环的情况下，将 Core 的同步接收回调桥接到 AppKit。
 /// 接收器停止时不会等待此工作队列，界面未在 `timeout` 内响应时按拒绝处理。
 func evaluateOnMain<T: Sendable>(

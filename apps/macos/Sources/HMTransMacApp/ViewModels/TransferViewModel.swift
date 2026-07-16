@@ -418,8 +418,24 @@ final class TransferViewModel {
     }
 
     func historyDeviceKey(_ item: TransferListItem) -> String {
-        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID }
-        return "name:\(item.peerName)"
+        if let device = historyPersistedDevice(for: item) { return device.id }
+        let normalizedName = item.peerName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return "name:\(normalizedName)"
+    }
+
+    func historyDeviceName(_ item: TransferListItem) -> String {
+        historyPersistedDevice(for: item)?.name ?? item.peerName
+    }
+
+    private func historyPersistedDevice(for item: TransferListItem) -> PersistedDevice? {
+        let aliases = persistedDevices.filter {
+            deviceDisplayNamesAreAliases($0.name, item.peerName)
+        }
+        if aliases.count == 1 { return aliases[0] }
+        guard let deviceID = item.deviceId, !deviceID.isEmpty else { return nil }
+        return persistedDevices.first { $0.id == deviceID }
     }
 
     func clearTemporaryStorage() {
@@ -583,10 +599,10 @@ final class TransferViewModel {
                             fingerprint: fingerprint,
                             sharedSecret: pairingSecret
                         )
-                        self.markDeviceConfirmed(device.deviceId)
                         self.persist(device: device)
                         self.useDevice(device)
-                        self.status = "配对成功：\(device.deviceName)"
+                        self.discovery?.probe(address: device.ip)
+                        self.status = "配对成功，正在确认连接：\(device.deviceName)"
                     } else {
                         self.status = "配对失败：配对码错误或已过期"
                     }
@@ -654,18 +670,27 @@ final class TransferViewModel {
         }
     }
 
-    /// 任务恢复必须使用稳定设备 ID；仅对没有 ID 的旧记录保留唯一名称匹配。
+    /// 任务恢复优先使用稳定设备 ID；测试包重装导致身份变化时，只允许唯一、已受信任的名称别名接管旧任务。
     func matchingNearbyDevice(for item: TransferListItem) -> DeviceInfo? {
-        let matches = nearbyDevices.filter {
+        let exactMatches = nearbyDevices.filter {
             transfer(item, belongsTo: $0) &&
             TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
         }
-        return matches.count == 1 ? matches[0] : nil
+        if exactMatches.count == 1 { return exactMatches[0] }
+        let aliasMatches = nearbyDevices.filter {
+            deviceDisplayNamesAreAliases(item.peerName, $0.deviceName) &&
+            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
+        }
+        return aliasMatches.count == 1 ? aliasMatches[0] : nil
     }
 
     private func transfer(_ item: TransferListItem, belongsTo device: DeviceInfo) -> Bool {
-        if let deviceID = item.deviceId, !deviceID.isEmpty { return deviceID == device.deviceId }
-        return item.peerName == device.deviceName
+        if let deviceID = item.deviceId, !deviceID.isEmpty, deviceID == device.deviceId { return true }
+        let aliases = nearbyDevices.filter {
+            deviceDisplayNamesAreAliases(item.peerName, $0.deviceName) &&
+            TrustedDevicesStore.matches($0.deviceId, fingerprint: $0.identityFingerprint)
+        }
+        return aliases.count == 1 && aliases[0].deviceId == device.deviceId
     }
 
     func forgetDevice(_ device: DeviceInfo) {
@@ -673,15 +698,17 @@ final class TransferViewModel {
         let requesterFingerprint = identityFingerprint
         if !isLocalIPv4Address(device.ip) {
             Task.detached { [weak self] in
-                do {
-                    let response = try requestUnpair(
-                        host: device.ip,
-                        port: device.port,
-                        requesterDeviceId: requesterDeviceID,
-                        requesterFingerprint: requesterFingerprint,
-                        targetDeviceId: device.deviceId
-                    )
-                    if !response.accepted {
+                var finalError: Error?
+                for attempt in 0..<2 {
+                    do {
+                        let response = try requestUnpair(
+                            host: device.ip,
+                            port: device.port,
+                            requesterDeviceId: requesterDeviceID,
+                            requesterFingerprint: requesterFingerprint,
+                            targetDeviceId: device.deviceId
+                        )
+                        if response.accepted { return }
                         await MainActor.run {
                             self?.recordDiagnostic(
                                 code: "PAIR-UNPAIR-REJECTED",
@@ -690,14 +717,19 @@ final class TransferViewModel {
                                 deviceID: device.deviceId
                             )
                         }
+                        return
+                    } catch {
+                        finalError = error
+                        if attempt == 0 { try? await Task.sleep(for: .milliseconds(600)) }
                     }
-                } catch {
-                    // 本机删除不等待网络；对端会因收不到受信任确认心跳而在 TTL 内降级。
+                }
+                // 本机删除不等待网络；通知短暂失败时重试一次，仍失败则由确认心跳 TTL 降级。
+                if let finalError {
                     await MainActor.run {
                         self?.recordDiagnostic(
                             code: "PAIR-UNPAIR-NOTIFY",
                             module: "pairing",
-                            message: "\(error)",
+                            message: "\(finalError)",
                             deviceID: device.deviceId
                         )
                     }
@@ -705,6 +737,17 @@ final class TransferViewModel {
             }
         }
         forgetDeviceLocally(deviceID: device.deviceId, deviceName: device.deviceName, address: device.ip)
+    }
+
+    func forgetPersistedDevice(_ device: PersistedDevice) {
+        forgetDevice(DeviceInfo(
+            deviceName: device.name,
+            platform: device.platform,
+            ip: device.address,
+            port: device.port,
+            deviceId: device.id,
+            systemVersion: device.systemVersion
+        ))
     }
 
     /// 只清理本机信任与在线确认；远端请求走此路径时不会再次回送解除配对。
@@ -748,6 +791,20 @@ final class TransferViewModel {
                 self.discovery?.probe(address: device.address)
                 self.status = "设备可达，正在确认身份：\(device.name)"
             }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self,
+                  TrustedDevicesStore.contains(device.id) else { return }
+            guard let fresh = self.nearbyDevices.first(where: { $0.deviceId == device.id }) else {
+                self.status = "设备未连接：\(device.name)"
+                return
+            }
+            guard !self.isBidirectionallyConnected(fresh) else { return }
+            // 对端仍在广播但始终不回送受信任确认，说明双方保存的配对关系已经分叉。
+            // 清理本机旧信任后把它恢复成可点击的新设备，避免“重新连接”永远无响应。
+            self.forgetDeviceLocally(deviceID: device.id, deviceName: device.name, address: device.address)
+            self.status = "对端已解除原配对，请点击 \(fresh.deviceName) 重新输入配对码"
         }
     }
 
@@ -834,10 +891,10 @@ final class TransferViewModel {
                                 sharedSecret: request.pairingSecret
                             )
                             self.deviceLastSeenAt[device.deviceId] = Date()
-                            self.markDeviceConfirmed(device.deviceId)
                             self.mergeDiscoveredDevice(device)
                             self.useDevice(device)
-                            self.status = "已与 \(device.deviceName) 完成配对"
+                            self.discovery?.probe(address: device.ip)
+                            self.status = "已与 \(device.deviceName) 完成配对，正在确认连接"
                         }
                         return accepted
                     }

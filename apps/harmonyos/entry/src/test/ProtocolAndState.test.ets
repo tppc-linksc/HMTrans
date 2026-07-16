@@ -1,10 +1,12 @@
 import { describe, expect, it } from '@ohos/hypium'
 import {
   createFileMeta,
+  createDeviceInfo,
   createPairingRequest,
   createReceiveDecision,
   createUnpairRequest,
   encodeJsonLine,
+  wifiIpAddress,
 } from '../main/ets/common/Protocol'
 import { TransferListItem } from '../main/ets/models/TransferListItem'
 import { TransferStateService } from '../main/ets/services/TransferStateService'
@@ -47,6 +49,15 @@ export default function protocolAndStateTest(): void {
       expect(request.requesterDeviceId).assertEqual('pad-id')
       expect(request.requesterFingerprint).assertEqual('pad-fingerprint')
       expect(request.targetDeviceId).assertEqual('mac-id')
+    })
+
+    it('advertises and displays the Pad local IPv4 address', 0, () => {
+      const localIp = wifiIpAddress(0x2101A8C0)
+      expect(localIp).assertEqual('192.168.1.33')
+      const device = createDeviceInfo('Linksc的MatePad Pro', 51888, 'pad-id', localIp,
+        'HUAWEI Q6', 'HarmonyOS6.1.0', 'fingerprint')
+      expect(device.deviceName).assertEqual('Linksc的MatePad Pro')
+      expect(device.ip).assertEqual('192.168.1.33')
     })
 
     it('moves a completed task into durable history', 0, () => {

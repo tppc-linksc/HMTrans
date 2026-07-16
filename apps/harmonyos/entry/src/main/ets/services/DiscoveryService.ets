@@ -28,6 +28,7 @@ export class DiscoveryService {
     deviceName: string,
     transferPort: number,
     discoveryPort: number,
+    localIp: string,
     networkName: string,
     systemVersion: string,
     screenCastPort: number,
@@ -54,7 +55,7 @@ export class DiscoveryService {
         // 普通广播只负责“发现”；只有双方仍互相信任时才回送带确认 ID 的单播心跳。
         // 这样解除配对通知偶发失败时，对端也会在 TTL 内从“已连接”降为未配对设备。
         if (this.shouldAcknowledge(device)) {
-          this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, networkName, systemVersion,
+          this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, localIp, networkName, systemVersion,
             screenCastPort, device.deviceId, device.ip)
         }
       } catch (_) {
@@ -87,7 +88,7 @@ export class DiscoveryService {
 
     const sendBeacon = async () => {
       const info = createDeviceInfo(
-        deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint,
+        deviceName, transferPort, this.deviceId, localIp, networkName, systemVersion, this.identityFingerprint,
         undefined, screenCastPort, '0.3.0', ['send-h264']
       )
       for (let index = 0; index < beaconTargets.length; index++) {
@@ -150,12 +151,13 @@ export class DiscoveryService {
   }
 
   private sendDirectedBeaconIfNeeded(udp: socket.UDPSocket, deviceName: string, transferPort: number,
-    networkName: string, systemVersion: string, screenCastPort: number, deviceId: string, address: string): void {
+    localIp: string, networkName: string, systemVersion: string, screenCastPort: number,
+    deviceId: string, address: string): void {
     const now = Date.now()
     if (now - (this.directedReplyAt.get(deviceId) ?? 0) < 2000) return
     this.directedReplyAt.set(deviceId, now)
     const info = createDeviceInfo(
-      deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint, deviceId,
+      deviceName, transferPort, this.deviceId, localIp, networkName, systemVersion, this.identityFingerprint, deviceId,
       screenCastPort, '0.3.0', ['send-h264']
     )
     udp.send({

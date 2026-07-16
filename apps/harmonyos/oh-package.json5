@@ -2,5 +2,7 @@
   "modelVersion": "5.1.0",
   "description": "HMTrans HarmonyOS client",
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "@ohos/hypium": "1.0.25"
+  }
 }

@@ -34,6 +34,7 @@ export interface PadNetworkStateHost {
   portText: string
   statusText: string
   networkName: string
+  localIp: string
   localDeviceDisplayName: string
   nearbyDevices: Array<DeviceInfo>
   selectedDeviceId: string

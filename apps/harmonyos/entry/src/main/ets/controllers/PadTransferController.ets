@@ -301,8 +301,10 @@ export class PadTransferController {
 
   private outgoingCallbacks(): OutgoingTransferCallbacks {
     return {
-      onStatus: (value: string) => this.host.runOnUi(() => { this.host.statusText = value }),
-      onBegin: (options: TransferListItemOptions, deviceId: string) => this.host.runOnUi(() => {
+      // 发送可在应用切到后台后继续。任务状态必须先写回模型并持久化，不能因为页面暂时
+      // 不可见而丢掉最终回执；ArkTS 的 Promise 与 socket 回调均回到当前 JS 运行时。
+      onStatus: (value: string) => { this.host.statusText = value },
+      onBegin: (options: TransferListItemOptions, deviceId: string) => {
         this.host.activeTransferDeviceIds.set(options.id, deviceId)
         if (this.host.currentTransfers.some((item: TransferListItem) => item.id === options.id)) {
           this.markCurrentTransferState(options.id, TransferState.Preparing, '正在协商断点')
@@ -310,30 +312,30 @@ export class PadTransferController {
           options.timeText = nowText()
           this.upsertCurrentTransfer(options)
         }
-      }),
-      onProgress: (id: string, current: number, total: number) => this.host.runOnUi(() => {
+      },
+      onProgress: (id: string, current: number, total: number) => {
         const progress = total > 0 ? Math.floor(current / total * 100) : 100
         this.updateCurrentTransfer(id, progress, this.progressDetail(id, current, total))
-      }),
-      onComplete: (id: string) => this.host.runOnUi(() => this.completeTransfer(id, true, '发送完成')),
-      onPermanentFailure: (id: string, detail: string) => this.host.runOnUi(() => {
+      },
+      onComplete: (id: string) => this.completeTransfer(id, true, '发送完成'),
+      onPermanentFailure: (id: string, detail: string) => {
         this.host.statusText = `发送失败：${detail}`
         this.transferStore.recordDiagnostic('TRN-SEND-001', detail, id).catch(() => {})
         this.completeTransfer(id, false, `发送失败：${detail}`)
-      }),
-      onWaiting: (id: string, _detail: string) => this.host.runOnUi(() => {
+      },
+      onWaiting: (id: string, _detail: string) => {
         this.host.activeTransferDeviceIds.delete(id)
         this.markCurrentTransferState(id, TransferState.Waiting, '连接中断，已保存断点')
         this.scheduleAutomaticResume(id)
-      }),
+      },
       onActivity: (active: boolean) => this.host.updateBackgroundTransferActivity(active),
       onPreparationFailure: (options: TransferListItemOptions, deviceId: string, detail: string) =>
-        this.host.runOnUi(() => {
+        {
           this.host.activeTransferDeviceIds.set(options.id, deviceId)
           options.timeText = nowText()
           this.upsertCurrentTransfer(options)
           this.completeTransfer(options.id, false, detail)
-        }),
+        },
       isSourceReferenced: (path: string) => this.host.currentTransfers.some((item: TransferListItem) =>
         item.stagingPath === path),
     }

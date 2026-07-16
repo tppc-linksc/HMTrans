@@ -9,6 +9,7 @@ import {
   UnpairRequest,
   createPairingRequest,
   createUnpairRequest,
+  wifiIpAddress,
 } from '../common/Protocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
@@ -163,14 +164,13 @@ export class PadNetworkController {
               identityFingerprint: request.requesterFingerprint,
             }
             this.host.deviceLastSeenAt.set(pairedDevice.deviceId, Date.now())
-            this.host.confirmedDeviceLastSeenAt.set(pairedDevice.deviceId, Date.now())
             this.host.nearbyDevices = this.host.nearbyDevices
               .filter((item: DeviceInfo) => item.deviceId !== pairedDevice.deviceId)
               .concat([pairedDevice])
             await this.host.rememberDevice(pairedDevice)
             this.host.runOnUi(() => {
               this.selectDevice(pairedDevice)
-              this.host.statusText = `已与 ${request.requesterName} 完成配对`
+              this.host.statusText = `已与 ${request.requesterName} 完成配对，正在确认连接`
             })
           }
           return accepted
@@ -228,7 +228,8 @@ export class PadNetworkController {
     )
     try {
       const knownTargets = this.host.targetIp.length > 0 ? [this.host.targetIp] : []
-      await this.host.discoveryService.start(this.host.localDeviceName(), this.host.localTcpPort, this.host.discoveryPort, this.host.networkName,
+      await this.host.discoveryService.start(this.host.localDeviceName(), this.host.localTcpPort, this.host.discoveryPort,
+        this.host.localIp, this.host.networkName,
         this.host.localSystemVersion(), this.host.castPort, {
         onDevice: (device: DeviceInfo) => {
           // 缺少身份指纹的数据包只能视为未验证，不能据此认定已配对设备更换了身份。
@@ -338,8 +339,10 @@ export class PadNetworkController {
     try {
       const linkedInfo = await wifiManager.getLinkedInfo()
       this.host.networkName = linkedInfo.ssid.length > 0 ? linkedInfo.ssid : '未连接 Wi-Fi'
+      this.host.localIp = wifiIpAddress(wifiManager.getIpInfo().ipAddress)
     } catch (_err) {
       this.host.networkName = '未获取到网络名称'
+      this.host.localIp = ''
     }
     try {
       const systemName = settings.getValueSync(this.host.abilityContext(), settings.general.DEVICE_NAME, '').trim()
@@ -400,7 +403,8 @@ export class PadNetworkController {
     }
     this.host.targetIp = device.ip
     this.host.portText = `${device.port}`
-    this.host.statusText = `已自动连接：${device.deviceName}`
+    this.host.statusText = this.isBidirectionallyAlive(device.deviceId) ?
+      `已连接：${device.deviceName}` : `已选择 ${device.deviceName}，正在等待对端确认`
     this.host.saveTarget()
     this.resumeWaitingTransfers(device)
   }
@@ -490,6 +494,17 @@ export class PadNetworkController {
     this.restartDiscovery().catch((err: Error) => {
       this.host.statusText = `重新连接失败：${errorText(err)}`
     })
+    setTimeout(() => {
+      if (!this.host.isTrusted(device.deviceId) || this.isBidirectionallyAlive(device.deviceId)) return
+      const fresh = this.host.nearbyDevices.find((item: DeviceInfo) => item.deviceId === device.deviceId)
+      if (!fresh) {
+        this.host.statusText = `设备当前不在线：${device.deviceName}`
+        return
+      }
+      this.host.forgetTrustedDevice(device.deviceId, '对端未确认原配对关系，需要重新输入配对码')
+        .then(() => this.beginPairing(fresh))
+        .catch((err: Error) => { this.host.statusText = `重新配对准备失败：${errorText(err)}` })
+    }, 4500)
   }
 
   /** 用户主动移除设备时，先发出远端撤销通知，再立即清除本机状态。 */
@@ -499,18 +514,7 @@ export class PadNetworkController {
       this.host.identityFingerprint,
       device.deviceId,
     )
-    this.host.transferService.requestUnpair(device.ip, device.port, request).then((response) => {
-      if (!response.accepted) {
-        this.host.transferStore.recordDiagnostic(
-          'PAIR-UNPAIR-REJECTED', response.reason ?? 'remote rejected unpair', undefined,
-        ).catch(() => {})
-      }
-    }).catch((err: Error) => {
-      // 本机已完成移除；远端若暂时不可达，会因收不到受信任确认心跳而在 TTL 内降为离线。
-      this.host.transferStore.recordDiagnostic(
-        'PAIR-UNPAIR-NOTIFY', errorText(err), undefined,
-      ).catch(() => {})
-    })
+    this.notifyUnpairWithRetry(device, request)
     await this.host.forgetTrustedDevice(device.deviceId, `已移除设备：${device.deviceName}`)
   }
 
@@ -530,7 +534,7 @@ export class PadNetworkController {
         this.host.localDeviceName(),
         'HarmonyOS',
         this.host.localSystemVersion(),
-        '0.0.0.0',
+        this.host.localIp.length > 0 ? this.host.localIp : '0.0.0.0',
         this.host.localTcpPort,
         this.host.pairingInput,
         this.host.identityFingerprint,
@@ -542,17 +546,37 @@ export class PadNetworkController {
         return
       }
       await this.host.trustDevice(device.deviceId, device.identityFingerprint, pairingSecret)
-      this.host.confirmedDeviceLastSeenAt.set(device.deviceId, Date.now())
       await this.host.rememberDevice(device)
       this.host.pairingTarget = undefined
       this.host.pairingInput = ''
       this.selectDevice(device)
-      this.host.statusText = `配对成功：${device.deviceName}`
-      this.host.showToast(`已连接 ${device.deviceName}`)
+      this.host.statusText = `配对成功，正在确认连接：${device.deviceName}`
+      this.host.showToast(`已与 ${device.deviceName} 完成配对`)
     } catch (err) {
       this.host.statusText = `配对失败：${errorText(err)}`
       this.host.showToast('配对失败，请确认六位码仍在有效期内')
     }
+  }
+
+  private notifyUnpairWithRetry(device: DeviceInfo, request: UnpairRequest): void {
+    const notify = async (): Promise<void> => {
+      let finalError = ''
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await this.host.transferService.requestUnpair(device.ip, device.port, request)
+          if (response.accepted) return
+          await this.host.transferStore.recordDiagnostic(
+            'PAIR-UNPAIR-REJECTED', response.reason ?? 'remote rejected unpair', undefined,
+          )
+          return
+        } catch (err) {
+          finalError = errorText(err)
+          if (attempt === 0) await new Promise<void>((resolve) => setTimeout(resolve, 600))
+        }
+      }
+      await this.host.transferStore.recordDiagnostic('PAIR-UNPAIR-NOTIFY', finalError, undefined)
+    }
+    notify().catch(() => {})
   }
 
 }

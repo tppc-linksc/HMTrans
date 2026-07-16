@@ -33,6 +33,8 @@ extension TransferViewModel {
         }
         historyTransfers.removeAll { $0.id == item.id }
         var resumed = item
+        resumed.deviceId = device.deviceId
+        resumed.peerName = device.deviceName
         resumed.state = .waiting
         resumed.detail = "用户重试，正在协商断点"
         resumed.updatedAt = Date()
