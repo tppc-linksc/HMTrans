@@ -20,7 +20,6 @@ export interface PadPreferencesSnapshot {
   autoReceiveTrustedEnabled: boolean
   receiverEnabled: boolean
   discoveryEnabled: boolean
-  customDeviceName: string
 }
 
 /** 用户设置与安装身份的强类型持久化边界。 */
@@ -56,7 +55,6 @@ export class PadPreferencesService {
         autoReceiveTrustedEnabled: await store.get('autoReceiveTrustedEnabled', true) as boolean,
         receiverEnabled: await store.get('receiverEnabled', true) as boolean,
         discoveryEnabled: await store.get('discoveryEnabled', true) as boolean,
-        customDeviceName: await store.get('customDeviceName', '') as string,
       }
     } catch (err) {
       throw new Error(`偏好读取失败：${errorText(err)}`)
@@ -104,13 +102,4 @@ export class PadPreferencesService {
     }
   }
 
-  async saveString(context: common.UIAbilityContext, key: string, value: string): Promise<void> {
-    try {
-      const store = await preferences.getPreferences(context, NAME)
-      await store.put(key, value)
-      await store.flush()
-    } catch (err) {
-      throw new Error(`设置保存失败：${errorText(err)}`)
-    }
-  }
 }

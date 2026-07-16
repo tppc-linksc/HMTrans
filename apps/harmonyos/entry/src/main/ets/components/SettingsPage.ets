@@ -9,7 +9,6 @@ export struct PadSettingsPage {
   @Param tcpPort: number = 51888
   @Param networkServiceReady: boolean = false
   @Param downloadDirectoryReady: boolean = false
-  @Param deviceName: string = 'HarmonyOS 设备'
   @Param onReceiverChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onDiscoveryChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onBackgroundChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
@@ -19,13 +18,10 @@ export struct PadSettingsPage {
   @Param onEditPorts: () => void = () => {}
   @Param onOpenPrivacy: () => void = () => {}
   @Param onCopyDiagnostics: () => void = () => {}
-  @Param onEditDeviceName: () => void = () => {}
 
   build() {
     Column({ space: 14 }) {
       Column({ space: 0 }) {
-        this.NavigationRow('本机显示名称', this.deviceName, this.onEditDeviceName)
-        Divider().color($r('app.color.divider'))
         this.ToggleRow('接收服务', '允许已配对设备向本机发送文件', this.receiverEnabled, this.onReceiverChanged)
         Divider().color($r('app.color.divider'))
         this.ToggleRow('自动发现', '前台快速扫描，后台空闲时自动降频', this.discoveryEnabled, this.onDiscoveryChanged)

@@ -8,7 +8,7 @@ import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
 import { BottomDock } from '../components/BottomDock'
 import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
-import { DeviceNameEditorOverlay, PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
+import { PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { BackgroundTransferService } from '../services/BackgroundTransferService'
 import { StagingStorageService } from '../services/StagingStorageService'
@@ -58,7 +58,6 @@ struct Index {
   @Local networkName: string = '正在获取网络名称'
   @Local localIp: string = ''
   @Local localDeviceDisplayName: string = ''
-  @Local customDeviceDisplayName: string = ''
   @Local receiverEnabled: boolean = true
   @Local discoveryEnabled: boolean = true
   @Local backgroundProtectionEnabled: boolean = true
@@ -68,8 +67,6 @@ struct Index {
   @Local pairingTarget: DeviceInfo | undefined = undefined
   @Local pairingInput: string = ''
   @Local showPortEditor: boolean = false
-  @Local showDeviceNameEditor: boolean = false
-  @Local draftDeviceName: string = ''
   @Local draftUdpPort: string = `${DISCOVERY_PORT}`
   @Local draftTcpPort: string = `${DEFAULT_PORT}`
   @Local compactLayout: boolean = false
@@ -199,14 +196,6 @@ struct Index {
           onSubmit: () => this.network().submitPairing(),
         })
       }
-      if (this.showDeviceNameEditor) {
-        DeviceNameEditorOverlay({
-          name: this.draftDeviceName,
-          onNameChanged: (value: string) => { this.draftDeviceName = value },
-          onCancel: () => { this.showDeviceNameEditor = false },
-          onSave: () => { this.saveDeviceName() },
-        })
-      }
       if (this.showPortEditor) {
         PortEditorOverlay({
           udpPort: this.draftUdpPort,
@@ -317,7 +306,6 @@ struct Index {
       tcpPort: this.localTcpPort,
       networkServiceReady: this.receiverReady && this.discoveryEnabled,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
-      deviceName: this.localDeviceName(),
       onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
       onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
       onBackgroundChanged: (enabled: boolean) => this.settingsController.setBackgroundProtectionEnabled(enabled),
@@ -327,7 +315,6 @@ struct Index {
       onEditPorts: () => this.openPortEditor(),
       onOpenPrivacy: () => this.openPrivacyPolicy(),
       onCopyDiagnostics: () => this.copyDiagnostics(),
-      onEditDeviceName: () => this.openDeviceNameEditor(),
     })
   }
 
@@ -634,7 +621,6 @@ struct Index {
       this.backgroundProtectionEnabled = saved.backgroundProtectionEnabled
       this.autoReceiveTrustedEnabled = saved.autoReceiveTrustedEnabled
       this.receiverEnabled = saved.receiverEnabled; this.discoveryEnabled = saved.discoveryEnabled
-      this.customDeviceDisplayName = saved.customDeviceName.trim()
       await this.backgroundTransferService.setEnabled(saved.backgroundProtectionEnabled, context)
     } catch (err) {
       this.deviceId = `pad-${Date.now()}-${Math.floor(Math.random() * 100000)}`
@@ -901,35 +887,7 @@ struct Index {
   }
 
   localDeviceName(): string {
-    const preferred = this.customDeviceDisplayName.length > 0 ?
-      this.customDeviceDisplayName : this.localDeviceDisplayName
-    return this.deviceIdentityService.deviceName(preferred)
-  }
-
-  private openDeviceNameEditor(): void {
-    this.draftDeviceName = this.localDeviceName()
-    this.showDeviceNameEditor = true
-  }
-
-  private async saveDeviceName(): Promise<void> {
-    const value = this.draftDeviceName.trim()
-    if (value.length === 0) {
-      this.showToast('本机显示名称不能为空')
-      return
-    }
-    const previous = this.customDeviceDisplayName
-    this.customDeviceDisplayName = value
-    this.showDeviceNameEditor = false
-    try {
-      await this.padPreferencesService.saveString(this.abilityContext(), 'customDeviceName', value)
-      await this.network().restartDiscovery()
-      this.statusText = `本机显示名称已更新为 ${value}`
-      this.showToast('名称已更新，Mac 端会自动刷新')
-    } catch (err) {
-      this.customDeviceDisplayName = previous
-      this.statusText = `本机显示名称保存失败：${errorText(err)}`
-      this.showToast('名称保存失败')
-    }
+    return this.deviceIdentityService.deviceName(this.localDeviceDisplayName)
   }
 
   /** 对外广播用户可见的 HarmonyOS 版本，而不是 OpenHarmony 构建字符串。 */

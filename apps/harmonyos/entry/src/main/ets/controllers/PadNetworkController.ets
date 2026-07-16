@@ -1,5 +1,4 @@
 import { common } from '@kit.AbilityKit'
-import { settings } from '@kit.BasicServicesKit'
 import { wifiManager } from '@kit.ConnectivityKit'
 import {
   DeviceInfo,
@@ -15,6 +14,7 @@ import { errorText } from '../common/ErrorText'
 import { TransferListItem, TransferState } from '../models/TransferListItem'
 import { SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
+import { DeviceIdentityService } from '../services/DeviceIdentityService'
 import { PadNetworkHost } from './PadNetworkHost'
 
 const DEVICE_TTL_MS: number = 12000
@@ -23,6 +23,7 @@ const DEVICE_PRUNE_INTERVAL_MS: number = 4000
 /** 在页面之外管理接收、发现、在线状态与配对决策。 */
 export class PadNetworkController {
   private host: PadNetworkHost
+  private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
 
   constructor(host: PadNetworkHost) {
     this.host = host
@@ -338,11 +339,8 @@ export class PadNetworkController {
       this.host.networkName = '未获取到网络名称'
       this.host.localIp = ''
     }
-    try {
-      const systemName = settings.getValueSync(this.host.abilityContext(), settings.general.DEVICE_NAME, '').trim()
-      if (systemName.length > 0) this.host.localDeviceDisplayName = systemName
-    } catch (_err) {
-    }
+    const systemName = await this.deviceIdentityService.loadUserVisibleDeviceName(this.host.abilityContext())
+    if (systemName.length > 0) this.host.localDeviceDisplayName = systemName
   }
 
   async stopDiscovery(): Promise<void> {

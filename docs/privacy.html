@@ -27,7 +27,7 @@
         <span class="issue-pill">HM互传隐私政策</span>
         <h1>文件只在你的设备之间传输</h1>
         <p class="support-lead">HM互传用于 Mac 与 HarmonyOS 设备之间的局域网原文件传输。产品不提供账号、云盘或云端中转，不把用户文件上传到 HM互传服务器。</p>
-        <p class="support-meta">更新日期：2026 年 7 月 14 日 · 生效日期：2026 年 7 月 14 日</p>
+        <p class="support-meta">更新日期：2026 年 7 月 17 日 · 生效日期：2026 年 7 月 17 日</p>
       </header>
 
       <section class="support-section">
@@ -72,6 +72,7 @@
         <h2>权限说明</h2>
         <ul>
           <li><strong>网络与 Wi-Fi 信息：</strong>用于读取当前网络名称和局域网地址、发送 UDP 发现包、建立 TCP 连接。应用不会据此访问公网传输服务。</li>
+          <li><strong>本机设备名称：</strong>HarmonyOS 端读取系统“关于本机”中由用户设置的设备显示名称，用于在同一局域网内发现和区分设备，并向运行 HM互传 的 Mac 显示。该名称不用于账号识别，不上传到 HM互传 服务器。</li>
           <li><strong>Mac 位置授权：</strong>macOS 可能要求位置授权后才允许读取当前 Wi-Fi 名称。HM互传只读取并展示 SSID，不读取、保存或上传经纬度；拒绝后显示通用“当前局域网”，发现和传输仍可使用。</li>
           <li><strong>下载目录读写：</strong>HarmonyOS 端在用户同意隐私政策后通过系统弹窗申请，仅用于创建和检查 <code>Download/HMTrans</code>，并发布已经完整校验的接收结果。拒绝后仍可发现和发送，接收文件不可用；用户可在设置页重新检查并申请。</li>
           <li><strong>系统文件/文件夹选择器：</strong>只在用户点击选择时调用。应用只读取用户主动选中的文件或文件夹，并立即复制到应用私有持久目录供传输和断点恢复；不扫描其他文件。</li>
