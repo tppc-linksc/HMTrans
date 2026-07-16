@@ -210,7 +210,7 @@ export function parseJsonLine<T>(line: string): T {
 export function wifiIpAddress(value: number): string {
   const address = value >>> 0
   if (address === 0) return ''
-  return `${address & 0xFF}.${(address >>> 8) & 0xFF}.${(address >>> 16) & 0xFF}.${(address >>> 24) & 0xFF}`
+  return `${(address >>> 24) & 0xFF}.${(address >>> 16) & 0xFF}.${(address >>> 8) & 0xFF}.${address & 0xFF}`
 }
 
 export function createDeviceInfo(deviceName: string, port: number, deviceId: string, localIp: string,
