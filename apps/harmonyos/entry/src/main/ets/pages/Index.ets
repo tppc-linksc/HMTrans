@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit'
 import { preferences } from '@kit.ArkData'
-import { DEFAULT_PORT, DISCOVERY_PORT, DeviceInfo, FileMeta } from '../common/Protocol'
+import { DEFAULT_CAST_PORT, DEFAULT_PORT, DISCOVERY_PORT, DeviceInfo, FileMeta } from '../common/Protocol'
 import { nowText } from '../common/Formatters'
 import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { PadConnectionPage } from '../components/ConnectionPage'
@@ -8,7 +8,7 @@ import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
 import { BottomDock } from '../components/BottomDock'
 import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
-import { PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
+import { CastSettingsOverlay, PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { BackgroundTransferService } from '../services/BackgroundTransferService'
 import { StagingStorageService } from '../services/StagingStorageService'
@@ -19,7 +19,6 @@ import { ReceiveDirectoryService } from '../services/ReceiveDirectoryService'
 import { PadPreferencesService } from '../services/PadPreferencesService'
 import { TransferStateService } from '../services/TransferStateService'
 import { OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordinator'
-import { DiagnosticService } from '../services/DiagnosticService'
 import { NetworkChangeService } from '../services/NetworkChangeService'
 import { PadDialogService } from '../services/PadDialogService'
 import { DeviceIdentityService } from '../services/DeviceIdentityService'
@@ -29,12 +28,15 @@ import { errorText } from '../common/ErrorText'
 import { PadTransferController } from '../controllers/PadTransferController'
 import { PadNetworkController } from '../controllers/PadNetworkController'
 import { PadSettingsController } from '../controllers/PadSettingsController'
+import { PadScreenCastController } from '../controllers/PadScreenCastController'
+import { PadDiagnosticController } from '../controllers/PadDiagnosticController'
+import { PadStorageController } from '../controllers/PadStorageController'
 
 const DEVICE_TTL_MS: number = 12000
 const PREFERENCES_NAME: string = 'HMTrans'
 const PRIVACY_ACCEPTED_KEY: string = 'privacyAccepted'
 const PRIVACY_ACCEPTED_VERSION_KEY: string = 'privacyAcceptedVersion'
-const PRIVACY_VERSION: string = '2026-07-13'
+const PRIVACY_VERSION: string = '2026-07-16'
 const PRIVACY_POLICY_URL: string = 'https://hmt.tppc.top/privacy.html'
 
 @Entry
@@ -68,6 +70,18 @@ struct Index {
   @Local showPortEditor: boolean = false
   @Local draftUdpPort: string = `${DISCOVERY_PORT}`
   @Local draftTcpPort: string = `${DEFAULT_PORT}`
+  @Local castPortText: string = `${DEFAULT_CAST_PORT}`
+  @Local castQuality: string = 'balanced'
+  @Local showCastSettings: boolean = false
+  @Local draftCastPort: string = `${DEFAULT_CAST_PORT}`
+  @Local draftCastQuality: string = 'balanced'
+  @Local castState: string = 'idle'
+  @Local castDetail: string = '未在投屏'
+  @Local castDeviceId: string = ''
+  @Local castDeviceName: string = ''
+  @Local castFps: number = 0
+  @Local castBitrate: number = 0
+  @Local castDroppedFrames: number = 0
   @Local compactLayout: boolean = false
   @Local showPrivacyConsentDialog: boolean = false
   @Local contentUnlocked: boolean = false
@@ -82,7 +96,6 @@ struct Index {
   private transferStateService: TransferStateService = new TransferStateService()
   private outgoingCoordinator: OutgoingTransferCoordinator =
     new OutgoingTransferCoordinator(this.transferService, this.archiveService)
-  private diagnosticService: DiagnosticService = new DiagnosticService()
   private networkChangeService: NetworkChangeService = new NetworkChangeService()
   private dialogService: PadDialogService = new PadDialogService()
   private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
@@ -90,6 +103,13 @@ struct Index {
     new TransferNotificationActionService(this)
   private settingsController: PadSettingsController =
     new PadSettingsController(this, this.padPreferencesService, this.backgroundTransferService)
+  private screenCastController: PadScreenCastController =
+    new PadScreenCastController(this, this.padPreferencesService)
+  private diagnosticController: PadDiagnosticController = new PadDiagnosticController(this)
+  private storageController: PadStorageController = new PadStorageController(
+    this, this.transferService, this.outgoingCoordinator, this.stagingStorageService,
+    this.receiveDirectoryService, this.transferStore,
+  )
   discoveryService?: DiscoveryService
   private bootstrapped: boolean = false
   private pageActive: boolean = false
@@ -98,6 +118,7 @@ struct Index {
   deviceId: string = ''
   identityFingerprint: string = ''
   trustedFingerprints: Map<string, string> = new Map()
+  trustedSharedSecrets: Map<string, string> = new Map()
   deviceLastSeenAt: Map<string, number> = new Map()
   confirmedDeviceLastSeenAt: Map<string, number> = new Map()
   activeTransferDeviceIds: Map<string, string> = new Map()
@@ -133,6 +154,7 @@ struct Index {
     this.networkChangeService.start(() => this.network().handleNetworkChanged())
     this.statusText = this.selectedDevice ? this.statusText : '正在重新发现设备'
     this.network().refreshNetworkName()
+    this.screenCastController.syncSnapshot()
     this.network().ensureReceiverAndDiscovery().catch((err: Error) => {
       this.statusText = `服务恢复失败：${errorText(err)}`
     })
@@ -145,6 +167,7 @@ struct Index {
     this.notificationActionService.unregister(this.abilityContext())
     this.networkChangeService.stop()
     this.persistTransferState(true)
+    this.screenCastController.stop('应用已退出').catch(() => {})
     this.network().stopDiscovery().catch(() => {})
     this.transferService.stopReceive().catch(() => {})
   }
@@ -210,6 +233,16 @@ struct Index {
           },
         })
       }
+      if (this.showCastSettings) {
+        CastSettingsOverlay({
+          port: this.draftCastPort,
+          quality: this.draftCastQuality,
+          onPortChanged: (value: string) => { this.draftCastPort = value },
+          onQualityChanged: (value: string) => { this.draftCastQuality = value },
+          onCancel: () => { this.showCastSettings = false },
+          onSave: () => this.screenCastController.saveSettings(),
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -269,6 +302,12 @@ struct Index {
       onReconnectDevice: (device: DeviceInfo) => this.network().reconnectTrustedDevice(device),
       onToggleTarget: (device: DeviceInfo) => this.network().toggleTransferTarget(device),
       onForgetDevice: (device: DeviceInfo) => this.confirmForgetDevice(device),
+      castState: this.castState,
+      castDeviceId: this.castDeviceId,
+      castDetail: this.castDetail,
+      castStatistics: this.screenCastController.statisticsText(),
+      onStartCast: (device: DeviceInfo) => this.screenCastController.start(device),
+      onStopCast: () => this.screenCastController.stop(),
       selectedDeviceName: this.transferTargetLabel(),
       onSelectFile: () => { this.selectAndSendFile() },
       onFilesDropped: (event: DragEvent) => this.handleDrop(event),
@@ -304,30 +343,19 @@ struct Index {
       udpPort: this.discoveryPort,
       tcpPort: this.localTcpPort,
       networkServiceReady: this.receiverReady && this.discoveryEnabled,
+      castPort: this.castPort,
+      castQuality: this.castQuality,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
       onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
       onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
       onBackgroundChanged: (enabled: boolean) => this.settingsController.setBackgroundProtectionEnabled(enabled),
       onAutoReceiveChanged: (enabled: boolean) => this.settingsController.setAutoReceiveTrustedEnabled(enabled),
-      onCheckDownload: () => { this.checkReceiveDirectory() },
+      onCheckDownload: () => { this.storageController.checkReceiveDirectory() },
       onClearStaging: () => this.confirmClearHistory(),
       onEditPorts: () => this.openPortEditor(),
+      onEditCast: () => this.screenCastController.openSettings(),
       onOpenPrivacy: () => this.openPrivacyPolicy(),
-      onCopyDiagnostics: () => this.copyDiagnostics(),
-    })
-  }
-
-  private copyDiagnostics(): void {
-    this.diagnosticService.copy({
-      receiverReady: this.receiverReady, discoveryEnabled: this.discoveryEnabled,
-      udpPort: this.discoveryPort, tcpPort: this.localTcpPort, nearbyCount: this.freshDevices.length,
-      currentCount: this.currentTransfers.length, historyCount: this.historyTransfers.length, status: this.statusText,
-    }, this.transferStore).then(() => {
-      this.statusText = '诊断信息已复制'
-      this.showToast('诊断信息已复制到剪贴板')
-    }).catch((err: Error) => {
-      this.statusText = `诊断信息复制失败：${errorText(err)}`
-      this.showToast('诊断信息复制失败')
+      onCopyDiagnostics: () => this.diagnosticController.copy(),
     })
   }
 
@@ -339,54 +367,11 @@ struct Index {
       '确认清除',
     ).then((confirmed: boolean) => {
       if (confirmed) {
-        this.clearTemporaryStorage().catch((err: Error) => {
+        this.storageController.clearTemporaryStorage().catch((err: Error) => {
           this.statusText = `临时空间清理失败：${errorText(err)}`
         })
       }
     })
-  }
-
-  private async clearTemporaryStorage(): Promise<void> {
-    const stagingDir = `${this.abilityContext().filesDir}/HMTrans/Staging`
-    this.statusText = '正在停止未完成任务'
-    this.outgoingCoordinator.cancelAll()
-    this.currentTransfers.forEach((item: TransferListItem) => this.transferService.cancelTransfer(item.id))
-    const idleResults = await Promise.all([
-      this.transferService.waitForIdle(),
-      this.outgoingCoordinator.waitForIdle(),
-    ])
-    const networkIdle = idleResults[0]
-    const queueIdle = idleResults[1]
-    if (!networkIdle || !queueIdle) {
-      throw new Error('仍有传输正在释放资源，请稍后重试')
-    }
-    this.currentTransfers = []
-    this.activeTransferDeviceIds.clear()
-    this.stagingStorageService.clear(stagingDir)
-    this.persistTransferState(true)
-    this.statusText = '临时传输空间和未完成任务已清除'
-    this.showToast('临时传输空间已清除')
-  }
-
-  /** 对已拒绝的授权再次发起申请，并在不残留测试文件的前提下验证可写性。 */
-  private async checkReceiveDirectory(): Promise<void> {
-    try {
-      if (this.receiveDirectory.length === 0) {
-        await this.prepareReceiveDirectory(this.abilityContext())
-        if (this.receiveDirectory.length === 0) {
-          this.showToast('下载目录未授权，接收服务无法启动')
-          return
-        }
-      }
-      this.receiveDirectoryService.verify(this.receiveDirectory)
-      const message = '下载目录可用：Download/HMTrans'
-      this.statusText = message
-      this.showToast(message)
-    } catch (err) {
-      this.transferStore.recordDiagnostic('STO-DIR-001', errorText(err)).catch(() => {})
-      this.statusText = `下载目录不可写：${errorText(err)}`
-      this.showToast('下载目录不可写，请在系统设置中允许访问下载目录')
-    }
   }
 
   showToast(message: string): void {
@@ -596,7 +581,7 @@ struct Index {
     })
   }
 
-  private async prepareReceiveDirectory(context: common.UIAbilityContext): Promise<void> {
+  async prepareReceiveDirectory(context: common.UIAbilityContext): Promise<void> {
     try {
       this.receiveDirectory = await this.receiveDirectoryService.prepare(context)
       this.statusText = `接收目录：${this.receiveDirectory}`
@@ -616,6 +601,9 @@ struct Index {
       this.localTcpPortText = saved.localTcpPort; this.discoveryPortText = saved.discoveryPort
       this.deviceId = saved.deviceId; this.identityFingerprint = saved.identityFingerprint
       this.trustedDeviceIds = saved.trustedDeviceIds; this.trustedFingerprints = saved.trustedFingerprints
+      this.trustedSharedSecrets = saved.trustedSharedSecrets
+      this.castPortText = saved.castPort
+      this.castQuality = saved.castQuality
       this.backgroundProtectionEnabled = saved.backgroundProtectionEnabled
       this.autoReceiveTrustedEnabled = saved.autoReceiveTrustedEnabled
       this.receiverEnabled = saved.receiverEnabled; this.discoveryEnabled = saved.discoveryEnabled
@@ -742,7 +730,7 @@ struct Index {
     }
   }
 
-  async trustDevice(deviceId?: string, fingerprint?: string): Promise<void> {
+  async trustDevice(deviceId?: string, fingerprint?: string, sharedSecret?: string): Promise<void> {
     if (!deviceId || deviceId.length === 0 || !fingerprint || fingerprint.length === 0) {
       return
     }
@@ -750,9 +738,10 @@ struct Index {
       this.trustedDeviceIds = this.trustedDeviceIds.concat([deviceId])
     }
     this.trustedFingerprints.set(deviceId, fingerprint)
+    if (sharedSecret && sharedSecret.length === 64) this.trustedSharedSecrets.set(deviceId, sharedSecret.toLowerCase())
     try {
       await this.padPreferencesService.saveTrust(this.abilityContext(), this.trustedDeviceIds,
-        this.trustedFingerprints)
+        this.trustedFingerprints, this.trustedSharedSecrets)
     } catch (err) {
       this.statusText = `配对信任保存失败：${errorText(err)}`
       throw new Error(errorText(err))
@@ -763,6 +752,7 @@ struct Index {
   async forgetTrustedDevice(deviceId: string, statusMessage: string): Promise<void> {
     this.trustedDeviceIds = this.trustedDeviceIds.filter((id: string) => id !== deviceId)
     this.trustedFingerprints.delete(deviceId)
+    this.trustedSharedSecrets.delete(deviceId)
     this.persistedDevices = this.persistedDevices.filter((row: DeviceInfo) => row.deviceId !== deviceId)
     this.selectedDeviceIds = this.selectedDeviceIds.filter((id: string) => id !== deviceId)
     this.confirmedDeviceLastSeenAt.delete(deviceId)
@@ -774,7 +764,7 @@ struct Index {
       await this.saveTarget()
     }
     await this.padPreferencesService.saveTrust(this.abilityContext(), this.trustedDeviceIds,
-      this.trustedFingerprints)
+      this.trustedFingerprints, this.trustedSharedSecrets)
     await this.transferStore.removeDevice(deviceId)
     this.statusText = statusMessage
   }
@@ -882,6 +872,12 @@ struct Index {
   get discoveryPort(): number {
     const value = Number(this.discoveryPortText)
     return Number.isInteger(value) && value > 0 && value <= 65535 ? value : DISCOVERY_PORT
+  }
+
+  @Computed
+  get castPort(): number {
+    const value = Number(this.castPortText)
+    return Number.isInteger(value) && value > 0 && value <= 65535 ? value : DEFAULT_CAST_PORT
   }
 
   localDeviceName(): string {

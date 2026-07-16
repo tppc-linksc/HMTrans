@@ -13,6 +13,7 @@ extension TransferViewModel {
         discovery?.stop()
         let service = DiscoveryService(
             transferPort: localTCPPort,
+            screenCastPort: localScreenCastPort,
             discoveryPort: localDiscoveryPort,
             deviceId: deviceId,
             identityFingerprint: identityFingerprint,

@@ -11,6 +11,8 @@ final class TransferViewModel {
     private static let discoveryPortKey = "discoveryPort"
     private static let receiverEnabledKey = "receiverEnabled"
     private static let discoveryEnabledKey = "discoveryEnabled"
+    private static let screenCastPortKey = "screenCastPort"
+    private static let screenCastReceiverEnabledKey = "screenCastReceiverEnabled"
     // 仅用于识别旧版本保存目录；拆开旧名称可避免它重新出现在当前品牌文案检索中。
     private static let legacyReceiveDirectoryName = "Pure" + "Send"
 
@@ -18,6 +20,8 @@ final class TransferViewModel {
     var portText: String = UserDefaults.standard.string(forKey: "lastPort") ?? String(defaultPort)
     var localTCPPortText: String = UserDefaults.standard.string(forKey: localTCPPortKey) ?? String(defaultPort)
     var discoveryPortText: String = UserDefaults.standard.string(forKey: discoveryPortKey) ?? String(discoveryPort)
+    var screenCastPortText: String = UserDefaults.standard.string(forKey: screenCastPortKey)
+        ?? String(defaultScreenCastPort)
     var selectedFile: URL?
     var receiveDirectory: String = TransferViewModel.initialReceiveDirectory()
     var status: String = "正在启动接收服务"
@@ -28,6 +32,7 @@ final class TransferViewModel {
     var persistedDevices: [PersistedDevice] = []
     var discoveryEnabled: Bool = UserDefaults.standard.object(forKey: discoveryEnabledKey) as? Bool ?? true
     var receiverEnabled: Bool = UserDefaults.standard.object(forKey: receiverEnabledKey) as? Bool ?? true
+    var screenCastReceiverEnabled: Bool = UserDefaults.standard.object(forKey: screenCastReceiverEnabledKey) as? Bool ?? true
     var pairingCode: String = TransferViewModel.makePairingCode()
     var pairingSeconds: Int = 180
     var isDropTargeted: Bool = false
@@ -40,6 +45,7 @@ final class TransferViewModel {
 
     let receiver = PersistentFileReceiver()
     let store = TransferStore()
+    let screenCast = ScreenCastManager()
     var discovery: DiscoveryService?
     private var didBootstrap = false
     var lastFallbackScan = Date.distantPast
@@ -83,6 +89,7 @@ final class TransferViewModel {
 
     var localTCPPort: UInt16 { UInt16(localTCPPortText) ?? defaultPort }
     var localDiscoveryPort: UInt16 { UInt16(discoveryPortText) ?? discoveryPort }
+    var localScreenCastPort: UInt16 { UInt16(screenCastPortText) ?? defaultScreenCastPort }
 
     var selectedNearbyDevice: DeviceInfo? {
         // 发送目标必须以稳定设备 ID 为准。IP 可能被 DHCP 重新分配，按 IP 反查会把
@@ -130,6 +137,9 @@ final class TransferViewModel {
         自动发现：\(discoveryEnabled ? "已开启" : "已关闭")
         UDP 端口：\(localDiscoveryPort)
         TCP 端口：\(localTCPPort)
+        投屏端口：\(localScreenCastPort)
+        投屏接收：\(screenCastReceiverEnabled ? "已开启" : "已关闭")
+        投屏服务：\(screenCast.state.rawValue)
         当前设备：\(selected)
         发现设备：\(nearbyDevices.count)
         已保存设备：\(persistedDevices.count)
@@ -185,6 +195,7 @@ final class TransferViewModel {
         pairingTask?.cancel()
         persistenceTask?.cancel()
         networkChangeMonitor.stop()
+        screenCast.stopService()
         transferControls.values.forEach { $0.cancel() }
         store.saveImmediately(current: currentTransfers, history: historyTransfers)
     }
@@ -199,11 +210,47 @@ final class TransferViewModel {
         stagingMaintenance.pruneExpired(activeTransferIDs: activeArtifactIDs)
         clearLocalSavedTargetIfNeeded()
         ensureReceiverAndDiscovery()
+        if screenCastReceiverEnabled {
+            screenCast.start(port: localScreenCastPort)
+        }
         networkChangeMonitor.start { [weak self] in
             Task { @MainActor in self?.handleNetworkPathChanged() }
         }
         startDevicePruning()
         startPairingCountdown()
+    }
+
+    func applyScreenCastPort() {
+        guard let port = UInt16(screenCastPortText), port > 0 else {
+            screenCastPortText = String(localScreenCastPort)
+            status = "投屏端口必须是 1 到 65535 之间的整数"
+            return
+        }
+        UserDefaults.standard.set(String(port), forKey: Self.screenCastPortKey)
+        if screenCastReceiverEnabled {
+            screenCast.restart(port: port)
+            status = "投屏服务已在 TCP \(port) 重新启动"
+        } else {
+            status = "投屏端口已保存；开启投屏接收后生效"
+        }
+    }
+
+    func setScreenCastReceiverEnabled(_ enabled: Bool) {
+        screenCastReceiverEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.screenCastReceiverEnabledKey)
+        if enabled {
+            screenCast.start(port: localScreenCastPort)
+            if screenCast.state == .failed {
+                screenCastReceiverEnabled = false
+                UserDefaults.standard.set(false, forKey: Self.screenCastReceiverEnabledKey)
+                status = screenCast.detail
+            } else {
+                status = "投屏接收服务已开启"
+            }
+        } else {
+            screenCast.stopService()
+            status = "投屏接收服务已关闭"
+        }
     }
 
     /// 网络切换后重建发现和接收监听，避免继续绑定旧网卡地址。
@@ -510,6 +557,9 @@ final class TransferViewModel {
         let requesterPort = localTCPPort
         let requesterIP = localIPv4Addresses().first ?? "0.0.0.0"
         let requesterSystemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        // 一次配对只需由发起方输入六位码；随机密钥随后只保存在双方应用私有目录。
+        let pairingSecret = (UUID().uuidString + UUID().uuidString)
+            .replacingOccurrences(of: "-", with: "").lowercased()
         Task.detached { [weak self] in
             do {
                 let response = try requestPairing(
@@ -522,12 +572,17 @@ final class TransferViewModel {
                     requesterIP: requesterIP,
                     requesterPort: requesterPort,
                     code: code,
-                    requesterFingerprint: self?.identityFingerprint
+                    requesterFingerprint: self?.identityFingerprint,
+                    pairingSecret: pairingSecret
                 )
                 await MainActor.run {
                     guard let self else { return }
                     if response.accepted {
-                        TrustedDevicesStore.insert(device.deviceId, fingerprint: fingerprint)
+                        TrustedDevicesStore.insert(
+                            device.deviceId,
+                            fingerprint: fingerprint,
+                            sharedSecret: pairingSecret
+                        )
                         self.markDeviceConfirmed(device.deviceId)
                         self.persist(device: device)
                         self.useDevice(device)
@@ -775,7 +830,8 @@ final class TransferViewModel {
                             )
                             TrustedDevicesStore.insert(
                                 request.requesterDeviceId,
-                                fingerprint: request.requesterFingerprint
+                                fingerprint: request.requesterFingerprint,
+                                sharedSecret: request.pairingSecret
                             )
                             self.deviceLastSeenAt[device.deviceId] = Date()
                             self.markDeviceConfirmed(device.deviceId)

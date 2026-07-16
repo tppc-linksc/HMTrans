@@ -3,6 +3,7 @@ export const PROTOCOL_VERSION: string = '0.2.0'
 export const DEFAULT_PORT: number = 51888
 export const DEFAULT_CHUNK_SIZE: number = 1048576
 export const DISCOVERY_PORT: number = 51889
+export const DEFAULT_CAST_PORT: number = 51890
 
 export interface FileMeta {
   type: 'file_meta'
@@ -44,7 +45,9 @@ export interface PairingRequest {
   requesterIP: string
   requesterPort: number
   code: string
-  requesterFingerprint?: string
+  requesterFingerprint?: string,
+  /** 配对成功后仅保存在双方应用私有配置中的 256 位投屏密钥。 */
+  pairingSecret?: string
 }
 
 export interface PairingResponse {
@@ -88,6 +91,9 @@ export interface DeviceInfo {
   networkName?: string
   identityFingerprint?: string
   acknowledgedDeviceId?: string
+  screenCastPort?: number
+  screenCastProtocolVersion?: string
+  screenCastCapabilities?: Array<string>
 }
 
 export function encodeJsonLine(value: object): string {
@@ -111,7 +117,8 @@ export function createPairingRequest(
   requesterIP: string,
   requesterPort: number,
   code: string,
-  requesterFingerprint?: string
+  requesterFingerprint?: string,
+  pairingSecret?: string
 ): PairingRequest {
   return {
     type: 'pairing_request',
@@ -125,6 +132,7 @@ export function createPairingRequest(
     requesterPort,
     code: code.replace(/\D/g, ''),
     requesterFingerprint,
+    pairingSecret,
   }
 }
 
@@ -208,7 +216,9 @@ export function parseJsonLine<T>(line: string): T {
 }
 
 export function createDeviceInfo(deviceName: string, port: number, deviceId: string, networkName?: string,
-  systemVersion?: string, identityFingerprint?: string, acknowledgedDeviceId?: string): DeviceInfo {
+  systemVersion?: string, identityFingerprint?: string, acknowledgedDeviceId?: string,
+  screenCastPort?: number, screenCastProtocolVersion?: string,
+  screenCastCapabilities?: Array<string>): DeviceInfo {
   return {
     app: APP_NAME,
     version: PROTOCOL_VERSION,
@@ -221,5 +231,8 @@ export function createDeviceInfo(deviceName: string, port: number, deviceId: str
     networkName,
     identityFingerprint,
     acknowledgedDeviceId,
+    screenCastPort,
+    screenCastProtocolVersion,
+    screenCastCapabilities,
   }
 }

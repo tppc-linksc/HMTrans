@@ -10,7 +10,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 GIT_TAG_VERSION="$(git -C "$ROOT_DIR" describe --tags --exact-match 2>/dev/null | sed 's/^v//' || true)"
 GIT_COMMIT_COUNT="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || true)"
-VERSION="${HMT_VERSION:-${GIT_TAG_VERSION:-0.2.1}}"
+VERSION="${HMT_VERSION:-${GIT_TAG_VERSION:-0.3.0}}"
 BUILD_NUMBER="${HMT_BUILD_NUMBER:-${GIT_COMMIT_COUNT:-2}}"
 
 if [ -z "${DEVELOPER_DIR:-}" ]; then
@@ -59,7 +59,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key>
   <string>26.0</string>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>HMTrans needs local network access to discover and transfer files between your Mac and MatePad.</string>
+  <string>用于在同一局域网内发现 MatePad、传输文件并接收已配对设备发起的屏幕投放，数据不会上传云端。</string>
   <key>NSLocationWhenInUseUsageDescription</key>
   <string>用于显示当前连接的 Wi-Fi 网络名称，网络信息只在本机使用。</string>
   <key>CFBundleDocumentTypes</key>

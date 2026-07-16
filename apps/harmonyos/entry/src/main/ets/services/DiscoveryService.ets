@@ -30,6 +30,7 @@ export class DiscoveryService {
     discoveryPort: number,
     networkName: string,
     systemVersion: string,
+    screenCastPort: number,
     callbacks: DiscoveryCallbacks,
     knownTargets: Array<string> = []
   ): Promise<void> {
@@ -54,7 +55,7 @@ export class DiscoveryService {
         // 这样解除配对通知偶发失败时，对端也会在 TTL 内从“已连接”降为未配对设备。
         if (this.shouldAcknowledge(device)) {
           this.sendDirectedBeaconIfNeeded(udp, deviceName, transferPort, networkName, systemVersion,
-            device.deviceId, device.ip)
+            screenCastPort, device.deviceId, device.ip)
         }
       } catch (_) {
       }
@@ -86,7 +87,8 @@ export class DiscoveryService {
 
     const sendBeacon = async () => {
       const info = createDeviceInfo(
-        deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint
+        deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint,
+        undefined, screenCastPort, '0.3.0', ['send-h264']
       )
       for (let index = 0; index < beaconTargets.length; index++) {
         try {
@@ -148,12 +150,13 @@ export class DiscoveryService {
   }
 
   private sendDirectedBeaconIfNeeded(udp: socket.UDPSocket, deviceName: string, transferPort: number,
-    networkName: string, systemVersion: string, deviceId: string, address: string): void {
+    networkName: string, systemVersion: string, screenCastPort: number, deviceId: string, address: string): void {
     const now = Date.now()
     if (now - (this.directedReplyAt.get(deviceId) ?? 0) < 2000) return
     this.directedReplyAt.set(deviceId, now)
     const info = createDeviceInfo(
-      deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint, deviceId
+      deviceName, transferPort, this.deviceId, networkName, systemVersion, this.identityFingerprint, deviceId,
+      screenCastPort, '0.3.0', ['send-h264']
     )
     udp.send({
       data: JSON.stringify(info),

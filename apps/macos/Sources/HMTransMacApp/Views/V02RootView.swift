@@ -50,7 +50,7 @@ struct V02RootView: View {
                     .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("HM互传").font(.system(size: 14, weight: .bold))
-                    Text("v0.2").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                    Text("v0.3").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -170,10 +170,40 @@ private struct MacConnectionPage: View {
                 }
 
                 nearbyDeviceSection
+                if model.screenCast.state != .listening && model.screenCast.state != .stopped {
+                    screenCastStatusCard
+                }
                 MacFileDrop(model: model)
             }
         }
         .onAppear { wifiNameProvider.start() }
+    }
+
+    private var screenCastStatusCard: some View {
+        HStack(spacing: 14) {
+            Image(systemName: model.screenCast.isCasting ? "rectangle.inset.filled.and.person.filled" : "exclamationmark.triangle")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(model.screenCast.state == .failed ? .orange : MacAppTheme.accent)
+                .frame(width: 46, height: 46)
+                .background(MacAppTheme.blueSurface, in: RoundedRectangle(cornerRadius: 13))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.screenCast.isCasting ? "\(model.screenCast.deviceName) 正在投屏" : "投屏服务异常")
+                    .font(.system(size: 14, weight: .bold))
+                Text(model.screenCast.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if model.screenCast.isCasting {
+                Button("打开窗口") { model.screenCast.showPlayer() }
+                Button("画中画") { model.screenCast.showPlayer(pictureInPicture: true) }
+                Button("停止", role: .destructive) { model.screenCast.stopCasting() }
+            } else {
+                Button("重新启动") { model.screenCast.restart(port: model.localScreenCastPort) }
+            }
+        }
+        .padding(16)
+        .glassCard(radius: 17)
     }
 
     private func infoCard(title: String, value: String, detail: String, systemImage: String? = nil) -> some View {
@@ -607,6 +637,8 @@ private struct MacSettingsPage: View {
     @State private var editingPorts = false
     @State private var draftUDPPort = ""
     @State private var draftTCPPort = ""
+    @State private var editingCastPort = false
+    @State private var draftCastPort = ""
     @State private var diagnosticButtonTitle = "复制诊断信息"
     @State private var directoryButtonTitle = "打开"
     var body: some View {
@@ -625,6 +657,14 @@ private struct MacSettingsPage: View {
                     detail: "仅在活动传输期间防止空闲休眠",
                     isOn: Binding(get: { model.backgroundTransferProtection }, set: model.setBackgroundTransferProtection)
                 )
+                settingsToggle(
+                    "投屏接收服务",
+                    detail: "允许已配对的 MatePad 将画面投到本机",
+                    isOn: Binding(
+                        get: { model.screenCastReceiverEnabled },
+                        set: model.setScreenCastReceiverEnabled
+                    )
+                )
                 settingsRow("诊断信息", detail: "不包含文件内容、完整路径或局域网地址") {
                     Button(diagnosticButtonTitle == "复制诊断信息" ? "复制" : diagnosticButtonTitle) {
                         copyDiagnosticInfo()
@@ -642,6 +682,11 @@ private struct MacSettingsPage: View {
                     "网络服务",
                     detail: "UDP \(model.localDiscoveryPort) · TCP \(model.localTCPPort) · \(model.receiverRunning ? "运行正常" : "已关闭")",
                     action: openPortEditor
+                )
+                settingsNavigationRow(
+                    "投屏服务",
+                    detail: "TCP \(model.localScreenCastPort) · \(castServiceDetail)",
+                    action: openCastPortEditor
                 )
             }.padding(.horizontal, 18).glassCard(radius: 18)
             HStack {
@@ -680,12 +725,39 @@ private struct MacSettingsPage: View {
                 }
             )
         }
+        .sheet(isPresented: $editingCastPort) {
+            MacCastPortEditorSheet(
+                port: $draftCastPort,
+                cancel: { editingCastPort = false },
+                save: {
+                    model.screenCastPortText = draftCastPort
+                    model.applyScreenCastPort()
+                    editingCastPort = false
+                }
+            )
+        }
     }
 
     private func openPortEditor() {
         draftUDPPort = model.discoveryPortText
         draftTCPPort = model.localTCPPortText
         editingPorts = true
+    }
+
+    private var castServiceDetail: String {
+        guard model.screenCastReceiverEnabled else { return "已关闭" }
+        return switch model.screenCast.state {
+        case .stopped: "已停止"
+        case .listening: "等待 MatePad"
+        case .connecting: "正在建立画面"
+        case .casting: "正在接收 \(model.screenCast.deviceName)"
+        case .failed: model.screenCast.detail
+        }
+    }
+
+    private func openCastPortEditor() {
+        draftCastPort = model.screenCastPortText
+        editingCastPort = true
     }
 
     private func copyDiagnosticInfo() {
@@ -735,6 +807,43 @@ private struct MacSettingsPage: View {
     }
     private func settingsRow<Trailing: View>(_ title: String, detail: String, @ViewBuilder trailing: () -> Trailing) -> some View {
         HStack { VStack(alignment: .leading, spacing: 4) { Text(title).font(.system(size: 13, weight: .semibold)); Text(detail).font(.system(size: 10)).foregroundStyle(.secondary) }; Spacer(); trailing() }.padding(.vertical, 15).overlay(alignment: .bottom) { Rectangle().fill(MacAppTheme.subtleBorder).frame(height: 1) }
+    }
+}
+
+private struct MacCastPortEditorSheet: View {
+    @Binding var port: String
+    let cancel: () -> Void
+    let save: () -> Void
+
+    private var isValid: Bool {
+        guard let value = UInt16(port), value > 0 else { return false }
+        return true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("修改投屏端口").font(.system(size: 20, weight: .bold))
+                Text("投屏使用独立 TCP 端口，MatePad 与 Mac 端必须保持一致。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("TCP 投屏端口").font(.system(size: 12, weight: .semibold))
+                Spacer()
+                TextField("51890", text: $port)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+            }
+            HStack {
+                Spacer()
+                Button("取消", action: cancel)
+                Button("保存并重启", action: save)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!isValid)
+            }
+        }
+        .padding(24)
+        .frame(width: 430)
     }
 }
 

@@ -8,6 +8,8 @@ export struct PadSettingsPage {
   @Param udpPort: number = 51889
   @Param tcpPort: number = 51888
   @Param networkServiceReady: boolean = false
+  @Param castPort: number = 51890
+  @Param castQuality: string = 'balanced'
   @Param downloadDirectoryReady: boolean = false
   @Param onReceiverChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onDiscoveryChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
@@ -16,6 +18,7 @@ export struct PadSettingsPage {
   @Param onClearStaging: () => void = () => {}
   @Param onCheckDownload: () => void = () => {}
   @Param onEditPorts: () => void = () => {}
+  @Param onEditCast: () => void = () => {}
   @Param onOpenPrivacy: () => void = () => {}
   @Param onCopyDiagnostics: () => void = () => {}
 
@@ -43,6 +46,9 @@ export struct PadSettingsPage {
         this.NavigationRow('网络服务',
           `UDP ${this.udpPort} · TCP ${this.tcpPort} · ${this.networkServiceReady ? '运行正常' : '已关闭'}`,
           this.onEditPorts)
+        Divider().color($r('app.color.divider'))
+        this.NavigationRow('投屏',
+          `${this.qualityLabel()} · TCP ${this.castPort} · 仅 MatePad 投屏到 Mac`, this.onEditCast)
       }.width('100%').padding({ left: 18, right: 18 }).backgroundColor($r('app.color.surface_translucent'))
         .borderRadius(22).border({ width: 1, color: $r('app.color.border_subtle') })
       Row() {
@@ -55,6 +61,12 @@ export struct PadSettingsPage {
       }.width('100%').padding(18).backgroundColor($r('app.color.surface_translucent')).borderRadius(22)
         .border({ width: 1, color: $r('app.color.border_subtle') })
     }.width('100%')
+  }
+
+  private qualityLabel(): string {
+    if (this.castQuality === 'smooth') return '流畅画质'
+    if (this.castQuality === 'quality') return '高清画质'
+    return '均衡画质'
   }
 
   @Builder

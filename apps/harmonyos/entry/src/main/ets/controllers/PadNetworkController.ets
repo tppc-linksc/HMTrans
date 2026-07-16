@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { settings } from '@kit.BasicServicesKit'
 import { wifiManager } from '@kit.ConnectivityKit'
+import { util } from '@kit.ArkTS'
 import {
   DeviceInfo,
   FileMeta,
@@ -146,7 +147,11 @@ export class PadNetworkController {
             request.code.replace(/\D/g, '') === expected &&
             request.requesterFingerprint !== undefined && request.requesterFingerprint.length > 0
           if (accepted) {
-            await this.host.trustDevice(request.requesterDeviceId, request.requesterFingerprint)
+            await this.host.trustDevice(
+              request.requesterDeviceId,
+              request.requesterFingerprint,
+              request.pairingSecret,
+            )
             const pairedDevice: DeviceInfo = {
               app: 'HMTrans',
               version: request.requesterSystemVersion,
@@ -224,7 +229,7 @@ export class PadNetworkController {
     try {
       const knownTargets = this.host.targetIp.length > 0 ? [this.host.targetIp] : []
       await this.host.discoveryService.start(this.host.localDeviceName(), this.host.localTcpPort, this.host.discoveryPort, this.host.networkName,
-        this.host.localSystemVersion(), {
+        this.host.localSystemVersion(), this.host.castPort, {
         onDevice: (device: DeviceInfo) => {
           // 缺少身份指纹的数据包只能视为未验证，不能据此认定已配对设备更换了身份。
           // 只有收到明确且不同的指纹时，才可以撤销本地信任。
@@ -233,6 +238,7 @@ export class PadNetworkController {
             !this.host.identityMatches(device.deviceId, device.identityFingerprint)) {
             this.host.trustedDeviceIds = this.host.trustedDeviceIds.filter((id: string) => id !== device.deviceId)
             this.host.trustedFingerprints.delete(device.deviceId)
+            this.host.trustedSharedSecrets.delete(device.deviceId)
             this.host.selectedDeviceIds = this.host.selectedDeviceIds.filter((id: string) => id !== device.deviceId)
             this.host.statusText = `设备身份已变化，请重新配对：${device.deviceName}`
             this.host.transferStore.recordDiagnostic(
@@ -516,6 +522,9 @@ export class PadNetworkController {
     }
     try {
       this.host.statusText = `正在校验 ${device.deviceName} 的配对码`
+      // 由输入六位码的一端生成共享密钥；对端校验成功后双方同时落盘。
+      const pairingSecret = (util.generateRandomUUID(false) + util.generateRandomUUID(false))
+        .replace(/-/g, '').toLowerCase()
       const request = createPairingRequest(
         this.host.deviceId,
         this.host.localDeviceName(),
@@ -524,14 +533,15 @@ export class PadNetworkController {
         '0.0.0.0',
         this.host.localTcpPort,
         this.host.pairingInput,
-        this.host.identityFingerprint
+        this.host.identityFingerprint,
+        pairingSecret
       )
       const response = await this.host.transferService.requestPairing(device.ip, device.port, request)
       if (!response.accepted) {
         this.host.statusText = '配对失败：配对码错误或已过期'
         return
       }
-      await this.host.trustDevice(device.deviceId, device.identityFingerprint)
+      await this.host.trustDevice(device.deviceId, device.identityFingerprint, pairingSecret)
       this.host.confirmedDeviceLastSeenAt.set(device.deviceId, Date.now())
       await this.host.rememberDevice(device)
       this.host.pairingTarget = undefined

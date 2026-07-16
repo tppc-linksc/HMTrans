@@ -5,5 +5,7 @@
   "main": "",
   "author": "linksc",
   "license": "",
-  "dependencies": {}
+  "dependencies": {
+    "libhmtrans_cast.so": "file:./src/main/cpp/types/libhmtrans_cast"
+  }
 }

@@ -8,9 +8,9 @@ export struct PrivacyConsentOverlay {
     Column() {
       Column({ space: 14 }) {
         Text('隐私政策提示').fontSize(22).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).width('100%')
-        Text('欢迎使用 HM互传。HM互传用于在同一局域网内发现设备并传输文件。为实现设备发现、文件发送、文件接收和历史记录展示，应用会在本地使用设备名称、局域网地址、文件名、文件大小、传输结果和保存位置等信息。')
+        Text('欢迎使用 HM互传。HM互传用于在同一局域网内发现设备、传输文件，并可由你主动把 MatePad 屏幕投放到已配对的 Mac。为实现这些功能，应用会在本地使用设备名称、局域网地址、文件名、文件大小、传输结果、保存位置和投屏运行状态等信息。')
           .fontSize(14).lineHeight(22).fontColor($r('app.color.text_secondary')).width('100%')
-        Text('我们不会将文件或上述信息上传到云端服务器。请阅读并同意隐私政策后继续使用。')
+        Text('投屏每次都需要你主动发起并确认系统屏幕采集授权，画面只在局域网内加密传给已配对 Mac，并仅在内存中显示。我们不会将文件、画面或上述信息上传到云端服务器。请阅读并同意隐私政策后继续使用。')
           .fontSize(14).lineHeight(22).fontColor($r('app.color.text_secondary')).width('100%')
         Row() {
           Text('查看').fontSize(14).fontColor($r('app.color.text_secondary'))
@@ -98,5 +98,56 @@ export struct PortEditorOverlay {
         .onChange((next: string) => onChange(next.replace(/\D/g, '')))
         .accessibilityText(label)
     }.alignItems(HorizontalAlign.Start).width('100%')
+  }
+}
+
+/** 投屏设置只保存独立的接收端口和画质档位，不影响文件传输端口。 */
+@ComponentV2
+export struct CastSettingsOverlay {
+  @Param port: string = '51890'
+  @Param quality: string = 'balanced'
+  @Param onPortChanged: (value: string) => void = (_value: string) => {}
+  @Param onQualityChanged: (value: string) => void = (_value: string) => {}
+  @Param onCancel: () => void = () => {}
+  @Param onSave: () => void = () => {}
+
+  build() {
+    Column() {
+      Column({ space: 16 }) {
+        Text('投屏设置').fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        Column({ space: 6 }) {
+          Text('TCP 投屏端口').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
+          TextInput({ text: this.port, placeholder: '51890' }).type(InputType.Number).maxLength(5).height(46)
+            .onChange((value: string) => this.onPortChanged(value.replace(/\D/g, '')))
+        }.alignItems(HorizontalAlign.Start).width('100%')
+        Column({ space: 8 }) {
+          Text('投屏画质').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
+          Row({ space: 8 }) {
+            this.QualityButton('流畅', 'smooth')
+            this.QualityButton('均衡', 'balanced')
+            this.QualityButton('高清', 'quality')
+          }.width('100%')
+        }.alignItems(HorizontalAlign.Start).width('100%')
+        Text('投屏使用独立 TCP 端口；Mac 与 MatePad 端需要保持一致。高清模式会占用更多局域网带宽。')
+          .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary')).width('100%')
+        Row({ space: 12 }) {
+          Button('取消').layoutWeight(1).onClick(this.onCancel)
+          Button('保存').layoutWeight(1).fontColor('#FFFFFF').backgroundColor($r('app.color.accent'))
+            .enabled(this.port.length > 0).onClick(this.onSave)
+        }.width('100%')
+      }.width('80%').constraintSize({ maxWidth: 480 }).padding(24)
+        .backgroundColor($r('app.color.surface_primary')).borderRadius(24)
+        .shadow({ radius: 18, color: '#18283B29', offsetY: 8 })
+    }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim')).zIndex(32)
+  }
+
+  @Builder
+  private QualityButton(title: string, value: string) {
+    Button(title).layoutWeight(1).height(38).fontSize(13)
+      .fontColor(this.quality === value ? '#FFFFFF' : $r('app.color.text_primary'))
+      .backgroundColor(this.quality === value ? $r('app.color.accent') : $r('app.color.control_track'))
+      .borderRadius(10).onClick(() => this.onQualityChanged(value))
+      .accessibilityDescription(this.quality === value ? '当前已选择' : '点按选择')
   }
 }

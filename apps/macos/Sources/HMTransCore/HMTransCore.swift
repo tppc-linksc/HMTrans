@@ -24,7 +24,8 @@ public func requestPairing(
     requesterIP: String,
     requesterPort: UInt16,
     code: String,
-    requesterFingerprint: String? = nil
+    requesterFingerprint: String? = nil,
+    pairingSecret: String? = nil
 ) throws -> PairingResponse {
     let connection = try BlockingNetworkConnection.connect(host: host, port: port)
     defer { connection.cancel() }
@@ -37,7 +38,8 @@ public func requestPairing(
             requesterIP: requesterIP,
             requesterPort: requesterPort,
             code: code.filter(\.isNumber),
-            requesterFingerprint: requesterFingerprint
+            requesterFingerprint: requesterFingerprint,
+            pairingSecret: pairingSecret
         ),
         connection: connection
     )

@@ -132,17 +132,19 @@ public struct PairingRequest: Codable, Sendable {
     public let requesterPort: UInt16
     public let code: String
     public let requesterFingerprint: String?
+    public let pairingSecret: String?
 
     public init(
         type: String = "pairing_request", app: String = "HMTrans", version: String = hmTransProtocolVersion,
         requesterDeviceId: String, requesterName: String, requesterPlatform: String,
         requesterSystemVersion: String, requesterIP: String, requesterPort: UInt16, code: String,
-        requesterFingerprint: String? = nil
+        requesterFingerprint: String? = nil, pairingSecret: String? = nil
     ) {
         self.type = type; self.app = app; self.version = version; self.requesterDeviceId = requesterDeviceId
         self.requesterName = requesterName; self.requesterPlatform = requesterPlatform
         self.requesterSystemVersion = requesterSystemVersion; self.requesterIP = requesterIP
         self.requesterPort = requesterPort; self.code = code; self.requesterFingerprint = requesterFingerprint
+        self.pairingSecret = pairingSecret
     }
 }
 

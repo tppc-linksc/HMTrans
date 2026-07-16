@@ -18,6 +18,7 @@ enum PairingConfigurationStore {
         var fingerprint: String
         var trustedDeviceIDs: Set<String>
         var trustedFingerprints: [String: String]
+        var sharedSecrets: [String: String]?
     }
 
     /** 可变缓存只在同一个锁内访问；封装后避免把共享可变状态暴露为全局变量。 */
@@ -45,7 +46,7 @@ enum PairingConfigurationStore {
         return storage.lock.withLock { loadLocked().trustedDeviceIDs.contains(deviceID) }
     }
 
-    static func insert(_ deviceID: String?, fingerprint: String?) {
+    static func insert(_ deviceID: String?, fingerprint: String?, sharedSecret: String? = nil) {
         guard let deviceID, !deviceID.isEmpty else { return }
         storage.lock.withLock {
             var configuration = loadLocked()
@@ -53,8 +54,18 @@ enum PairingConfigurationStore {
             if let fingerprint, !fingerprint.isEmpty {
                 configuration.trustedFingerprints[deviceID] = fingerprint
             }
+            if let sharedSecret, sharedSecret.count == 64 {
+                var secrets = configuration.sharedSecrets ?? [:]
+                secrets[deviceID] = sharedSecret.lowercased()
+                configuration.sharedSecrets = secrets
+            }
             saveLocked(configuration)
         }
+    }
+
+    static func sharedSecret(for deviceID: String?) -> String? {
+        guard let deviceID, !deviceID.isEmpty else { return nil }
+        return storage.lock.withLock { loadLocked().sharedSecrets?[deviceID] }
     }
 
     static func matches(_ deviceID: String?, fingerprint: String?) -> Bool {
@@ -74,6 +85,7 @@ enum PairingConfigurationStore {
             var configuration = loadLocked()
             configuration.trustedDeviceIDs.remove(deviceID)
             configuration.trustedFingerprints.removeValue(forKey: deviceID)
+            configuration.sharedSecrets?.removeValue(forKey: deviceID)
             saveLocked(configuration)
         }
     }
@@ -99,7 +111,8 @@ enum PairingConfigurationStore {
             fingerprint: nonEmpty(legacyFingerprint)
                 ?? UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
             trustedDeviceIDs: trustedIDs,
-            trustedFingerprints: trustedFingerprints
+            trustedFingerprints: trustedFingerprints,
+            sharedSecrets: nil
         )
         if saveLocked(configuration) {
             removeLegacyValues()

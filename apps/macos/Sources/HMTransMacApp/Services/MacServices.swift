@@ -9,8 +9,12 @@ enum TrustedDevicesStore {
         PairingConfigurationStore.contains(deviceId)
     }
 
-    static func insert(_ deviceId: String?, fingerprint: String?) {
-        PairingConfigurationStore.insert(deviceId, fingerprint: fingerprint)
+    static func insert(_ deviceId: String?, fingerprint: String?, sharedSecret: String? = nil) {
+        PairingConfigurationStore.insert(deviceId, fingerprint: fingerprint, sharedSecret: sharedSecret)
+    }
+
+    static func sharedSecret(for deviceId: String?) -> String? {
+        PairingConfigurationStore.sharedSecret(for: deviceId)
     }
 
     static func matches(_ deviceId: String?, fingerprint: String?) -> Bool {

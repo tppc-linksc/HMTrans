@@ -16,6 +16,7 @@ export interface PadNetworkRuntimeHost {
   identityFingerprint: string
   receiveDirectory: string
   trustedFingerprints: Map<string, string>
+  trustedSharedSecrets: Map<string, string>
   deviceLastSeenAt: Map<string, number>
   confirmedDeviceLastSeenAt: Map<string, number>
   activeTransferDeviceIds: Map<string, string>
@@ -24,6 +25,7 @@ export interface PadNetworkRuntimeHost {
   persistenceTimer?: number
   localTcpPort: number
   discoveryPort: number
+  castPort: number
 }
 
 /** 网络与配对流程会直接更新的响应式页面状态。 */
@@ -55,7 +57,7 @@ export interface PadNetworkActionHost {
   localSystemVersion(): string
   runOnUi(task: () => void): void
   updateBackgroundTransferActivity(active: boolean): void
-  trustDevice(deviceId?: string, fingerprint?: string): Promise<void>
+  trustDevice(deviceId?: string, fingerprint?: string, sharedSecret?: string): Promise<void>
   forgetTrustedDevice(deviceId: string, statusMessage: string): Promise<void>
   rememberDevice(device: DeviceInfo): Promise<void>
   isTrusted(deviceId?: string): boolean

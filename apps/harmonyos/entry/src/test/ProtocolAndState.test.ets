@@ -11,6 +11,15 @@ import { TransferStateService } from '../main/ets/services/TransferStateService'
 import { validateZipEntryName } from '../main/ets/services/ZipSafetyService'
 import { ControlLineInbox } from '../main/ets/services/ControlLineInbox'
 import { stringToArrayBuffer } from '../main/ets/common/Bytes'
+import {
+  buildCastHeader,
+  castPacket,
+  CastMessageType,
+  CastPacketFlags,
+  concatBuffers,
+  parseCastHeader,
+  ScreenCastCipher,
+} from '../main/ets/common/ScreenCastProtocol'
 
 export default function protocolAndStateTest(): void {
   describe('HMTrans protocol and state', () => {
@@ -70,6 +79,33 @@ export default function protocolAndStateTest(): void {
       const result = await inbox.nextLine()
       expect(decision.indexOf('receive_decision') >= 0).assertTrue()
       expect(result.indexOf('transfer_success') >= 0).assertTrue()
+    })
+
+    it('encodes HMCS header fields with big-endian lengths', 0, () => {
+      const payload = stringToArrayBuffer('frame')
+      const packet = castPacket(CastMessageType.VIDEO_FRAME,
+        CastPacketFlags.ENCRYPTED | CastPacketFlags.KEY_FRAME, payload, 42, 9000)
+      const header = parseCastHeader(packet.slice(0, 32))
+      expect(header.type).assertEqual(CastMessageType.VIDEO_FRAME)
+      expect(header.flags).assertEqual(CastPacketFlags.ENCRYPTED | CastPacketFlags.KEY_FRAME)
+      expect(header.sequence).assertEqual(42)
+      expect(header.ptsUs).assertEqual(9000)
+      expect(header.payloadLength).assertEqual(payload.byteLength)
+    })
+
+    it('encrypts cast frames and rejects modified authentication data', 0, async () => {
+      const secret = '11'.repeat(32)
+      const cipher = new ScreenCastCipher(secret)
+      const plain = stringToArrayBuffer('screen-frame')
+      const header = buildCastHeader(CastMessageType.VIDEO_FRAME, CastPacketFlags.ENCRYPTED,
+        plain.byteLength + 28, 1, 100)
+      const sealed = await cipher.encrypt(plain, header)
+      const opened = await cipher.decrypt(sealed, header)
+      expect(new Uint8Array(opened).length).assertEqual(new Uint8Array(plain).length)
+      const modifiedHeader = concatBuffers([header.slice(0, 31), new Uint8Array([1]).buffer])
+      let rejected = false
+      try { await cipher.decrypt(sealed, modifiedHeader) } catch (_) { rejected = true }
+      expect(rejected).assertTrue()
     })
   })
 }

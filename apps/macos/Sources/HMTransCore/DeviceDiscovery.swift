@@ -17,6 +17,9 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
     public let networkName: String?
     public let identityFingerprint: String?
     public let acknowledgedDeviceId: String?
+    public let screenCastPort: UInt16?
+    public let screenCastProtocolVersion: String?
+    public let screenCastCapabilities: [String]?
 
     public init(
         app: String = "HMTrans",
@@ -29,7 +32,10 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
         systemVersion: String? = nil,
         networkName: String? = nil,
         identityFingerprint: String? = nil,
-        acknowledgedDeviceId: String? = nil
+        acknowledgedDeviceId: String? = nil,
+        screenCastPort: UInt16? = nil,
+        screenCastProtocolVersion: String? = nil,
+        screenCastCapabilities: [String]? = nil
     ) {
         self.app = app
         self.version = version
@@ -42,6 +48,9 @@ public struct DeviceInfo: Codable, Hashable, Identifiable, Sendable {
         self.networkName = networkName
         self.identityFingerprint = identityFingerprint
         self.acknowledgedDeviceId = acknowledgedDeviceId
+        self.screenCastPort = screenCastPort
+        self.screenCastProtocolVersion = screenCastProtocolVersion
+        self.screenCastCapabilities = screenCastCapabilities
     }
 }
 
@@ -56,6 +65,7 @@ public final class DiscoveryService: @unchecked Sendable {
     private let deviceName: String
     private let platform: String
     private let transferPort: UInt16
+    private let screenCastPort: UInt16
     private let discoveryPort: UInt16
     private let identityFingerprint: String
     private let shouldAcknowledge: @Sendable (DeviceInfo) -> Bool
@@ -64,6 +74,7 @@ public final class DiscoveryService: @unchecked Sendable {
         deviceName: String = Host.current().localizedName ?? "Mac",
         platform: String = "macOS",
         transferPort: UInt16 = defaultPort,
+        screenCastPort: UInt16 = defaultScreenCastPort,
         discoveryPort: UInt16 = 51_889,
         deviceId: String,
         identityFingerprint: String = "",
@@ -72,6 +83,7 @@ public final class DiscoveryService: @unchecked Sendable {
         self.deviceName = deviceName
         self.platform = platform
         self.transferPort = transferPort
+        self.screenCastPort = screenCastPort
         self.discoveryPort = discoveryPort
         self.selfDeviceId = deviceId
         self.identityFingerprint = identityFingerprint
@@ -122,7 +134,10 @@ public final class DiscoveryService: @unchecked Sendable {
             port: transferPort,
             deviceId: selfDeviceId,
             systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            identityFingerprint: identityFingerprint
+            identityFingerprint: identityFingerprint,
+            screenCastPort: screenCastPort,
+            screenCastProtocolVersion: screenCastProtocolVersion,
+            screenCastCapabilities: ["receive-h264"]
         )
         guard let data = try? JSONEncoder().encode(info) else { return }
         try? sendDatagram(fd: fd, data: data, address: address, port: discoveryPort)
@@ -144,7 +159,10 @@ public final class DiscoveryService: @unchecked Sendable {
                     port: transferPort,
                     deviceId: selfDeviceId,
                     systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-                    identityFingerprint: identityFingerprint
+                    identityFingerprint: identityFingerprint,
+                    screenCastPort: screenCastPort,
+                    screenCastProtocolVersion: screenCastProtocolVersion,
+                    screenCastCapabilities: ["receive-h264"]
                 )
                 let data = try JSONEncoder().encode(info)
                 try sendBroadcasts(fd: fd, data: data, port: discoveryPort)
@@ -188,7 +206,10 @@ public final class DiscoveryService: @unchecked Sendable {
                         systemVersion: device.systemVersion,
                         networkName: device.networkName,
                         identityFingerprint: device.identityFingerprint,
-                        acknowledgedDeviceId: device.acknowledgedDeviceId
+                        acknowledgedDeviceId: device.acknowledgedDeviceId,
+                        screenCastPort: device.screenCastPort,
+                        screenCastProtocolVersion: device.screenCastProtocolVersion,
+                        screenCastCapabilities: device.screenCastCapabilities
                     )
                 }
                 onDevice(device)
@@ -217,7 +238,10 @@ public final class DiscoveryService: @unchecked Sendable {
             deviceId: selfDeviceId,
             systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             identityFingerprint: identityFingerprint,
-            acknowledgedDeviceId: deviceId
+            acknowledgedDeviceId: deviceId,
+            screenCastPort: screenCastPort,
+            screenCastProtocolVersion: screenCastProtocolVersion,
+            screenCastCapabilities: ["receive-h264"]
         )
         guard let data = try? JSONEncoder().encode(info) else { return }
         do {

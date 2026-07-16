@@ -29,8 +29,12 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
+                .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreLocation"),
-                .linkedFramework("CoreWLAN")
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreWLAN"),
+                .linkedFramework("Network"),
+                .linkedFramework("QuartzCore")
             ]
         ),
         .testTarget(

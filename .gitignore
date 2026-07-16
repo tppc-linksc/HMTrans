@@ -21,6 +21,9 @@ apps/harmonyos/hvigor/.hvigor/
 apps/harmonyos/entry/build/
 apps/harmonyos/entry/.preview/
 apps/harmonyos/entry/.test/
+apps/harmonyos/entry/.cxx/
+apps/harmonyos/.clangd
+apps/harmonyos/.clang-tidy
 apps/harmonyos/local.properties
 *.hap
 *.app

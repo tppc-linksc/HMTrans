@@ -1,0 +1,6 @@
+{
+  "name": "libhmtrans_cast.so",
+  "types": "./Index.d.ts",
+  "version": "0.3.0",
+  "description": "HMTrans HarmonyOS 原生屏幕采集桥接模块"
+}

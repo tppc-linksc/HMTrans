@@ -20,6 +20,12 @@ export struct PadConnectionPage {
   @Param onReconnectDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
   @Param onToggleTarget: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
   @Param onForgetDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
+  @Param castState: string = 'idle'
+  @Param castDeviceId: string = ''
+  @Param castDetail: string = ''
+  @Param castStatistics: string = ''
+  @Param onStartCast: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
+  @Param onStopCast: () => void = () => {}
   @Param selectedDeviceName: string = ''
   @Param onSelectFile: () => void = () => {}
   @Param onFilesDropped: (event: DragEvent) => void = (_event: DragEvent) => {}
@@ -33,9 +39,30 @@ export struct PadConnectionPage {
       }
       .width('100%')
       this.NearbyDevicesCard()
+      if (this.castState !== 'idle') {
+        this.CastStatusCard()
+      }
       this.FileSendSection()
     }
     .width('100%')
+  }
+
+  @Builder
+  private CastStatusCard() {
+    Row({ space: 12 }) {
+      Column({ space: 4 }) {
+        Text(this.castState === 'casting' ? '正在投屏' : this.castState === 'failed' ? '投屏异常' : '正在建立投屏')
+          .fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        Text(this.castDetail).fontSize(11).fontColor($r('app.color.text_secondary')).maxLines(2)
+        if (this.castStatistics.length > 0) {
+          Text(this.castStatistics).fontSize(10).fontColor($r('app.color.accent'))
+        }
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Button(this.castState === 'failed' ? '关闭' : '停止投屏')
+        .fontSize(12).fontColor($r('app.color.danger')).backgroundColor($r('app.color.danger_surface'))
+        .borderRadius(14).onClick(this.onStopCast)
+    }.width('100%').padding(16).backgroundColor($r('app.color.surface_translucent'))
+      .borderRadius(18).border({ width: 1, color: $r('app.color.border_subtle') })
   }
 
   @Builder
@@ -148,10 +175,23 @@ export struct PadConnectionPage {
           .fontSize(10).fontColor(state === 'alive' ? $r('app.color.success') :
             state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary')).maxLines(1)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      Text(state === 'alive' && this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? '✓' : state === 'alive' ? '●' : '›')
-        .fontSize(state === 'alive' ? 16 : 22)
-        .fontColor(state === 'alive' ? $r('app.color.success') :
-          state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary'))
+      if (state === 'alive' && this.canStartScreenCast(device)) {
+        Button(this.castDeviceId === device.deviceId && this.castState !== 'idle' ? '停止' : '投屏')
+          .fontSize(10).height(28).padding({ left: 9, right: 9 })
+          .fontColor(this.castDeviceId === device.deviceId && this.castState !== 'idle' ?
+            $r('app.color.danger') : $r('app.color.accent'))
+          .backgroundColor(this.castDeviceId === device.deviceId && this.castState !== 'idle' ?
+            $r('app.color.danger_surface') : $r('app.color.accent_surface'))
+          .borderRadius(12).onClick(() => {
+            if (this.castDeviceId === device.deviceId && this.castState !== 'idle') this.onStopCast()
+            else this.onStartCast(device)
+          })
+      } else {
+        Text(state === 'alive' && this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? '✓' : state === 'alive' ? '●' : '›')
+          .fontSize(state === 'alive' ? 16 : 22)
+          .fontColor(state === 'alive' ? $r('app.color.success') :
+            state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary'))
+      }
     }
     .width(this.compactLayout ? '100%' : 250).height(66).padding({ left: 11, right: 11 })
     .margin({ right: 10, bottom: 10 })
@@ -190,5 +230,12 @@ export struct PadConnectionPage {
     const release = version.substring(0, buildStart).trim()
     const build = version.substring(buildStart + 7, version.lastIndexOf(')')).trim()
     return `macOS ${release} Beta版（${build}）`
+  }
+
+  /** 只有明确广播 v0.3 H.264 接收能力的 Mac 才显示投屏入口。 */
+  private canStartScreenCast(device: DeviceInfo): boolean {
+    const capabilities = device.screenCastCapabilities ?? []
+    return device.platform === 'macOS' && device.screenCastProtocolVersion === '0.3.0' &&
+      capabilities.indexOf('receive-h264') >= 0 && (device.screenCastPort ?? 0) > 0
   }
 }
