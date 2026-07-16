@@ -532,7 +532,8 @@ export class PadNetworkController {
       )
       const response = await this.host.transferService.requestPairing(device.ip, device.port, request)
       if (!response.accepted) {
-        this.host.statusText = '配对失败：配对码错误或已过期'
+        this.host.statusText = response.reason === 'protocol_incompatible' ?
+          '配对失败：双端协议版本不一致，请更新到同一版本' : '配对失败：配对码错误或已过期'
         return
       }
       await this.host.trustDevice(device.deviceId, device.identityFingerprint)
@@ -543,8 +544,9 @@ export class PadNetworkController {
       this.host.statusText = `配对成功，正在确认连接：${device.deviceName}`
       this.host.showToast(`已与 ${device.deviceName} 完成配对`)
     } catch (err) {
-      this.host.statusText = `配对失败：${errorText(err)}`
-      this.host.showToast('配对失败，请确认六位码仍在有效期内')
+      const detail = errorText(err)
+      this.host.statusText = `配对失败：无法连接对方接收服务（${detail}）`
+      this.host.showToast('配对失败，请确认 Mac 接收服务正在运行')
     }
   }
 

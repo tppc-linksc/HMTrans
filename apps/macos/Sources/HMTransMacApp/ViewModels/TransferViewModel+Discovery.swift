@@ -88,7 +88,8 @@ extension TransferViewModel {
         let detail = "\(error)"
         if detail.contains("监听失败") {
             receiverRunning = false
-            status = "接收服务中断，自动发现仍保持运行：\(detail)"
+            status = "接收服务中断，正在自动恢复：\(detail)"
+            scheduleReceiverRecovery()
             return
         }
         status = "接收错误：\(detail)"

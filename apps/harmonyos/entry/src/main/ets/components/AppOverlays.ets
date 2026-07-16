@@ -64,6 +64,36 @@ export struct PairingOverlay {
   }
 }
 
+/** 商店签名无法读取系统级自定义设备名时，允许用户设置仅用于局域网广播的名称。 */
+@ComponentV2
+export struct DeviceNameEditorOverlay {
+  @Param name: string = ''
+  @Param onNameChanged: (value: string) => void = (_value: string) => {}
+  @Param onCancel: () => void = () => {}
+  @Param onSave: () => void = () => {}
+
+  build() {
+    Column() {
+      Column({ space: 16 }) {
+        Text('修改本机显示名称').fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        Text('该名称只用于同一局域网内的 HM互传设备发现，不会修改系统设备名称。')
+          .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
+        TextInput({ text: this.name, placeholder: '例如：Linksc的MatePad Pro' }).maxLength(40).height(48)
+          .onChange((value: string) => this.onNameChanged(value))
+          .accessibilityText('本机显示名称')
+        Row({ space: 12 }) {
+          Button('取消').layoutWeight(1).height(44).fontColor($r('app.color.text_primary'))
+            .backgroundColor(Color.Transparent).border({ width: 1, color: $r('app.color.divider') })
+            .borderRadius(12).onClick(this.onCancel)
+          Button('保存').layoutWeight(1).height(44).enabled(this.name.trim().length > 0).fontColor('#FFFFFF')
+            .backgroundColor($r('app.color.accent_strong')).borderRadius(12).onClick(this.onSave)
+        }.width('100%')
+      }.width('80%').constraintSize({ maxWidth: 480 }).padding(24).backgroundColor($r('app.color.surface_primary'))
+        .borderRadius(24).shadow({ radius: 20, color: '#18283B29', offsetY: 8 })
+    }.width('100%').height('100%').justifyContent(FlexAlign.Center).backgroundColor($r('app.color.scrim')).zIndex(31)
+  }
+}
+
 /** 原子修改两个端口，确保两类监听始终同时重启。 */
 @ComponentV2
 export struct PortEditorOverlay {

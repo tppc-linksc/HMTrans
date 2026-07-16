@@ -58,6 +58,7 @@ final class TransferViewModel {
     private var openFilesObserver: NSObjectProtocol?
     var pruneTask: Task<Void, Never>?
     private var pairingTask: Task<Void, Never>?
+    var receiverRestartTask: Task<Void, Never>?
     var persistenceTask: Task<Void, Never>?
     let deviceId: String
     let deviceName: String
@@ -183,6 +184,7 @@ final class TransferViewModel {
         }
         pruneTask?.cancel()
         pairingTask?.cancel()
+        receiverRestartTask?.cancel()
         persistenceTask?.cancel()
         networkChangeMonitor.stop()
         transferControls.values.forEach { $0.cancel() }
@@ -212,8 +214,35 @@ final class TransferViewModel {
         receiver.stop()
         receiverRunning = false
         stopDiscovery()
-        ensureReceiverAndDiscovery()
-        status = "网络已变化，正在重新发现设备"
+        if receiverEnabled {
+            scheduleReceiverRecovery(reason: "网络已变化，接收服务已恢复")
+        }
+        if discoveryEnabled {
+            startDiscovery()
+            startFallbackNetworkScan(force: true)
+        }
+        status = "网络已变化，正在恢复连接服务"
+    }
+
+    /// NWListener 取消后端口释放是异步的。延迟重启可避免旧监听尚未退出时立刻绑定同一端口。
+    func scheduleReceiverRecovery(
+        after delay: Duration = .milliseconds(750),
+        reason: String = "接收服务已自动恢复"
+    ) {
+        guard receiverEnabled else { return }
+        receiverRestartTask?.cancel()
+        receiverRestartTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self, self.receiverEnabled else { return }
+            self.receiverRestartTask = nil
+            if self.startReceiver() {
+                self.status = reason
+            }
+        }
     }
 
     func regeneratePairingCode() {
@@ -718,6 +747,16 @@ final class TransferViewModel {
             status = "设备信任已失效，需要重新配对"
             return
         }
+        if !receiverRunning {
+            scheduleReceiverRecovery(after: .milliseconds(100))
+        }
+        if let fresh = nearbyDevices.first(where: { device.id == $0.deviceId || device.address == $0.ip }),
+           !isBidirectionallyConnected(fresh) {
+            forgetDeviceLocally(deviceID: device.id, deviceName: device.name, address: device.address)
+            status = "双方配对状态不一致，请重新输入 \(fresh.deviceName) 的配对码"
+            selectDevice(fresh)
+            return
+        }
         host = device.address
         portText = String(device.port)
         rememberTarget()
@@ -789,7 +828,13 @@ final class TransferViewModel {
         receiver.stop()
         receiverRunning = false
         stopDiscovery()
-        ensureReceiverAndDiscovery()
+        if receiverEnabled {
+            scheduleReceiverRecovery(reason: "TCP \(tcp) 接收服务已恢复")
+        }
+        if discoveryEnabled {
+            startDiscovery()
+            startFallbackNetworkScan(force: true)
+        }
         status = "正在应用 UDP \(udp) · TCP \(tcp)"
     }
 
@@ -810,6 +855,7 @@ final class TransferViewModel {
 
     @discardableResult
     private func startReceiver() -> Bool {
+        if receiverRunning { return true }
         receiver.stop()
         do {
             try receiver.start(
