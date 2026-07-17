@@ -13,5 +13,8 @@ target_link_libraries(hmtrans_cast PUBLIC
     libace_napi.z.so
     libhilog_ndk.z.so
     libnative_avscreen_capture.so
+    libnative_media_codecbase.so
     libnative_media_core.so
+    libnative_media_venc.so
+    libnative_window.so
 )

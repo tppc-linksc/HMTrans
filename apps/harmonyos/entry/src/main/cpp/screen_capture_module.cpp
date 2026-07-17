@@ -11,7 +11,11 @@
 #include <hilog/log.h>
 #include <napi/native_api.h>
 #include <multimedia/player_framework/native_avbuffer.h>
+#include <multimedia/player_framework/native_avcodec_base.h>
+#include <multimedia/player_framework/native_avcodec_videoencoder.h>
+#include <multimedia/player_framework/native_avformat.h>
 #include <multimedia/player_framework/native_avscreen_capture.h>
+#include <native_window/external_window.h>
 
 namespace {
 
@@ -31,6 +35,9 @@ struct StateEvent {
 
 std::mutex gCaptureMutex;
 OH_AVScreenCapture *gCapture = nullptr;
+OH_AVCodec *gEncoder = nullptr;
+OHNativeWindow *gEncoderSurface = nullptr;
+bool gEncoderStarted = false;
 std::atomic_bool gCapturing {false};
 napi_threadsafe_function gFrameCallback = nullptr;
 napi_threadsafe_function gStateCallback = nullptr;
@@ -92,6 +99,8 @@ void PublishState(int32_t state, const std::string &message)
 
 void OnCaptureState(OH_AVScreenCapture *, OH_AVScreenCaptureStateCode state, void *)
 {
+    OH_LOG_Print(LOG_APP, LOG_INFO, CAST_LOG_DOMAIN, CAST_LOG_TAG,
+        "capture state changed: %{public}d", static_cast<int32_t>(state));
     switch (state) {
     case OH_SCREEN_CAPTURE_STATE_CANCELED:
     case OH_SCREEN_CAPTURE_STATE_STOPPED_BY_USER:
@@ -111,48 +120,79 @@ void OnCaptureState(OH_AVScreenCapture *, OH_AVScreenCaptureStateCode state, voi
 
 void OnCaptureError(OH_AVScreenCapture *, int32_t errorCode, void *)
 {
+    OH_LOG_Print(LOG_APP, LOG_ERROR, CAST_LOG_DOMAIN, CAST_LOG_TAG,
+        "screen capture error: %{public}d", errorCode);
     gCapturing.store(false);
     PublishState(errorCode == 0 ? -1 : -std::abs(errorCode), "screen_capture_error");
 }
 
-void OnCaptureBuffer(OH_AVScreenCapture *, OH_AVBuffer *buffer,
-    OH_AVScreenCaptureBufferType bufferType, int64_t timestamp, void *)
+void OnEncoderError(OH_AVCodec *, int32_t errorCode, void *)
 {
-    if (!gCapturing.load() || bufferType != OH_SCREEN_CAPTURE_BUFFERTYPE_VIDEO ||
-        buffer == nullptr || gFrameCallback == nullptr) {
+    OH_LOG_Print(LOG_APP, LOG_ERROR, CAST_LOG_DOMAIN, CAST_LOG_TAG,
+        "video encoder error: %{public}d", errorCode);
+    gCapturing.store(false);
+    PublishState(errorCode == 0 ? -1 : -std::abs(errorCode), "video_encoder_error");
+}
+
+void OnEncoderFormatChanged(OH_AVCodec *, OH_AVFormat *, void *)
+{
+    OH_LOG_PrintMsg(LOG_APP, LOG_INFO, CAST_LOG_DOMAIN, CAST_LOG_TAG, "video encoder format changed");
+}
+
+void OnEncoderNeedsInput(OH_AVCodec *, uint32_t, OH_AVBuffer *, void *)
+{
+    // Surface 输入模式由 AVScreenCapture 直接向编码器 Surface 写入，不使用输入 Buffer 回调。
+}
+
+void OnEncoderOutput(OH_AVCodec *codec, uint32_t index, OH_AVBuffer *buffer, void *)
+{
+    if (buffer == nullptr) {
         return;
     }
 
     OH_AVCodecBufferAttr attr {};
-    if (OH_AVBuffer_GetBufferAttr(buffer, &attr) != AV_ERR_OK || attr.size <= 0 || attr.offset < 0) {
-        return;
-    }
-    uint8_t *address = OH_AVBuffer_GetAddr(buffer);
-    int32_t capacity = OH_AVBuffer_GetCapacity(buffer);
-    if (address == nullptr || capacity <= 0 || attr.offset > capacity || attr.size > capacity - attr.offset) {
+    if (OH_AVBuffer_GetBufferAttr(buffer, &attr) != AV_ERR_OK) {
+        OH_VideoEncoder_FreeOutputBuffer(codec, index);
         return;
     }
 
-    auto *event = new FrameEvent;
-    event->bytes.assign(address + attr.offset, address + attr.offset + attr.size);
-    event->ptsUs = attr.pts > 0 ? attr.pts : timestamp;
-    event->flags = attr.flags;
-    // 队列上限为四帧；JS 侧发送跟不上时直接丢弃，避免投屏拖垮文件传输和系统内存。
-    if (napi_call_threadsafe_function(gFrameCallback, event, napi_tsfn_nonblocking) != napi_ok) {
-        delete event;
+    if (gCapturing.load() && gFrameCallback != nullptr && attr.size > 0 && attr.offset >= 0) {
+        uint8_t *address = OH_AVBuffer_GetAddr(buffer);
+        int32_t capacity = OH_AVBuffer_GetCapacity(buffer);
+        if (address != nullptr && capacity > 0 && attr.offset <= capacity && attr.size <= capacity - attr.offset) {
+            auto *event = new FrameEvent;
+            event->bytes.assign(address + attr.offset, address + attr.offset + attr.size);
+            event->ptsUs = std::max<int64_t>(0, attr.pts);
+            event->flags = attr.flags;
+            // 线程安全函数的队列上限为四帧；网络侧跟不上时丢帧而不阻塞编码器。
+            if (napi_call_threadsafe_function(gFrameCallback, event, napi_tsfn_nonblocking) != napi_ok) {
+                delete event;
+            }
+        }
     }
+    OH_VideoEncoder_FreeOutputBuffer(codec, index);
 }
 
 void ReleaseCaptureLocked()
 {
-    if (gCapture == nullptr) {
-        gCapturing.store(false);
-        return;
-    }
     gCapturing.store(false);
-    OH_AVScreenCapture_StopScreenCapture(gCapture);
-    OH_AVScreenCapture_Release(gCapture);
-    gCapture = nullptr;
+    if (gCapture != nullptr) {
+        OH_AVScreenCapture_StopScreenCapture(gCapture);
+        OH_AVScreenCapture_Release(gCapture);
+        gCapture = nullptr;
+    }
+    if (gEncoder != nullptr) {
+        if (gEncoderStarted) {
+            OH_VideoEncoder_Stop(gEncoder);
+        }
+        gEncoderStarted = false;
+        if (gEncoderSurface != nullptr) {
+            OH_NativeWindow_DestroyNativeWindow(gEncoderSurface);
+            gEncoderSurface = nullptr;
+        }
+        OH_VideoEncoder_Destroy(gEncoder);
+        gEncoder = nullptr;
+    }
 }
 
 void CleanupEnvironment(void *)
@@ -284,30 +324,79 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
         return CreateStartResult(env, false, "configurePicker", static_cast<int32_t>(strategyResult));
     }
 
+    // AVScreenCapture 只负责生成原始 RGBA 画面。OH_ENCODED_STREAM 和
+    // OH_VIDEO_SOURCE_SURFACE_ES 在 Phone/Tablet 普通应用场景不可直接使用，
+    // H.264 必须由 AVCodec Surface 编码器产生。
+    gEncoder = OH_VideoEncoder_CreateByMime(OH_AVCODEC_MIMETYPE_VIDEO_AVC);
+    if (gEncoder == nullptr) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "createEncoder", AV_ERR_UNSUPPORT);
+    }
+    OH_AVCodecCallback encoderCallback {};
+    encoderCallback.onError = OnEncoderError;
+    encoderCallback.onStreamChanged = OnEncoderFormatChanged;
+    encoderCallback.onNeedInputBuffer = OnEncoderNeedsInput;
+    encoderCallback.onNewOutputBuffer = OnEncoderOutput;
+    OH_AVErrCode encoderCallbackResult = OH_VideoEncoder_RegisterCallback(gEncoder, encoderCallback, nullptr);
+    if (encoderCallbackResult != AV_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "configureEncoderCallbacks",
+            static_cast<int32_t>(encoderCallbackResult));
+    }
+
+    OH_AVFormat *encoderFormat = OH_AVFormat_CreateVideoFormat(OH_AVCODEC_MIMETYPE_VIDEO_AVC, width, height);
+    if (encoderFormat == nullptr) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "createEncoderFormat", AV_ERR_NO_MEMORY);
+    }
+    bool encoderFormatReady =
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_PIXEL_FORMAT, AV_PIXEL_FORMAT_NV12) &&
+        OH_AVFormat_SetDoubleValue(encoderFormat, OH_MD_KEY_FRAME_RATE, static_cast<double>(frameRate)) &&
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_VIDEO_ENCODE_BITRATE_MODE, CBR) &&
+        OH_AVFormat_SetLongValue(encoderFormat, OH_MD_KEY_BITRATE, static_cast<int64_t>(bitrate)) &&
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_PROFILE, AVC_PROFILE_MAIN) &&
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_I_FRAME_INTERVAL, 1000);
+    OH_AVErrCode encoderConfigureResult = encoderFormatReady
+        ? OH_VideoEncoder_Configure(gEncoder, encoderFormat)
+        : AV_ERR_INVALID_VAL;
+    OH_AVFormat_Destroy(encoderFormat);
+    if (encoderConfigureResult != AV_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "configureEncoder", static_cast<int32_t>(encoderConfigureResult));
+    }
+
+    OH_AVErrCode encoderSurfaceResult = OH_VideoEncoder_GetSurface(gEncoder, &gEncoderSurface);
+    if (encoderSurfaceResult != AV_ERR_OK || gEncoderSurface == nullptr) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "createEncoderSurface",
+            encoderSurfaceResult == AV_ERR_OK ? AV_ERR_UNKNOWN : static_cast<int32_t>(encoderSurfaceResult));
+    }
+    OH_AVErrCode encoderPrepareResult = OH_VideoEncoder_Prepare(gEncoder);
+    if (encoderPrepareResult != AV_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "prepareEncoder", static_cast<int32_t>(encoderPrepareResult));
+    }
+
     OH_AVScreenCaptureConfig config {};
     config.captureMode = OH_CAPTURE_HOME_SCREEN;
-    config.dataType = OH_ENCODED_STREAM;
+    config.dataType = OH_ORIGINAL_STREAM;
     config.audioInfo.micCapInfo.audioSource = OH_SOURCE_INVALID;
     config.audioInfo.innerCapInfo.audioSource = OH_SOURCE_INVALID;
     config.videoInfo.videoCapInfo.videoFrameWidth = width;
     config.videoInfo.videoCapInfo.videoFrameHeight = height;
-    config.videoInfo.videoCapInfo.videoSource = OH_VIDEO_SOURCE_SURFACE_ES;
+    config.videoInfo.videoCapInfo.videoSource = OH_VIDEO_SOURCE_SURFACE_RGBA;
     config.videoInfo.videoEncInfo.videoCodec = OH_H264;
     config.videoInfo.videoEncInfo.videoBitrate = bitrate;
     config.videoInfo.videoEncInfo.videoFrameRate = frameRate;
 
     OH_AVSCREEN_CAPTURE_ErrCode stateCallbackResult =
         OH_AVScreenCapture_SetStateCallback(gCapture, OnCaptureState, nullptr);
-    OH_AVSCREEN_CAPTURE_ErrCode dataCallbackResult =
-        OH_AVScreenCapture_SetDataCallback(gCapture, OnCaptureBuffer, nullptr);
     OH_AVSCREEN_CAPTURE_ErrCode errorCallbackResult =
         OH_AVScreenCapture_SetErrorCallback(gCapture, OnCaptureError, nullptr);
-    if (stateCallbackResult != AV_SCREEN_CAPTURE_ERR_OK || dataCallbackResult != AV_SCREEN_CAPTURE_ERR_OK ||
-        errorCallbackResult != AV_SCREEN_CAPTURE_ERR_OK) {
+    if (stateCallbackResult != AV_SCREEN_CAPTURE_ERR_OK || errorCallbackResult != AV_SCREEN_CAPTURE_ERR_OK) {
         int32_t callbackError = stateCallbackResult != AV_SCREEN_CAPTURE_ERR_OK
             ? static_cast<int32_t>(stateCallbackResult)
-            : (dataCallbackResult != AV_SCREEN_CAPTURE_ERR_OK
-                ? static_cast<int32_t>(dataCallbackResult) : static_cast<int32_t>(errorCallbackResult));
+            : static_cast<int32_t>(errorCallbackResult);
         ReleaseCaptureLocked();
         return CreateStartResult(env, false, "configureCallbacks", callbackError);
     }
@@ -322,10 +411,18 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
     // 允许系统在横竖屏切换后旋转编码画布，接收端再依据参数集更新窗口比例。
     OH_AVScreenCapture_SetCanvasRotation(gCapture, true);
 
-    OH_AVSCREEN_CAPTURE_ErrCode startResult = OH_AVScreenCapture_StartScreenCapture(gCapture);
+    OH_AVErrCode encoderStartResult = OH_VideoEncoder_Start(gEncoder);
+    if (encoderStartResult != AV_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "startEncoder", static_cast<int32_t>(encoderStartResult));
+    }
+    gEncoderStarted = true;
+
+    OH_AVSCREEN_CAPTURE_ErrCode startResult =
+        OH_AVScreenCapture_StartScreenCaptureWithSurface(gCapture, gEncoderSurface);
     if (startResult != AV_SCREEN_CAPTURE_ERR_OK) {
         ReleaseCaptureLocked();
-        return CreateStartResult(env, false, "start", static_cast<int32_t>(startResult));
+        return CreateStartResult(env, false, "startCaptureSurface", static_cast<int32_t>(startResult));
     }
     gCapturing.store(true);
     return CreateStartResult(env, true, "started", AV_SCREEN_CAPTURE_ERR_OK);

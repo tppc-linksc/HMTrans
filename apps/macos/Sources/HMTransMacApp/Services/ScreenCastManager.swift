@@ -1,6 +1,9 @@
 import Foundation
 import HMTransCore
 import Observation
+import OSLog
+
+private let screenCastManagerLogger = Logger(subsystem: "com.linksc.hmtrans.mac", category: "ScreenCast")
 
 enum ScreenCastReceivingState: String, Sendable {
     case stopped
@@ -125,6 +128,9 @@ final class ScreenCastManager {
                         self.detail = "正在投屏"
                         self.updateStatistics(bytes: data.count)
                     } catch {
+                        screenCastManagerLogger.error(
+                            "解码投屏帧失败：\(error.localizedDescription, privacy: .public)"
+                        )
                         self.state = .failed
                         self.detail = error.localizedDescription
                         self.receiver.stopActiveStream(reason: "Mac 解码失败")

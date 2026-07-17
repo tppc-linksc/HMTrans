@@ -111,6 +111,12 @@ export class ScreenCastSenderService {
   private queue: Array<QueuedFrame> = []
   private queuedBytes: number = 0
   private sending: boolean = false
+  /**
+   * HarmonyOS 的 TCPSocket.send 允许多个 Promise 同时在途，但不承诺这些异步调用按
+   * 调用顺序完成。投屏帧和心跳共用同一个递增序号，因此必须在应用层串行写入；否则
+   * Mac 会先收到较大的序号并把随后到达的帧判定为乱序，主动关闭连接。
+   */
+  private sendTail: Promise<void> = Promise.resolve()
   private stopped: boolean = true
   private heartbeatTimer?: number
   private lastMacActivityAt: number = 0
@@ -153,6 +159,7 @@ export class ScreenCastSenderService {
     this.sequence = 1
     this.queue = []
     this.queuedBytes = 0
+    this.sendTail = Promise.resolve()
     this.droppedFrames = 0
     this.sentFrames = 0
     this.sentBytes = 0
@@ -237,6 +244,8 @@ export class ScreenCastSenderService {
       await client.send({ data: castPacket(CastMessageType.HELLO, CastPacketFlags.NONE, encodeCastJson(hello), 0, 0) })
       const ack = await withTimeout(ackPromise, ACK_TIMEOUT_MS, 'Mac 未响应投屏请求')
       if (!ack.accepted || ack.sessionId !== this.sessionId) throw new Error(ack.reason ?? 'Mac 拒绝了投屏请求')
+      // 新连接不等待旧连接遗留的写任务；旧任务持有旧 socket，会自行失败且不会污染本连接。
+      this.sendTail = Promise.resolve()
     } catch (err) {
       if (this.client === client) this.client = undefined
       await client.close().catch(() => {})
@@ -388,19 +397,25 @@ export class ScreenCastSenderService {
     await this.sendEncrypted(type, CastPacketFlags.ENCRYPTED, plain, 0)
   }
 
-  private async sendEncrypted(type: CastMessageType, flags: number, plain: ArrayBuffer, ptsUs: number): Promise<void> {
-    const client = this.client
+  private sendEncrypted(type: CastMessageType, flags: number, plain: ArrayBuffer, ptsUs: number): Promise<void> {
+    const scheduledClient = this.client
     const cipher = this.cipher
-    if (!client || !cipher) throw new Error('投屏连接不可用')
-    const sequence = this.sequence++
-    const sealedLength = plain.byteLength + 28
-    const header = buildCastHeader(type, flags | CastPacketFlags.ENCRYPTED, sealedLength, sequence, ptsUs)
-    const sealed = await cipher.encrypt(plain, header)
-    try {
-      await client.send({ data: concatBuffers([header, sealed]) })
-    } catch (err) {
-      throw new Error(`投屏数据发送失败：${errorText(err)}`)
-    }
+    if (!scheduledClient || !cipher) return Promise.reject(new Error('投屏连接不可用'))
+
+    const operation = this.sendTail.catch(() => {}).then(async () => {
+      if (this.client !== scheduledClient) throw new Error('投屏连接已切换')
+      const sequence = this.sequence++
+      const sealedLength = plain.byteLength + 28
+      const header = buildCastHeader(type, flags | CastPacketFlags.ENCRYPTED, sealedLength, sequence, ptsUs)
+      const sealed = await cipher.encrypt(plain, header)
+      try {
+        await scheduledClient.send({ data: concatBuffers([header, sealed]) })
+      } catch (err) {
+        throw new Error(`投屏数据发送失败：${errorText(err)}`)
+      }
+    })
+    this.sendTail = operation
+    return operation
   }
 
   private startHeartbeat(): void {
@@ -499,8 +514,15 @@ function captureStageName(stage: string): string {
     case 'createPickerStrategy': return '创建系统授权界面'
     case 'configurePicker': return '配置系统授权界面'
     case 'configureCallbacks': return '注册录屏回调'
+    case 'createEncoder': return '创建 H.264 编码器'
+    case 'configureEncoderCallbacks': return '注册 H.264 编码回调'
+    case 'createEncoderFormat': return '创建 H.264 编码参数'
+    case 'configureEncoder': return '配置 H.264 编码器'
+    case 'createEncoderSurface': return '创建 H.264 编码画布'
+    case 'prepareEncoder': return '准备 H.264 编码器'
     case 'initialize': return '初始化录屏参数'
-    case 'start': return '启动系统录屏'
+    case 'startEncoder': return '启动 H.264 编码器'
+    case 'startCaptureSurface': return '启动系统录屏'
     default: return '启动系统录屏'
   }
 }

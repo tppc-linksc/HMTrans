@@ -1,6 +1,9 @@
 @preconcurrency import Network
 import Foundation
 import HMTransCore
+import OSLog
+
+private let screenCastLogger = Logger(subsystem: "com.linksc.hmtrans.mac", category: "ScreenCast")
 
 /// 独立于文件传输端口的投屏接收器。所有 Network.framework 回调都串行运行，
 /// 从而保证同一时刻最多只有一台 MatePad 占用 Mac 的解码窗口。
@@ -199,6 +202,7 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
     func close(reason: String, notifyPeer: Bool) {
         guard !closed else { return }
         closed = true
+        screenCastLogger.info("关闭投屏连接：\(reason, privacy: .public)")
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         owner?.sessionClosed(self, reason: reason)
@@ -226,6 +230,7 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
                         try handle(packet)
                     }
                 } catch {
+                    screenCastLogger.error("解析投屏数据失败：\(error.localizedDescription, privacy: .public)")
                     close(reason: error.localizedDescription, notifyPeer: false)
                     return
                 }
@@ -244,9 +249,13 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
 
     private func handle(_ packet: ScreenCastPacket) throws {
         if hello == nil {
-            guard packet.header.type == .hello,
-                  !packet.header.flags.contains(.encrypted),
-                  isNewIncomingSequence(packet.header.sequence) else {
+            let validHello = packet.header.type == .hello
+                && !packet.header.flags.contains(.encrypted)
+                && isNewIncomingSequence(packet.header.sequence)
+            guard validHello else {
+                screenCastLogger.error(
+                    "首包无效：type=\(packet.header.type.rawValue) flags=\(packet.header.flags.rawValue) seq=\(packet.header.sequence) last=\(self.lastIncomingSequence ?? 0)"
+                )
                 throw ScreenCastProtocolError.invalidHeader
             }
             lastIncomingSequence = packet.header.sequence
@@ -280,9 +289,12 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
             return
         }
 
-        guard packet.header.flags.contains(.encrypted),
-              isNewIncomingSequence(packet.header.sequence),
-              let cipher else {
+        let encrypted = packet.header.flags.contains(.encrypted)
+        let freshSequence = isNewIncomingSequence(packet.header.sequence)
+        guard encrypted, freshSequence, let cipher else {
+            screenCastLogger.error(
+                "鉴权后帧头无效：type=\(packet.header.type.rawValue) flags=\(packet.header.flags.rawValue) seq=\(packet.header.sequence) last=\(self.lastIncomingSequence ?? 0) encrypted=\(encrypted) fresh=\(freshSequence) hasCipher=\(self.cipher != nil)"
+            )
             throw ScreenCastProtocolError.invalidHeader
         }
         lastIncomingSequence = packet.header.sequence
@@ -299,6 +311,9 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
                   (1...4096).contains(config.width),
                   (1...4096).contains(config.height),
                   (1...60).contains(config.frameRate) else {
+                screenCastLogger.error(
+                    "视频参数无效：codec=\(config.codec, privacy: .public) size=\(config.width)x\(config.height) fps=\(config.frameRate)"
+                )
                 throw ScreenCastProtocolError.invalidHeader
             }
             owner?.publishConfig(config, from: self)
@@ -318,6 +333,7 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
         case .error:
             close(reason: String(data: payload, encoding: .utf8) ?? "MatePad 投屏异常", notifyPeer: false)
         case .hello, .ack, .streamControl:
+            screenCastLogger.error("鉴权后收到不允许的消息：type=\(packet.header.type.rawValue)")
             throw ScreenCastProtocolError.invalidHeader
         }
     }

@@ -75,9 +75,25 @@ export class ScreenCastCipher {
         authTag: { data: new Uint8Array(16) },
       }
       const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-      await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
-      const encrypted = await cipher.doFinal({ data: new Uint8Array(plain) })
-      return concatBuffers([nonce.buffer, encrypted.data.buffer, params.authTag.data.buffer])
+      // API 22+ 的同步入口会直接在当前投屏发送任务中完成小帧加密，避免每一帧都
+      // 经过异步任务调度并挤压媒体发送与心跳处理。
+      cipher.initSync(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
+      const encrypted = cipher.doFinalSync({ data: new Uint8Array(plain) })
+      const encryptedBytes = encrypted.data
+      // HarmonyOS 6.1 的 GCM doFinalSync 返回 ciphertext || authTag；部分 SDK 实现
+      // 则只返回 ciphertext 并把 tag 写回 params.authTag。不能无条件再追加 tag，
+      // 否则线上包会比帧头声明多 16 字节，接收端下一帧必然从错误偏移解析。
+      if (encryptedBytes.byteLength === plain.byteLength + 16) {
+        return concatBuffers([exactArrayBuffer(nonce), exactArrayBuffer(encryptedBytes)])
+      }
+      if (encryptedBytes.byteLength === plain.byteLength && params.authTag.data.byteLength === 16) {
+        return concatBuffers([
+          exactArrayBuffer(nonce),
+          exactArrayBuffer(encryptedBytes),
+          exactArrayBuffer(params.authTag.data),
+        ])
+      }
+      throw new Error(`AES-GCM 输出长度异常：${encryptedBytes.byteLength}`)
     } catch (err) {
       throw new Error(`投屏数据加密失败：${errorText(err)}`)
     }
@@ -97,13 +113,20 @@ export class ScreenCastCipher {
         authTag: { data: tag },
       }
       const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
-      const plain = await cipher.doFinal({ data: ciphertext })
-      return plain.data.buffer
+      cipher.initSync(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
+      const plain = cipher.doFinalSync({ data: ciphertext })
+      return exactArrayBuffer(plain.data)
     } catch (err) {
       throw new Error(`投屏数据解密失败：${errorText(err)}`)
     }
   }
+}
+
+/** Uint8Array 可能只是较大底层缓冲区的视图，协议层必须只发送当前视图范围。 */
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const result = new Uint8Array(bytes.byteLength)
+  result.set(bytes)
+  return result.buffer
 }
 
 export function encodeCastJson(value: object): ArrayBuffer {
