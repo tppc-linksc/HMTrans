@@ -133,8 +133,10 @@ struct Index {
     this.network().startDevicePruning()
     this.networkChangeService.start(() => this.network().handleNetworkChanged())
     this.statusText = this.selectedDevice ? this.statusText : '正在重新发现设备'
-    this.network().refreshNetworkName()
-    this.network().ensureReceiverAndDiscovery().catch((err: Error) => {
+    this.network().refreshNetworkName().then(() => {
+      if (this.localDeviceDisplayName.length === 0) return
+      return this.network().ensureReceiverAndDiscovery()
+    }).catch((err: Error) => {
       this.statusText = `服务恢复失败：${errorText(err)}`
     })
   }
@@ -512,7 +514,14 @@ struct Index {
       return
     }
     await this.loadPreferences(context)
-    this.localDeviceDisplayName = await this.deviceIdentityService.loadUserVisibleDeviceName(context)
+    try {
+      this.localDeviceDisplayName = await this.deviceIdentityService.loadUserVisibleDeviceName(context)
+    } catch (err) {
+      this.localDeviceDisplayName = ''
+      this.statusText = `设备名称初始化失败：${errorText(err)}`
+      this.showToast('设备名称权限未生效，发现与连接服务未启动')
+      return
+    }
     await this.restoreTransferState(context)
     // 七天过期清理会跳过所有从本地状态恢复、仍可续传的任务。
     this.stagingStorageService.pruneExpired(
@@ -521,6 +530,7 @@ struct Index {
       7 * 24 * 60 * 60 * 1000
     )
     await this.network().refreshNetworkName()
+    if (this.localDeviceDisplayName.length === 0) return
     this.regeneratePairingCode()
     await this.prepareReceiveDirectory(context)
     await this.network().ensureReceiverAndDiscovery()

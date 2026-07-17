@@ -67,6 +67,13 @@ export class PadNetworkController {
   }
 
   async ensureReceiverAndDiscovery(): Promise<void> {
+    if (this.host.localDeviceName().length === 0) {
+      this.host.receiverReady = false
+      this.host.statusText = '设备名称权限未生效，发现与连接服务未启动'
+      await this.host.transferService.stopReceive()
+      await this.stopDiscovery()
+      return
+    }
     const context = this.host.abilityContext()
     if (this.host.receiverEnabled) {
       await this.startReceiver(context)
@@ -323,6 +330,7 @@ export class PadNetworkController {
     this.host.runOnUi(() => {
       this.host.statusText = '网络已变化，正在重新发现设备'
       this.host.transferService.stopReceive().then(() => this.stopDiscovery())
+        .then(() => this.refreshNetworkName())
         .then(() => this.ensureReceiverAndDiscovery())
         .catch((err: Error) => {
           this.host.statusText = `网络服务恢复失败：${errorText(err)}`
@@ -339,8 +347,13 @@ export class PadNetworkController {
       this.host.networkName = '未获取到网络名称'
       this.host.localIp = ''
     }
-    const systemName = await this.deviceIdentityService.loadUserVisibleDeviceName(this.host.abilityContext())
-    if (systemName.length > 0) this.host.localDeviceDisplayName = systemName
+    try {
+      this.host.localDeviceDisplayName =
+        await this.deviceIdentityService.loadUserVisibleDeviceName(this.host.abilityContext())
+    } catch (err) {
+      this.host.localDeviceDisplayName = ''
+      this.host.statusText = `设备名称读取失败：${errorText(err)}`
+    }
   }
 
   async stopDiscovery(): Promise<void> {

@@ -1,5 +1,23 @@
 # HM互传 ACL 权限申请说明
 
+## 双端权限审计结论
+
+当前代码没有再通过设备型号、出厂名称、手工输入名称或 SettingsData 多域读取来替代系统设备名称。HarmonyOS 端只有成功读取“设置 > 关于本机”的用户设备名称后才会启动发现和连接服务；授权或签名未生效时会明确停止服务并提示原因。
+
+HarmonyOS 权限与处理方式如下：
+
+| 权限 | SDK 级别 / 授权方式 | 当前用途 | 是否需要 ACL 申请 |
+| --- | --- | --- | --- |
+| `ohos.permission.INTERNET` | `normal` / `system_grant` | UDP 发现、TCP 配对与文件传输 | 否 |
+| `ohos.permission.GET_NETWORK_INFO` | `normal` / `system_grant` | 监听局域网切换 | 否 |
+| `ohos.permission.GET_WIFI_INFO` | `normal` / `system_grant` | 读取 SSID 和本机 IPv4 地址 | 否 |
+| `ohos.permission.DISTRIBUTED_DATASYNC` | `normal` / `user_grant` | 调用 DeviceManager 读取本机名称 | 否；首次运行由系统弹窗授权 |
+| `ohos.permission.READ_LOCAL_DEVICE_NAME` | `system_basic` / `system_grant` | 获得“关于本机”中的用户设备名称 | **是** |
+| `ohos.permission.KEEP_BACKGROUND_RUNNING` | `normal` / `system_grant` | 活动传输期间启动数据传输长时任务 | 否 |
+| `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | `normal` / `user_grant` | 将完整校验后的文件发布到 `Download/HMTrans` | 否；首次使用由系统弹窗授权 |
+
+代码中的 `canIUse(...)` 仅用于检查当前设备是否提供公共下载目录或文件夹选择器能力，不会代替权限、不读取其他来源，也不会伪造返回值，因此应保留。macOS 端已经声明局域网用途，并在读取 Wi-Fi 名称前请求位置授权；这两项由 macOS 系统弹窗控制，没有开发者 ACL 申请流程。用户拒绝位置授权后只隐藏 SSID，配对和传输仍可使用。
+
 ## 需要申请的权限
 
 - 权限名：`ohos.permission.READ_LOCAL_DEVICE_NAME`
