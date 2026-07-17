@@ -61,6 +61,12 @@ interface CaptureOptions {
   bitrate: number
 }
 
+interface NativeCaptureStartResult {
+  started: boolean
+  stage: string
+  errorCode: number
+}
+
 interface QueuedFrame {
   data: ArrayBuffer
   ptsUs: number
@@ -89,7 +95,7 @@ interface CastStreamControlPayload {
 interface NativeScreenCaptureModule {
   onFrame(callback: (frame: NativeFrame) => void): void
   onState(callback: (state: number, message: string) => void): void
-  startCapture(options: CaptureOptions): boolean
+  startCapture(options: CaptureOptions): NativeCaptureStartResult
   stopCapture(): void
   isCapturing(): boolean
 }
@@ -160,8 +166,8 @@ export class ScreenCastSenderService {
     try {
       await this.connectAndHandshake(false)
       this.publishState('authorizing', '请在系统弹窗中允许屏幕录制')
-      const started = this.nativeModule.startCapture(this.captureOptions)
-      if (!started) throw new Error('未能启动系统屏幕采集，请确认已允许录屏')
+      const captureResult = this.nativeModule.startCapture(this.captureOptions)
+      if (!captureResult.started) throw new Error(captureStartError(captureResult))
       await this.sendVideoConfig()
       this.mediaReady = true
       this.startHeartbeat()
@@ -479,6 +485,39 @@ function qualityOptions(quality: CastQuality): CaptureOptions {
   if (quality === 'smooth') return { width: 1280, height: 800, frameRate: 24, bitrate: 4 * 1024 * 1024 }
   if (quality === 'quality') return { width: 2560, height: 1600, frameRate: 30, bitrate: 12 * 1024 * 1024 }
   return { width: 1920, height: 1200, frameRate: 30, bitrate: 8 * 1024 * 1024 }
+}
+
+function captureStartError(result: NativeCaptureStartResult): string {
+  const stage = captureStageName(result.stage)
+  const reason = captureErrorName(result.errorCode)
+  return `${stage}失败：${reason}（错误码 ${result.errorCode}）`
+}
+
+function captureStageName(stage: string): string {
+  switch (stage) {
+    case 'create': return '创建录屏会话'
+    case 'createPickerStrategy': return '创建系统授权界面'
+    case 'configurePicker': return '配置系统授权界面'
+    case 'configureCallbacks': return '注册录屏回调'
+    case 'initialize': return '初始化录屏参数'
+    case 'start': return '启动系统录屏'
+    default: return '启动系统录屏'
+  }
+}
+
+function captureErrorName(errorCode: number): string {
+  switch (errorCode) {
+    case 1: return '系统内存不足'
+    case 2: return '系统不允许当前录屏操作'
+    case 3: return '录屏参数无效'
+    case 4: return '媒体服务 I/O 异常'
+    case 5: return '媒体服务超时'
+    case 6: return '媒体服务未知异常'
+    case 7: return '媒体服务已退出'
+    case 8: return '录屏会话状态无效'
+    case 9: return '当前设备不支持该录屏配置'
+    default: return '系统返回异常'
+  }
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<T> {

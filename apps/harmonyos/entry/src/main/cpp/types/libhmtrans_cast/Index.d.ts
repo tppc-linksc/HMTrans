@@ -11,6 +11,12 @@ export interface ScreenCaptureFrame {
   flags: number
 }
 
+export interface ScreenCaptureStartResult {
+  started: boolean
+  stage: string
+  errorCode: number
+}
+
 export type ScreenCaptureStateCallback = (state: number, message: string) => void
 export type ScreenCaptureFrameCallback = (frame: ScreenCaptureFrame) => void
 
@@ -21,7 +27,7 @@ export function onState(callback: ScreenCaptureStateCallback): void
 export function onFrame(callback: ScreenCaptureFrameCallback): void
 
 /** 触发系统录屏授权并开始采集。 */
-export function startCapture(options: ScreenCaptureOptions): boolean
+export function startCapture(options: ScreenCaptureOptions): ScreenCaptureStartResult
 
 /** 停止并释放本次系统录屏会话。 */
 export function stopCapture(): void

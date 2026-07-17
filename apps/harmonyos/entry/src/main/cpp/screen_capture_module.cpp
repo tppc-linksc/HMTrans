@@ -222,6 +222,22 @@ napi_value OnState(napi_env env, napi_callback_info info)
     return RegisterCallback(env, info, false);
 }
 
+napi_value CreateStartResult(napi_env env, bool started, const char *stage, int32_t errorCode)
+{
+    napi_value result;
+    napi_create_object(env, &result);
+    napi_value startedValue;
+    napi_get_boolean(env, started, &startedValue);
+    napi_value stageValue;
+    napi_create_string_utf8(env, stage, NAPI_AUTO_LENGTH, &stageValue);
+    napi_value errorValue;
+    napi_create_int32(env, errorCode, &errorValue);
+    napi_set_named_property(env, result, "started", startedValue);
+    napi_set_named_property(env, result, "stage", stageValue);
+    napi_set_named_property(env, result, "errorCode", errorValue);
+    return result;
+}
+
 napi_value StartCapture(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -247,38 +263,72 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
     std::lock_guard<std::mutex> lock(gCaptureMutex);
     ReleaseCaptureLocked();
     gCapture = OH_AVScreenCapture_Create();
-    bool started = false;
-    if (gCapture != nullptr) {
-        OH_AVScreenCaptureConfig config {};
-        config.captureMode = OH_CAPTURE_HOME_SCREEN;
-        config.dataType = OH_ENCODED_STREAM;
-        config.audioInfo.micCapInfo.audioSource = OH_SOURCE_INVALID;
-        config.audioInfo.innerCapInfo.audioSource = OH_SOURCE_INVALID;
-        config.videoInfo.videoCapInfo.videoFrameWidth = width;
-        config.videoInfo.videoCapInfo.videoFrameHeight = height;
-        config.videoInfo.videoCapInfo.videoSource = OH_VIDEO_SOURCE_SURFACE_ES;
-        config.videoInfo.videoEncInfo.videoCodec = OH_H264;
-        config.videoInfo.videoEncInfo.videoBitrate = bitrate;
-        config.videoInfo.videoEncInfo.videoFrameRate = frameRate;
-
-        OH_AVScreenCapture_SetStateCallback(gCapture, OnCaptureState, nullptr);
-        OH_AVScreenCapture_SetDataCallback(gCapture, OnCaptureBuffer, nullptr);
-        OH_AVScreenCapture_SetErrorCallback(gCapture, OnCaptureError, nullptr);
-        bool initialized = OH_AVScreenCapture_Init(gCapture, config) == AV_SCREEN_CAPTURE_ERR_OK;
-        if (initialized) {
-            // 允许系统在横竖屏切换后旋转编码画布，接收端再依据参数集更新窗口比例。
-            OH_AVScreenCapture_SetCanvasRotation(gCapture, true);
-        }
-        if (initialized && OH_AVScreenCapture_StartScreenCapture(gCapture) == AV_SCREEN_CAPTURE_ERR_OK) {
-            gCapturing.store(true);
-            started = true;
-        } else {
-            ReleaseCaptureLocked();
-        }
+    if (gCapture == nullptr) {
+        return CreateStartResult(env, false, "create", AV_SCREEN_CAPTURE_ERR_NO_MEMORY);
     }
-    napi_value result;
-    napi_get_boolean(env, started, &result);
-    return result;
+
+    // Phone/Tablet 从 API 23 起必须显式启用系统 Picker，才能让普通应用获得本次
+    // 屏幕共享授权。CAPTURE_SCREEN 是 system_core 权限，不能用运行时权限代替 Picker。
+    OH_AVScreenCapture_CaptureStrategy *strategy = OH_AVScreenCapture_CreateCaptureStrategy();
+    if (strategy == nullptr) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "createPickerStrategy", AV_SCREEN_CAPTURE_ERR_NO_MEMORY);
+    }
+    OH_AVSCREEN_CAPTURE_ErrCode pickerResult = OH_AVScreenCapture_StrategyForPickerPopUp(strategy, true);
+    OH_AVSCREEN_CAPTURE_ErrCode strategyResult = pickerResult == AV_SCREEN_CAPTURE_ERR_OK
+        ? OH_AVScreenCapture_SetCaptureStrategy(gCapture, strategy)
+        : pickerResult;
+    OH_AVScreenCapture_ReleaseCaptureStrategy(strategy);
+    if (strategyResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "configurePicker", static_cast<int32_t>(strategyResult));
+    }
+
+    OH_AVScreenCaptureConfig config {};
+    config.captureMode = OH_CAPTURE_HOME_SCREEN;
+    config.dataType = OH_ENCODED_STREAM;
+    config.audioInfo.micCapInfo.audioSource = OH_SOURCE_INVALID;
+    config.audioInfo.innerCapInfo.audioSource = OH_SOURCE_INVALID;
+    config.videoInfo.videoCapInfo.videoFrameWidth = width;
+    config.videoInfo.videoCapInfo.videoFrameHeight = height;
+    config.videoInfo.videoCapInfo.videoSource = OH_VIDEO_SOURCE_SURFACE_ES;
+    config.videoInfo.videoEncInfo.videoCodec = OH_H264;
+    config.videoInfo.videoEncInfo.videoBitrate = bitrate;
+    config.videoInfo.videoEncInfo.videoFrameRate = frameRate;
+
+    OH_AVSCREEN_CAPTURE_ErrCode stateCallbackResult =
+        OH_AVScreenCapture_SetStateCallback(gCapture, OnCaptureState, nullptr);
+    OH_AVSCREEN_CAPTURE_ErrCode dataCallbackResult =
+        OH_AVScreenCapture_SetDataCallback(gCapture, OnCaptureBuffer, nullptr);
+    OH_AVSCREEN_CAPTURE_ErrCode errorCallbackResult =
+        OH_AVScreenCapture_SetErrorCallback(gCapture, OnCaptureError, nullptr);
+    if (stateCallbackResult != AV_SCREEN_CAPTURE_ERR_OK || dataCallbackResult != AV_SCREEN_CAPTURE_ERR_OK ||
+        errorCallbackResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        int32_t callbackError = stateCallbackResult != AV_SCREEN_CAPTURE_ERR_OK
+            ? static_cast<int32_t>(stateCallbackResult)
+            : (dataCallbackResult != AV_SCREEN_CAPTURE_ERR_OK
+                ? static_cast<int32_t>(dataCallbackResult) : static_cast<int32_t>(errorCallbackResult));
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "configureCallbacks", callbackError);
+    }
+
+    OH_AVSCREEN_CAPTURE_ErrCode initResult = OH_AVScreenCapture_Init(gCapture, config);
+    if (initResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "initialize", static_cast<int32_t>(initResult));
+    }
+    // 本产品不采集麦克风或系统声音，显式关闭麦克风可避免产生无关权限请求。
+    OH_AVScreenCapture_SetMicrophoneEnabled(gCapture, false);
+    // 允许系统在横竖屏切换后旋转编码画布，接收端再依据参数集更新窗口比例。
+    OH_AVScreenCapture_SetCanvasRotation(gCapture, true);
+
+    OH_AVSCREEN_CAPTURE_ErrCode startResult = OH_AVScreenCapture_StartScreenCapture(gCapture);
+    if (startResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "start", static_cast<int32_t>(startResult));
+    }
+    gCapturing.store(true);
+    return CreateStartResult(env, true, "started", AV_SCREEN_CAPTURE_ERR_OK);
 }
 
 napi_value StopCapture(napi_env env, napi_callback_info)
