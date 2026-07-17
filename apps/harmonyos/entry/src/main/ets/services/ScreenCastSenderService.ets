@@ -243,6 +243,12 @@ export class ScreenCastSenderService {
     return new Promise<CastAck>((resolve, reject) => {
       let buffer = new ArrayBuffer(0)
       let acknowledged = false
+      client.on('error', (err) => {
+        if (!acknowledged) reject(new Error(`Mac 投屏连接异常：${errorText(err)}`))
+      })
+      client.on('close', () => {
+        if (!acknowledged) reject(new Error('Mac 已关闭投屏连接'))
+      })
       client.on('message', (info: socket.SocketMessageInfo) => {
         buffer = concatBuffers([buffer, info.message])
         try {

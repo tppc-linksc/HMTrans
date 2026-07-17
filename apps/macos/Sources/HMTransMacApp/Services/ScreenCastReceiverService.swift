@@ -21,6 +21,9 @@ final class ScreenCastReceiverService: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "HMTrans.ScreenCastReceiver", qos: .userInitiated)
     private var listener: NWListener?
+    /// 未完成 HELLO 鉴权的连接也必须由服务持有；否则 newConnectionHandler 返回后
+    /// 会话立即释放，Network.framework 虽已接受 TCP，却永远不会注册 receive 回调。
+    private var sessions: [ObjectIdentifier: ScreenCastReceiverSession] = [:]
     private var activeSession: ScreenCastReceiverSession?
     private var callbacks: Callbacks?
 
@@ -28,7 +31,10 @@ final class ScreenCastReceiverService: @unchecked Sendable {
         let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
         queue.sync {
             self.listener?.cancel()
-            self.activeSession?.close(reason: "投屏服务正在重启", notifyPeer: true)
+            let existingSessions = Array(self.sessions.values)
+            self.sessions.removeAll()
+            self.activeSession = nil
+            existingSessions.forEach { $0.close(reason: "投屏服务正在重启", notifyPeer: true) }
             self.listener = listener
             self.callbacks = callbacks
 
@@ -51,6 +57,7 @@ final class ScreenCastReceiverService: @unchecked Sendable {
                     return
                 }
                 let session = ScreenCastReceiverSession(connection: connection, owner: self, queue: self.queue)
+                self.sessions[ObjectIdentifier(session)] = session
                 session.start()
             }
             listener.start(queue: queue)
@@ -62,8 +69,10 @@ final class ScreenCastReceiverService: @unchecked Sendable {
             guard let self else { return }
             listener?.cancel()
             listener = nil
-            activeSession?.close(reason: "Mac 已停止投屏服务", notifyPeer: true)
+            let existingSessions = Array(sessions.values)
+            sessions.removeAll()
             activeSession = nil
+            existingSessions.forEach { $0.close(reason: "Mac 已停止投屏服务", notifyPeer: true) }
         }
     }
 
@@ -110,9 +119,11 @@ final class ScreenCastReceiverService: @unchecked Sendable {
     }
 
     private func release(_ session: ScreenCastReceiverSession, reason: String) {
-        guard activeSession === session else { return }
-        activeSession = nil
-        callbacks?.onDisconnected(reason)
+        sessions.removeValue(forKey: ObjectIdentifier(session))
+        if activeSession === session {
+            activeSession = nil
+            callbacks?.onDisconnected(reason)
+        }
     }
 
     fileprivate func accept(_ session: ScreenCastReceiverSession, hello: ScreenCastHello) -> AuthorizationResult {
