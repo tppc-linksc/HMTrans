@@ -13,10 +13,12 @@ export class ReceiveDirectoryService {
       if (result.authResults.length === 0 || result.authResults[0] !== 0) {
         throw new Error('未授权下载目录')
       }
-      if (!canIUse('SystemCapability.FileManagement.UserFileService')) {
+      let directory = ''
+      if (canIUse('SystemCapability.FileManagement.File.Environment.FolderObtain')) {
+        directory = `${Environment.getUserDownloadDir()}/HMTrans`
+      } else {
         throw new Error('当前设备不支持下载目录能力')
       }
-      const directory = `${Environment.getUserDownloadDir()}/HMTrans`
       try { fs.mkdirSync(directory) } catch (_) {}
       this.verify(directory)
       return directory

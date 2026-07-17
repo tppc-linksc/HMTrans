@@ -1,5 +1,6 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit'
 import { arrayBufferToString, stringToArrayBuffer } from './Bytes'
+import { errorText } from './ErrorText'
 
 export const CAST_HEADER_LENGTH: number = 32
 export const CAST_PROTOCOL_VERSION: string = '0.3.0'
@@ -65,35 +66,43 @@ export class ScreenCastCipher {
   }
 
   async encrypt(plain: ArrayBuffer, aad: ArrayBuffer): Promise<ArrayBuffer> {
-    const nonce = cryptoFramework.createRandom().generateRandomSync(12).data
-    const params: cryptoFramework.GcmParamsSpec = {
-      algName: 'GcmParamsSpec',
-      iv: { data: nonce },
-      aad: { data: new Uint8Array(aad) },
-      authTag: { data: new Uint8Array(16) },
+    try {
+      const nonce = cryptoFramework.createRandom().generateRandomSync(12).data
+      const params: cryptoFramework.GcmParamsSpec = {
+        algName: 'GcmParamsSpec',
+        iv: { data: nonce },
+        aad: { data: new Uint8Array(aad) },
+        authTag: { data: new Uint8Array(16) },
+      }
+      const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
+      await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
+      const encrypted = await cipher.doFinal({ data: new Uint8Array(plain) })
+      return concatBuffers([nonce.buffer, encrypted.data.buffer, params.authTag.data.buffer])
+    } catch (err) {
+      throw new Error(`投屏数据加密失败：${errorText(err)}`)
     }
-    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-    await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
-    const encrypted = await cipher.doFinal({ data: new Uint8Array(plain) })
-    return concatBuffers([nonce.buffer, encrypted.data.buffer, params.authTag.data.buffer])
   }
 
   async decrypt(sealed: ArrayBuffer, aad: ArrayBuffer): Promise<ArrayBuffer> {
     if (sealed.byteLength < 28) throw new Error('投屏加密包长度无效')
-    const bytes = new Uint8Array(sealed)
-    const nonce = bytes.slice(0, 12)
-    const tag = bytes.slice(bytes.length - 16)
-    const ciphertext = bytes.slice(12, bytes.length - 16)
-    const params: cryptoFramework.GcmParamsSpec = {
-      algName: 'GcmParamsSpec',
-      iv: { data: nonce },
-      aad: { data: new Uint8Array(aad) },
-      authTag: { data: tag },
+    try {
+      const bytes = new Uint8Array(sealed)
+      const nonce = bytes.slice(0, 12)
+      const tag = bytes.slice(bytes.length - 16)
+      const ciphertext = bytes.slice(12, bytes.length - 16)
+      const params: cryptoFramework.GcmParamsSpec = {
+        algName: 'GcmParamsSpec',
+        iv: { data: nonce },
+        aad: { data: new Uint8Array(aad) },
+        authTag: { data: tag },
+      }
+      const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
+      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
+      const plain = await cipher.doFinal({ data: ciphertext })
+      return plain.data.buffer
+    } catch (err) {
+      throw new Error(`投屏数据解密失败：${errorText(err)}`)
     }
-    const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
-    const plain = await cipher.doFinal({ data: ciphertext })
-    return plain.data.buffer
   }
 }
 

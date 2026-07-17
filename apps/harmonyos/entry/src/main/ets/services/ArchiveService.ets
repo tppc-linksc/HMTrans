@@ -35,6 +35,8 @@ function copyPickerSourceTask(sourcePath: string, temporaryPath: string, stagedP
     fs.closeSync(source); source = undefined
     try { fs.unlinkSync(stagedPath) } catch (_) {}
     fs.renameSync(temporaryPath, stagedPath)
+  } catch (_) {
+    throw new Error('Unable to copy selected file into staging storage')
   } finally {
     if (target) try { fs.closeSync(target) } catch (_) {}
     if (source) try { fs.closeSync(source) } catch (_) {}
@@ -205,7 +207,11 @@ export class ArchiveService {
   }
 
   private async directorySummary(root: string): Promise<DirectorySummary> {
-    const values = await taskpool.execute(directorySummaryTask, root) as Array<number>
-    return { size: values[0] ?? 0, count: values[1] ?? 0 }
+    try {
+      const values = await taskpool.execute(directorySummaryTask, root) as Array<number>
+      return { size: values[0] ?? 0, count: values[1] ?? 0 }
+    } catch (err) {
+      throw new Error(`Unable to inspect selected folder: ${errorText(err)}`)
+    }
   }
 }

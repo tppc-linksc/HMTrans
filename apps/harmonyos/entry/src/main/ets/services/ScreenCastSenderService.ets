@@ -1,6 +1,7 @@
 import { socket } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
 import screenCapture from 'libhmtrans_cast.so'
+import { errorText } from '../common/ErrorText'
 import {
   CAST_HEADER_LENGTH,
   CAST_HEARTBEAT_INTERVAL_MS,
@@ -383,7 +384,11 @@ export class ScreenCastSenderService {
     const sealedLength = plain.byteLength + 28
     const header = buildCastHeader(type, flags | CastPacketFlags.ENCRYPTED, sealedLength, sequence, ptsUs)
     const sealed = await cipher.encrypt(plain, header)
-    await client.send({ data: concatBuffers([header, sealed]) })
+    try {
+      await client.send({ data: concatBuffers([header, sealed]) })
+    } catch (err) {
+      throw new Error(`投屏数据发送失败：${errorText(err)}`)
+    }
   }
 
   private startHeartbeat(): void {

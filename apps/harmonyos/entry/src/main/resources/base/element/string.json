@@ -19,6 +19,10 @@
     {
       "name": "download_write_reason",
       "value": "用于在下载目录创建 HMTrans 文件夹，并在传输和校验全部成功后发布接收结果，方便在文件管理器中查看。"
+    },
+    {
+      "name": "device_name_reason",
+      "value": "用于读取本机设置中的设备名称，并在同一局域网内向您选择连接的设备显示。"
     }
   ]
 }

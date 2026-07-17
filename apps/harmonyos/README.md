@@ -2,7 +2,7 @@
 
 HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 MatePad 和 Mac 的原文件互传。
 
-当前提交应用市场审核的稳定版为 `v0.2.1`（`versionCode=4`），公开状态以应用市场审核结果为准。本目录已完成自有隐私门禁、持久任务、断点恢复、文件夹还原、多设备发送、任务控制和活动传输后台保护。开发分支的 `v0.3.0` 已接入 MatePad 到 Mac 单向投屏并通过 HAP 构建，仍需真机完成采集、编码、后台、方向变化与稳定性验收；它不属于已提交的 v0.2.1 审核包。
+当前应用市场公开版本为 `v0.1`。待提交审核的稳定版为 `v0.2.1`（`versionCode=5`）；必须使用包含最终回执、安装级配对身份和双端实时解除配对修复的最新软件包。本目录已完成自有隐私门禁、持久任务、断点恢复、文件夹还原、多设备发送、任务控制和活动传输后台保护。开发分支的 `v0.3.0` 已接入 MatePad 到 Mac 单向投屏并通过 HAP 构建，仍需真机完成采集、编码、后台、方向变化与稳定性验收；它不属于待提交的 v0.2.1 审核包。
 
 
 ## 系统适配基线
@@ -68,7 +68,9 @@ cp build-profile.example.json5 build-profile.json5
 
 ```sh
 cd apps/harmonyos
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
+JAVA_HOME=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home \
+PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
   /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
   --no-daemon --mode module -p module=entry@default -p product=default assembleHap
@@ -77,7 +79,9 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
 绑定测试设备的调试包（DevEco Studio 运行前选择 `development` Product）：
 
 ```sh
-DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \\
+JAVA_HOME=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home \
+PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
+DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
   /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
   --no-daemon --mode module -p module=entry@default -p product=development assembleHap

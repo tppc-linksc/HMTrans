@@ -1,5 +1,4 @@
 import { common } from '@kit.AbilityKit'
-import { settings } from '@kit.BasicServicesKit'
 import { wifiManager } from '@kit.ConnectivityKit'
 import { util } from '@kit.ArkTS'
 import {
@@ -16,6 +15,7 @@ import { errorText } from '../common/ErrorText'
 import { TransferListItem, TransferState } from '../models/TransferListItem'
 import { SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
+import { DeviceIdentityService } from '../services/DeviceIdentityService'
 import { PadNetworkHost } from './PadNetworkHost'
 
 const DEVICE_TTL_MS: number = 12000
@@ -24,6 +24,7 @@ const DEVICE_PRUNE_INTERVAL_MS: number = 4000
 /** 在页面之外管理接收、发现、在线状态与配对决策。 */
 export class PadNetworkController {
   private host: PadNetworkHost
+  private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
 
   constructor(host: PadNetworkHost) {
     this.host = host
@@ -67,6 +68,13 @@ export class PadNetworkController {
   }
 
   async ensureReceiverAndDiscovery(): Promise<void> {
+    if (this.host.localDeviceName().length === 0) {
+      this.host.receiverReady = false
+      this.host.statusText = '设备名称权限未生效，发现与连接服务未启动'
+      await this.host.transferService.stopReceive()
+      await this.stopDiscovery()
+      return
+    }
     const context = this.host.abilityContext()
     if (this.host.receiverEnabled) {
       await this.startReceiver(context)
@@ -328,6 +336,7 @@ export class PadNetworkController {
     this.host.runOnUi(() => {
       this.host.statusText = '网络已变化，正在重新发现设备'
       this.host.transferService.stopReceive().then(() => this.stopDiscovery())
+        .then(() => this.refreshNetworkName())
         .then(() => this.ensureReceiverAndDiscovery())
         .catch((err: Error) => {
           this.host.statusText = `网络服务恢复失败：${errorText(err)}`
@@ -345,9 +354,11 @@ export class PadNetworkController {
       this.host.localIp = ''
     }
     try {
-      const systemName = settings.getValueSync(this.host.abilityContext(), settings.general.DEVICE_NAME, '').trim()
-      if (systemName.length > 0) this.host.localDeviceDisplayName = systemName
-    } catch (_err) {
+      this.host.localDeviceDisplayName =
+        await this.deviceIdentityService.loadUserVisibleDeviceName(this.host.abilityContext())
+    } catch (err) {
+      this.host.localDeviceDisplayName = ''
+      this.host.statusText = `设备名称读取失败：${errorText(err)}`
     }
   }
 
@@ -542,7 +553,8 @@ export class PadNetworkController {
       )
       const response = await this.host.transferService.requestPairing(device.ip, device.port, request)
       if (!response.accepted) {
-        this.host.statusText = '配对失败：配对码错误或已过期'
+        this.host.statusText = response.reason === 'protocol_incompatible' ?
+          '配对失败：双端协议版本不一致，请更新到同一版本' : '配对失败：配对码错误或已过期'
         return
       }
       await this.host.trustDevice(device.deviceId, device.identityFingerprint, pairingSecret)
@@ -553,8 +565,9 @@ export class PadNetworkController {
       this.host.statusText = `配对成功，正在确认连接：${device.deviceName}`
       this.host.showToast(`已与 ${device.deviceName} 完成配对`)
     } catch (err) {
-      this.host.statusText = `配对失败：${errorText(err)}`
-      this.host.showToast('配对失败，请确认六位码仍在有效期内')
+      const detail = errorText(err)
+      this.host.statusText = `配对失败：无法连接对方接收服务（${detail}）`
+      this.host.showToast('配对失败，请确认 Mac 接收服务正在运行')
     }
   }
 

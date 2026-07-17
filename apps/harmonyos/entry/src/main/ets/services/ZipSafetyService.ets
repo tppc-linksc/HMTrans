@@ -1,5 +1,6 @@
 import { util } from '@kit.ArkTS'
 import { fileIo as fs } from '@kit.CoreFileKit'
+import { errorText } from '../common/ErrorText'
 
 const MAX_EOCD_SEARCH: number = 65557
 const MAX_CENTRAL_DIRECTORY: number = 32 * 1024 * 1024
@@ -63,6 +64,8 @@ export class ZipSafetyService {
       }
       const central = this.read(file.fd, centralOffset, centralSize)
       return this.validateCentralDirectory(central, entryCount)
+    } catch (err) {
+      throw new Error(`ZIP 校验失败：${errorText(err)}`)
     } finally {
       if (file) try { fs.closeSync(file) } catch (_) {}
     }
@@ -145,10 +148,14 @@ export class ZipSafetyService {
   private read(fd: number, offset: number, length: number): ArrayBuffer {
     if (offset < 0 || length < 0) throw new Error('ZIP 读取范围无效')
     const buffer = new ArrayBuffer(length)
-    fs.lseek(fd, offset, fs.WhenceType.SEEK_SET)
-    const count = fs.readSync(fd, buffer)
-    if (count !== length) throw new Error('ZIP 数据读取不完整')
-    return buffer
+    try {
+      fs.lseek(fd, offset, fs.WhenceType.SEEK_SET)
+      const count = fs.readSync(fd, buffer)
+      if (count !== length) throw new Error('ZIP 数据读取不完整')
+      return buffer
+    } catch (err) {
+      throw new Error(`ZIP 数据读取失败：${errorText(err)}`)
+    }
   }
 
   private findSignature(buffer: ArrayBuffer, signature: number): number {

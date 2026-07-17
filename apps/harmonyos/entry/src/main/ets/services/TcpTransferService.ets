@@ -224,6 +224,8 @@ export class TcpTransferService {
       const response = parseJsonLine<PairingResponse>(line)
       if (response.type !== 'pairing_response') throw new Error('invalid_pairing_response')
       return response
+    } catch (err) {
+      throw new Error(`pairing_request_failed: ${errorText(err)}`)
     } finally {
       await client.close().catch(() => {})
     }
@@ -242,6 +244,8 @@ export class TcpTransferService {
       const response = parseJsonLine<UnpairResponse>(line)
       if (response.type !== 'unpair_response') throw new Error('invalid_unpair_response')
       return response
+    } catch (err) {
+      throw new Error(`unpair_request_failed: ${errorText(err)}`)
     } finally {
       await client.close().catch(() => {})
     }
@@ -675,42 +679,46 @@ export class TcpTransferService {
   /** 在私有目录解压已校验的文件夹，最后只发布一个完整目录。 */
   private async publishReceivedPayload(context: common.UIAbilityContext, meta: FileMeta, payloadPath: string,
     receiveDirectory: string, stagingDir: string): Promise<string> {
-    if (meta.sourceKind !== 'folder' || meta.payloadKind !== 'zip') {
-      const destination = this.availableDestination(receiveDirectory, safeReceiveFileName(meta.fileName))
-      fs.renameSync(payloadPath, destination)
-      return destination
-    }
-
-    const validation = this.zipSafetyService.validate(payloadPath)
-    const availableBytes = statfs.getFreeSizeSync(stagingDir)
-    if (availableBytes < validation.expandedSize + STORAGE_SAFETY_MARGIN_BYTES) {
-      throw new Error('insufficient_space_for_archive_expansion')
-    }
-    const unpackRoot = `${stagingDir}/${safeReceiveFileName(meta.transferId)}-unpack`
     try {
-      fs.rmdirSync(unpackRoot)
-    } catch (_) {
-    }
-    await zlib.decompressFile(payloadPath, unpackRoot)
-    const sourceName = safeReceiveFileName(meta.sourceName ?? '接收的文件夹')
-    const destination = this.availableDestination(receiveDirectory, sourceName)
-    const children = fs.listFileSync(unpackRoot).filter((name: string) => name !== '__MACOSX')
-    if (children.length === 1) {
-      const childPath = `${unpackRoot}/${children[0]}`
-      if (fs.statSync(childPath).isDirectory()) {
-        fs.renameSync(childPath, destination)
-        try {
-          fs.rmdirSync(unpackRoot)
-        } catch (_) {
+      if (meta.sourceKind !== 'folder' || meta.payloadKind !== 'zip') {
+        const destination = this.availableDestination(receiveDirectory, safeReceiveFileName(meta.fileName))
+        fs.renameSync(payloadPath, destination)
+        return destination
+      }
+
+      const validation = this.zipSafetyService.validate(payloadPath)
+      const availableBytes = statfs.getFreeSizeSync(stagingDir)
+      if (availableBytes < validation.expandedSize + STORAGE_SAFETY_MARGIN_BYTES) {
+        throw new Error('insufficient_space_for_archive_expansion')
+      }
+      const unpackRoot = `${stagingDir}/${safeReceiveFileName(meta.transferId)}-unpack`
+      try {
+        fs.rmdirSync(unpackRoot)
+      } catch (_) {
+      }
+      await zlib.decompressFile(payloadPath, unpackRoot)
+      const sourceName = safeReceiveFileName(meta.sourceName ?? '接收的文件夹')
+      const destination = this.availableDestination(receiveDirectory, sourceName)
+      const children = fs.listFileSync(unpackRoot).filter((name: string) => name !== '__MACOSX')
+      if (children.length === 1) {
+        const childPath = `${unpackRoot}/${children[0]}`
+        if (fs.statSync(childPath).isDirectory()) {
+          fs.renameSync(childPath, destination)
+          try {
+            fs.rmdirSync(unpackRoot)
+          } catch (_) {
+          }
+        } else {
+          fs.renameSync(unpackRoot, destination)
         }
       } else {
         fs.renameSync(unpackRoot, destination)
       }
-    } else {
-      fs.renameSync(unpackRoot, destination)
+      fs.unlinkSync(payloadPath)
+      return destination
+    } catch (err) {
+      throw new Error(`publish_received_payload_failed: ${errorText(err)}`)
     }
-    fs.unlinkSync(payloadPath)
-    return destination
   }
 
   private availableDestination(directory: string, fileName: string): string {

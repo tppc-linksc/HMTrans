@@ -52,8 +52,9 @@ export default function protocolAndStateTest(): void {
     })
 
     it('advertises and displays the Pad local IPv4 address', 0, () => {
-      const localIp = wifiIpAddress(0x2101A8C0)
+      const localIp = wifiIpAddress(0xC0A80121)
       expect(localIp).assertEqual('192.168.1.33')
+      expect(wifiIpAddress(0xC0A803CC)).assertEqual('192.168.3.204')
       const device = createDeviceInfo('Linksc的MatePad Pro', 51888, 'pad-id', localIp,
         'HUAWEI Q6', 'HarmonyOS6.1.0', 'fingerprint')
       expect(device.deviceName).assertEqual('Linksc的MatePad Pro')
