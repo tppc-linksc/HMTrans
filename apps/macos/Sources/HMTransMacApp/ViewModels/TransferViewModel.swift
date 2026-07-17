@@ -773,6 +773,11 @@ final class TransferViewModel {
                 }
                 // 仅探测到 TCP 端口无法获得设备指纹；定向发现响应确认身份前，卡片保持离线。
                 self.discovery?.probe(address: device.address)
+                if let fresh = self.nearbyDevices.first(where: { $0.deviceId == device.id }),
+                   self.isBidirectionallyConnected(fresh) {
+                    self.status = "已连接：\(fresh.deviceName)"
+                    return
+                }
                 self.status = "设备可达，正在确认身份：\(device.name)"
             }
         }

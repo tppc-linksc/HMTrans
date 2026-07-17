@@ -153,20 +153,6 @@ private struct MacConnectionPage: View {
             VStack(spacing: 18) {
                 PageHeader(title: "连接", subtitle: "管理设备发现、连接与配对，并向已连接设备发送文件。") { EmptyView() }
 
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(model.receiverRunning ? Color.green : Color.orange)
-                        .frame(width: 7, height: 7)
-                    Text(model.status)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(MacAppTheme.softSurface, in: RoundedRectangle(cornerRadius: 11))
-
                 HStack(spacing: 12) {
                     infoCard(
                         title: "当前网络",
