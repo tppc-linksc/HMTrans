@@ -1,5 +1,14 @@
 import { fileIo as fs } from '@kit.CoreFileKit'
 
+/** 仅匹配本项目实际创建的暂存产物，避免 transfer-1 误命中 transfer-10。 */
+export function stagingEntryBelongsToTransfer(entryName: string, transferId: string): boolean {
+  return entryName === transferId ||
+    entryName === `${transferId}.part` ||
+    entryName === `${transferId}.meta.json` ||
+    entryName === `${transferId}-unpack` ||
+    (entryName.startsWith(`${transferId}-`) && entryName.endsWith('.zip'))
+}
+
 /** 仅递归管理 HMTrans 应用私有暂存路径。 */
 export class StagingStorageService {
   clear(path: string): void {
@@ -42,7 +51,7 @@ export class StagingStorageService {
     }
     names.forEach((name: string) => {
       const path = `${directory}/${name}`
-      if (activeTransferIds.some((id: string) => path.indexOf(id) >= 0)) {
+      if (activeTransferIds.some((id: string) => stagingEntryBelongsToTransfer(name, id))) {
         return
       }
       try {

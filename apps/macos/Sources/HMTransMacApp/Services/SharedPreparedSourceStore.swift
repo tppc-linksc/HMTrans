@@ -16,7 +16,17 @@ final class SharedPreparedSourceStore: @unchecked Sendable {
     func acquire(url: URL, groupID: UUID) throws -> PreparedSendFile {
         let key = cacheKey(url: url, groupID: groupID)
         condition.lock()
-        while preparing.contains(key) { condition.wait() }
+        while preparing.contains(key) {
+            if Task.isCancelled {
+                condition.unlock()
+                throw CancellationError()
+            }
+            condition.wait(until: Date().addingTimeInterval(0.1))
+        }
+        if Task.isCancelled {
+            condition.unlock()
+            throw CancellationError()
+        }
         if var entry = entries[key] {
             // 只统计实际取得共享产物的发送任务。目标在 TCP 探测阶段失败时不会
             // 虚增引用数，因此最后一个真实使用者一定能完成清理。

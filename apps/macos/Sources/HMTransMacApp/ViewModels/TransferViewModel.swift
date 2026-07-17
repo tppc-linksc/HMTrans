@@ -42,6 +42,7 @@ final class TransferViewModel {
     var connectedDeviceIDs: Set<String> = []
     var autoReceiveTrustedDevices: Bool = UserDefaults.standard.object(forKey: "autoReceiveTrustedDevices") as? Bool ?? true
     var backgroundTransferProtection: Bool = UserDefaults.standard.object(forKey: "backgroundTransferProtection") as? Bool ?? true
+    var requestingScreenCastDeviceID: String?
 
     let receiver = PersistentFileReceiver()
     let store = TransferStore()
@@ -111,6 +112,81 @@ final class TransferViewModel {
         return connectedDevices.count == 1 ? connectedDevices : []
     }
 
+    var availableScreenCastDevices: [DeviceInfo] {
+        connectedDevices.filter {
+            $0.platform == "HarmonyOS"
+                && $0.screenCastProtocolVersion == screenCastProtocolVersion
+                && ($0.screenCastCapabilities ?? []).contains("remote-start-picker")
+        }
+        .sorted { $0.deviceName.localizedStandardCompare($1.deviceName) == .orderedAscending }
+    }
+
+    func requestScreenCast(from device: DeviceInfo) {
+        guard screenCastReceiverEnabled,
+              screenCast.state != .stopped,
+              screenCast.state != .failed else {
+            status = "Mac 投屏接收服务尚未就绪"
+            return
+        }
+        guard screenCast.canAcceptNewSession else {
+            status = "已达到两路投屏上限"
+            return
+        }
+        guard !screenCast.isCasting(deviceID: device.deviceId) else {
+            status = "该设备已经在投屏"
+            return
+        }
+        guard isBidirectionallyConnected(device),
+              let fingerprint = device.identityFingerprint,
+              TrustedDevicesStore.matches(device.deviceId, fingerprint: fingerprint),
+              let secret = TrustedDevicesStore.sharedSecret(for: device.deviceId), secret.count == 64 else {
+            status = "该设备缺少 v0.3 配对密钥，请删除后重新配对"
+            return
+        }
+        guard requestingScreenCastDeviceID == nil else { return }
+
+        requestingScreenCastDeviceID = device.deviceId
+        status = "正在向 \(device.deviceName) 发起投屏请求"
+        let host = device.ip
+        let port = device.port
+        let requesterDeviceID = deviceId
+        let requesterFingerprint = identityFingerprint
+        let targetDeviceID = device.deviceId
+        let deviceName = device.deviceName
+        Task.detached { [weak self] in
+            do {
+                let response = try requestScreenCastStart(
+                    host: host,
+                    port: port,
+                    requesterDeviceId: requesterDeviceID,
+                    requesterFingerprint: requesterFingerprint,
+                    targetDeviceId: targetDeviceID,
+                    sharedSecret: secret
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    self.requestingScreenCastDeviceID = nil
+                    if response.accepted {
+                        self.status = "已向 \(deviceName) 发起投屏"
+                        self.screenCast.noteStartRequested(deviceName: deviceName)
+                    } else {
+                        let reason = screenCastStartFailureMessage(response.reason)
+                        self.status = "发起投屏失败：\(reason)"
+                        self.screenCast.noteStartRequestFailed(self.status)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.requestingScreenCastDeviceID = nil
+                    let reason = (error as? HMTransError)?.description ?? error.localizedDescription
+                    self.status = "发起投屏失败：\(reason)"
+                    self.screenCast.noteStartRequestFailed(self.status)
+                }
+            }
+        }
+    }
+
     func isBidirectionallyConnected(_ device: DeviceInfo) -> Bool {
         guard connectedDeviceIDs.contains(device.deviceId) else { return false }
         guard let confirmedAt = confirmedDeviceLastSeenAt[device.deviceId] else { return false }
@@ -141,6 +217,7 @@ final class TransferViewModel {
         投屏端口：\(localScreenCastPort)
         投屏接收：\(screenCastReceiverEnabled ? "已开启" : "已关闭")
         投屏服务：\(screenCast.state.rawValue)
+        投屏会话：\(screenCast.activeSessionCount)/\(ScreenCastManager.maximumConcurrentStreams)
         当前设备：\(selected)
         发现设备：\(nearbyDevices.count)
         已保存设备：\(persistedDevices.count)
@@ -220,21 +297,6 @@ final class TransferViewModel {
         }
         startDevicePruning()
         startPairingCountdown()
-    }
-
-    func applyScreenCastPort() {
-        guard let port = UInt16(screenCastPortText), port > 0 else {
-            screenCastPortText = String(localScreenCastPort)
-            status = "投屏端口必须是 1 到 65535 之间的整数"
-            return
-        }
-        UserDefaults.standard.set(String(port), forKey: Self.screenCastPortKey)
-        if screenCastReceiverEnabled {
-            screenCast.restart(port: port)
-            status = "投屏服务已在 TCP \(port) 重新启动"
-        } else {
-            status = "投屏端口已保存；开启投屏接收后生效"
-        }
     }
 
     func setScreenCastReceiverEnabled(_ enabled: Bool) {
@@ -877,14 +939,21 @@ final class TransferViewModel {
 
     func applyNetworkPorts() {
         guard let tcp = UInt16(localTCPPortText), tcp > 0,
-              let udp = UInt16(discoveryPortText), udp > 0 else {
+              let udp = UInt16(discoveryPortText), udp > 0,
+              let cast = UInt16(screenCastPortText), cast > 0 else {
             status = "端口必须是 1 到 65535 之间的数字"
+            return
+        }
+        guard Set([tcp, udp, cast]).count == 3 else {
+            status = "发现、传输和投屏端口不能重复"
             return
         }
         localTCPPortText = String(tcp)
         discoveryPortText = String(udp)
+        screenCastPortText = String(cast)
         UserDefaults.standard.set(localTCPPortText, forKey: Self.localTCPPortKey)
         UserDefaults.standard.set(discoveryPortText, forKey: Self.discoveryPortKey)
+        UserDefaults.standard.set(screenCastPortText, forKey: Self.screenCastPortKey)
         receiver.stop()
         receiverRunning = false
         stopDiscovery()
@@ -895,7 +964,10 @@ final class TransferViewModel {
             startDiscovery()
             startFallbackNetworkScan(force: true)
         }
-        status = "正在应用 UDP \(udp) · TCP \(tcp)"
+        if screenCastReceiverEnabled {
+            screenCast.restart(port: cast)
+        }
+        status = "正在应用发现 UDP \(udp) · 传输 TCP \(tcp) · 投屏 TCP \(cast)"
     }
 
     func ensureReceiverAndDiscovery() {
@@ -1024,4 +1096,17 @@ final class TransferViewModel {
         }
     }
 
+}
+
+private func screenCastStartFailureMessage(_ reason: String?) -> String {
+    switch reason {
+    case "request_not_authorized":
+        return "Pad 未接受请求，请确认双端仍在线且配对身份未变化"
+    case "protocol_incompatible":
+        return "Pad 版本不支持从 Mac 发起投屏，请更新双端应用"
+    case let value? where !value.isEmpty:
+        return value
+    default:
+        return "Pad 拒绝了投屏请求"
+    }
 }

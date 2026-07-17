@@ -37,6 +37,7 @@ export interface PadNetworkStateHost {
   localIp: string
   localDeviceDisplayName: string
   nearbyDevices: Array<DeviceInfo>
+  connectedDevices: Array<DeviceInfo>
   selectedDeviceId: string
   selectedDeviceIds: Array<string>
   trustedDeviceIds: Array<string>
@@ -76,6 +77,7 @@ export interface PadNetworkActionHost {
   updateHistoryDetail(id: string, detailPrefix: string): void
   showToast(message: string): void
   confirmReceive(sender: string, fileName: string, sizeText: string): Promise<boolean>
+  startScreenCastFromRemote(deviceId: string): void
 }
 
 /** 按职责组合控制器所需能力，避免维护单个超大接口。 */

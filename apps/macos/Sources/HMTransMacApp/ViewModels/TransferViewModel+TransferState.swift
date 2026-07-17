@@ -6,17 +6,7 @@ import HMTransCore
 @MainActor
 extension TransferViewModel {
     func redactDiagnosticText(_ value: String) -> String {
-        value
-            .replacingOccurrences(
-                of: #"\b(?:\d{1,3}\.){3}\d{1,3}\b"#,
-                with: "<local-ip>",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"/(?:Users|private|var)/[^\s,;]+"#,
-                with: "<local-path>",
-                options: .regularExpression
-            )
+        redactDiagnosticTextForSharing(value)
     }
 
     func retryHistoryItem(_ item: TransferListItem) {

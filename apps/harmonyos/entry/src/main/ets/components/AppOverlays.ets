@@ -1,3 +1,33 @@
+/** 隐私确认后的启动门；身份、存储和网络服务准备完成前不允许操作主界面。 */
+@ComponentV2
+export struct InitializationOverlay {
+  @Param detail: string = '正在准备本机身份、下载目录和局域网服务'
+  @Param failed: boolean = false
+  @Param onRetry: () => void = () => {}
+
+  build() {
+    Column() {
+      Column({ space: 14 }) {
+        if (!this.failed) {
+          LoadingProgress().width(36).height(36).color($r('app.color.accent_strong'))
+        }
+        Text(this.failed ? '启动未完成' : '正在启动 HM互传')
+          .fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        Text(this.detail)
+          .fontSize(13).lineHeight(20).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.Center)
+          .width('100%')
+        if (this.failed) {
+          Button('重试').height(42).fontColor('#FFFFFF').backgroundColor($r('app.color.accent_strong'))
+            .borderRadius(12).onClick(this.onRetry)
+        }
+      }.width('80%').constraintSize({ maxWidth: 460 }).padding(24)
+        .backgroundColor($r('app.color.surface_primary')).borderRadius(20)
+        .shadow({ radius: 20, color: '#0000001A', offsetY: 8 })
+    }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.app_background')).zIndex(19)
+  }
+}
+
 /** 首次启动隐私门；用户确认前不启动网络或存储服务。 */
 @ComponentV2
 export struct PrivacyConsentOverlay {
@@ -103,13 +133,16 @@ export struct PortEditorOverlay {
   }
 }
 
-/** 投屏设置只保存独立的接收端口和画质档位，不影响文件传输端口。 */
+/** 投屏设置按真机 H.264 硬件能力选择分辨率与帧率。 */
 @ComponentV2
 export struct CastSettingsOverlay {
   @Param port: string = '51890'
-  @Param quality: string = 'balanced'
+  @Param resolution: string = '1080p'
+  @Param frameRate: number = 60
+  @Param supportedModes: Array<string> = []
   @Param onPortChanged: (value: string) => void = (_value: string) => {}
-  @Param onQualityChanged: (value: string) => void = (_value: string) => {}
+  @Param onResolutionChanged: (value: string) => void = (_value: string) => {}
+  @Param onFrameRateChanged: (value: number) => void = (_value: number) => {}
   @Param onCancel: () => void = () => {}
   @Param onSave: () => void = () => {}
 
@@ -123,19 +156,26 @@ export struct CastSettingsOverlay {
             .onChange((value: string) => this.onPortChanged(value.replace(/\D/g, '')))
         }.alignItems(HorizontalAlign.Start).width('100%')
         Column({ space: 8 }) {
-          Text('投屏画质').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
+          Text('清晰度').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
           Row({ space: 8 }) {
-            this.QualityButton('流畅', 'smooth')
-            this.QualityButton('均衡', 'balanced')
-            this.QualityButton('高清', 'quality')
+            this.ResolutionButton('720P 级', '720p')
+            this.ResolutionButton('1080P 级', '1080p')
+            this.ResolutionButton('2K 级', '2k')
           }.width('100%')
         }.alignItems(HorizontalAlign.Start).width('100%')
-        Text('投屏使用独立 TCP 端口；Mac 与 MatePad 端需要保持一致。高清模式会占用更多局域网带宽。')
+        Column({ space: 8 }) {
+          Text('帧率').fontSize(13).fontWeight(FontWeight.Medium).width('100%')
+          Row({ space: 8 }) {
+            this.FrameRateButton('30P', 30)
+            this.FrameRateButton('60P', 60)
+          }.width('100%')
+        }.alignItems(HorizontalAlign.Start).width('100%')
+        Text('可选组合来自当前真机 H.264 硬件编码能力。为保持 Pad 屏幕比例，实际尺寸依次为 1280×840、1920×1260、2560×1680。当前稳定实现最高为 2K 级 / 60P，暂不开放 4K、90P、120P。')
           .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary')).width('100%')
         Row({ space: 12 }) {
           Button('取消').layoutWeight(1).onClick(this.onCancel)
           Button('保存').layoutWeight(1).fontColor('#FFFFFF').backgroundColor($r('app.color.accent'))
-            .enabled(this.port.length > 0).onClick(this.onSave)
+            .enabled(this.port.length > 0 && this.modeSupported(this.resolution, this.frameRate)).onClick(this.onSave)
         }.width('100%')
       }.width('80%').constraintSize({ maxWidth: 480 }).padding(24)
         .backgroundColor($r('app.color.surface_primary')).borderRadius(24)
@@ -145,11 +185,33 @@ export struct CastSettingsOverlay {
   }
 
   @Builder
-  private QualityButton(title: string, value: string) {
+  private ResolutionButton(title: string, value: string) {
     Button(title).layoutWeight(1).height(38).fontSize(13)
-      .fontColor(this.quality === value ? '#FFFFFF' : $r('app.color.text_primary'))
-      .backgroundColor(this.quality === value ? $r('app.color.accent') : $r('app.color.control_track'))
-      .borderRadius(10).onClick(() => this.onQualityChanged(value))
-      .accessibilityDescription(this.quality === value ? '当前已选择' : '点按选择')
+      .fontColor(this.resolution === value ? '#FFFFFF' : $r('app.color.text_primary'))
+      .backgroundColor(this.resolution === value ? $r('app.color.accent') : $r('app.color.control_track'))
+      .borderRadius(10).enabled(this.resolutionAvailable(value)).opacity(this.resolutionAvailable(value) ? 1 : 0.45)
+      .onClick(() => this.onResolutionChanged(value))
+      .accessibilityDescription(this.resolution === value ? '当前已选择' :
+        this.resolutionAvailable(value) ? '点按选择' : '当前设备不支持')
+  }
+
+  @Builder
+  private FrameRateButton(title: string, value: number) {
+    Button(title).layoutWeight(1).height(38).fontSize(13)
+      .fontColor(this.frameRate === value ? '#FFFFFF' : $r('app.color.text_primary'))
+      .backgroundColor(this.frameRate === value ? $r('app.color.accent') : $r('app.color.control_track'))
+      .borderRadius(10).enabled(this.modeSupported(this.resolution, value))
+      .opacity(this.modeSupported(this.resolution, value) ? 1 : 0.45)
+      .onClick(() => this.onFrameRateChanged(value))
+      .accessibilityDescription(this.frameRate === value ? '当前已选择' :
+        this.modeSupported(this.resolution, value) ? '点按选择' : '当前设备不支持')
+  }
+
+  private resolutionAvailable(value: string): boolean {
+    return this.modeSupported(value, 30) || this.modeSupported(value, 60)
+  }
+
+  private modeSupported(resolution: string, frameRate: number): boolean {
+    return this.supportedModes.indexOf(`${resolution}@${frameRate}`) >= 0
   }
 }

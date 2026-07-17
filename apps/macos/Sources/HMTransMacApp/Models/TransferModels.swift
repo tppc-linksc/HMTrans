@@ -127,6 +127,7 @@ struct PreparedSendFile {
 }
 
 func prepareSendFileForTransfer(_ url: URL, transferID: UUID) throws -> PreparedSendFile {
+    try Task.checkCancellation()
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
         throw HMTransError.system("文件不存在：\(url.path)")
@@ -163,12 +164,22 @@ func prepareSendFileForTransfer(_ url: URL, transferID: UUID) throws -> Prepared
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         process.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", url.path, archiveURL.path]
         try process.run()
-        process.waitUntilExit()
+        while process.isRunning {
+            if Task.isCancelled {
+                process.terminate()
+                process.waitUntilExit()
+                try? FileManager.default.removeItem(at: tempDirectory)
+                throw CancellationError()
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         guard process.terminationStatus == 0 else {
             try? FileManager.default.removeItem(at: tempDirectory)
             throw HMTransError.system("文件夹压缩失败：\(url.lastPathComponent)")
         }
     }
+
+    try Task.checkCancellation()
 
     var sourceSize: Int64 = 0
     var sourceFileCount = 0

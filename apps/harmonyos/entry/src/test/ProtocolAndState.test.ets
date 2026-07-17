@@ -12,6 +12,7 @@ import { TransferListItem } from '../main/ets/models/TransferListItem'
 import { TransferStateService } from '../main/ets/services/TransferStateService'
 import { validateZipEntryName } from '../main/ets/services/ZipSafetyService'
 import { ControlLineInbox } from '../main/ets/services/ControlLineInbox'
+import { stagingEntryBelongsToTransfer } from '../main/ets/services/StagingStorageService'
 import { stringToArrayBuffer } from '../main/ets/common/Bytes'
 import {
   buildCastHeader,
@@ -91,6 +92,14 @@ export default function protocolAndStateTest(): void {
       const result = await inbox.nextLine()
       expect(decision.indexOf('receive_decision') >= 0).assertTrue()
       expect(result.indexOf('transfer_success') >= 0).assertTrue()
+    })
+
+    it('matches only exact staging artifacts for an active transfer', 0, () => {
+      expect(stagingEntryBelongsToTransfer('transfer-1.part', 'transfer-1')).assertTrue()
+      expect(stagingEntryBelongsToTransfer('transfer-1.meta.json', 'transfer-1')).assertTrue()
+      expect(stagingEntryBelongsToTransfer('transfer-1-folder.zip', 'transfer-1')).assertTrue()
+      expect(stagingEntryBelongsToTransfer('transfer-10.part', 'transfer-1')).assertFalse()
+      expect(stagingEntryBelongsToTransfer('old-transfer-1.part', 'transfer-1')).assertFalse()
     })
 
     it('encodes HMCS header fields with big-endian lengths', 0, () => {

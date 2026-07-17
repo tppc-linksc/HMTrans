@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <hilog/log.h>
 #include <napi/native_api.h>
 #include <multimedia/player_framework/native_avbuffer.h>
+#include <multimedia/player_framework/native_avcapability.h>
 #include <multimedia/player_framework/native_avcodec_base.h>
 #include <multimedia/player_framework/native_avcodec_videoencoder.h>
 #include <multimedia/player_framework/native_avformat.h>
@@ -39,8 +41,40 @@ OH_AVCodec *gEncoder = nullptr;
 OHNativeWindow *gEncoderSurface = nullptr;
 bool gEncoderStarted = false;
 std::atomic_bool gCapturing {false};
+std::atomic<int64_t> gCaptureClockOriginUs {0};
+std::atomic<int64_t> gLastPublishedPtsUs {-1};
+std::atomic<uint64_t> gPublishedFrameCount {0};
 napi_threadsafe_function gFrameCallback = nullptr;
 napi_threadsafe_function gStateCallback = nullptr;
+
+int64_t SteadyClockNowUs()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+int64_t NextPresentationTimeUs()
+{
+    int64_t origin = gCaptureClockOriginUs.load();
+    if (origin <= 0) {
+        origin = SteadyClockNowUs();
+        gCaptureClockOriginUs.store(origin);
+    }
+    int64_t candidate = std::max<int64_t>(0, SteadyClockNowUs() - origin);
+    int64_t previous = gLastPublishedPtsUs.load();
+    while (candidate <= previous) {
+        candidate = previous + 1;
+        if (gLastPublishedPtsUs.compare_exchange_weak(previous, candidate)) {
+            return candidate;
+        }
+    }
+    while (!gLastPublishedPtsUs.compare_exchange_weak(previous, candidate)) {
+        if (candidate <= previous) {
+            candidate = previous + 1;
+        }
+    }
+    return candidate;
+}
 
 void CallFrameJs(napi_env env, napi_value callback, void *, void *rawData)
 {
@@ -162,8 +196,17 @@ void OnEncoderOutput(OH_AVCodec *codec, uint32_t index, OH_AVBuffer *buffer, voi
         if (address != nullptr && capacity > 0 && attr.offset <= capacity && attr.size <= capacity - attr.offset) {
             auto *event = new FrameEvent;
             event->bytes.assign(address + attr.offset, address + attr.offset + attr.size);
-            event->ptsUs = std::max<int64_t>(0, attr.pts);
+            // Surface 编码在部分真机上会返回纳秒单调时钟，尽管 SDK 字段说明为微秒。
+            // 协议统一发送“本次投屏开始后的单调微秒”，避免把设备绝对时钟泄漏给接收端。
+            event->ptsUs = NextPresentationTimeUs();
             event->flags = attr.flags;
+            uint64_t frameNumber = gPublishedFrameCount.fetch_add(1) + 1;
+            if (frameNumber <= 3 || frameNumber % 300 == 0) {
+                OH_LOG_Print(LOG_APP, LOG_INFO, CAST_LOG_DOMAIN, CAST_LOG_TAG,
+                    "encoded frame=%{public}llu size=%{public}d rawPts=%{public}lld sessionPtsUs=%{public}lld flags=%{public}u",
+                    static_cast<unsigned long long>(frameNumber), attr.size,
+                    static_cast<long long>(attr.pts), static_cast<long long>(event->ptsUs), attr.flags);
+            }
             // 线程安全函数的队列上限为四帧；网络侧跟不上时丢帧而不阻塞编码器。
             if (napi_call_threadsafe_function(gFrameCallback, event, napi_tsfn_nonblocking) != napi_ok) {
                 delete event;
@@ -176,6 +219,9 @@ void OnEncoderOutput(OH_AVCodec *codec, uint32_t index, OH_AVBuffer *buffer, voi
 void ReleaseCaptureLocked()
 {
     gCapturing.store(false);
+    gCaptureClockOriginUs.store(0);
+    gLastPublishedPtsUs.store(-1);
+    gPublishedFrameCount.store(0);
     if (gCapture != nullptr) {
         OH_AVScreenCapture_StopScreenCapture(gCapture);
         OH_AVScreenCapture_Release(gCapture);
@@ -302,6 +348,9 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
 
     std::lock_guard<std::mutex> lock(gCaptureMutex);
     ReleaseCaptureLocked();
+    gCaptureClockOriginUs.store(SteadyClockNowUs());
+    gLastPublishedPtsUs.store(-1);
+    gPublishedFrameCount.store(0);
     gCapture = OH_AVScreenCapture_Create();
     if (gCapture == nullptr) {
         return CreateStartResult(env, false, "create", AV_SCREEN_CAPTURE_ERR_NO_MEMORY);
@@ -354,7 +403,10 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
         OH_AVFormat_SetDoubleValue(encoderFormat, OH_MD_KEY_FRAME_RATE, static_cast<double>(frameRate)) &&
         OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_VIDEO_ENCODE_BITRATE_MODE, CBR) &&
         OH_AVFormat_SetLongValue(encoderFormat, OH_MD_KEY_BITRATE, static_cast<int64_t>(bitrate)) &&
-        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_PROFILE, AVC_PROFILE_MAIN) &&
+        // 实时投屏不需要 B 帧。Baseline + 显式禁用 B 帧保证编码顺序就是显示顺序，
+        // Mac 不再需要猜测 DTS，也减少首帧后预测帧无法继续解码的风险。
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_PROFILE, AVC_PROFILE_BASELINE) &&
+        OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_VIDEO_ENCODER_ENABLE_B_FRAME, 0) &&
         OH_AVFormat_SetIntValue(encoderFormat, OH_MD_KEY_I_FRAME_INTERVAL, 1000);
     OH_AVErrCode encoderConfigureResult = encoderFormatReady
         ? OH_VideoEncoder_Configure(gEncoder, encoderFormat)
@@ -406,6 +458,11 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
         ReleaseCaptureLocked();
         return CreateStartResult(env, false, "initialize", static_cast<int32_t>(initResult));
     }
+    OH_AVSCREEN_CAPTURE_ErrCode frameRateResult = OH_AVScreenCapture_SetMaxVideoFrameRate(gCapture, frameRate);
+    if (frameRateResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        ReleaseCaptureLocked();
+        return CreateStartResult(env, false, "configureFrameRate", static_cast<int32_t>(frameRateResult));
+    }
     // 本产品不采集麦克风或系统声音，显式关闭麦克风可避免产生无关权限请求。
     OH_AVScreenCapture_SetMicrophoneEnabled(gCapture, false);
     // 允许系统在横竖屏切换后旋转编码画布，接收端再依据参数集更新窗口比例。
@@ -445,6 +502,31 @@ napi_value IsCapturing(napi_env env, napi_callback_info)
     return result;
 }
 
+napi_value IsConfigurationSupported(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    int32_t width = 0;
+    int32_t height = 0;
+    int32_t frameRate = 0;
+    if (argc != 1 || !ReadInt32(env, argv[0], "width", width) ||
+        !ReadInt32(env, argv[0], "height", height) ||
+        !ReadInt32(env, argv[0], "frameRate", frameRate)) {
+        napi_throw_type_error(env, "ERR_INVALID_CAPTURE_OPTIONS", "投屏能力查询参数不完整");
+        return nullptr;
+    }
+
+    OH_AVCapability *capability = OH_AVCodec_GetCapabilityByCategory(
+        OH_AVCODEC_MIMETYPE_VIDEO_AVC, true, HARDWARE);
+    bool supported = capability != nullptr &&
+        OH_AVCapability_IsVideoSizeSupported(capability, width, height) &&
+        OH_AVCapability_AreVideoSizeAndFrameRateSupported(capability, width, height, frameRate);
+    napi_value result;
+    napi_get_boolean(env, supported, &result);
+    return result;
+}
+
 napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor properties[] = {
@@ -453,6 +535,8 @@ napi_value Init(napi_env env, napi_value exports)
         {"startCapture", nullptr, StartCapture, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"stopCapture", nullptr, StopCapture, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isCapturing", nullptr, IsCapturing, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"isConfigurationSupported", nullptr, IsConfigurationSupported, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
     napi_add_env_cleanup_hook(env, CleanupEnvironment, nullptr);

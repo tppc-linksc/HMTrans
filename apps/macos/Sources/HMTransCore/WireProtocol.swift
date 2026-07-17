@@ -192,6 +192,66 @@ public struct UnpairResponse: Codable, Sendable {
     }
 }
 
+/// Mac 通过已配对控制端口请求 MatePad 开始投屏。签名覆盖全部字段，
+/// Pad 还会校验时间窗口和一次性 requestId，局域网内的未配对设备不能伪造请求。
+public struct ScreenCastStartRequest: Codable, Sendable {
+    public let type: String
+    public let app: String
+    public let version: String
+    public let requesterDeviceId: String
+    public let requesterFingerprint: String
+    public let targetDeviceId: String
+    public let requestId: String
+    public let issuedAt: Int64
+    public let signature: String
+
+    public init(
+        type: String = "screen_cast_start_request",
+        app: String = "HMTrans",
+        version: String = hmTransProtocolVersion,
+        requesterDeviceId: String,
+        requesterFingerprint: String,
+        targetDeviceId: String,
+        requestId: String,
+        issuedAt: Int64,
+        signature: String
+    ) {
+        self.type = type
+        self.app = app
+        self.version = version
+        self.requesterDeviceId = requesterDeviceId
+        self.requesterFingerprint = requesterFingerprint
+        self.targetDeviceId = targetDeviceId
+        self.requestId = requestId
+        self.issuedAt = issuedAt
+        self.signature = signature
+    }
+
+    public var canonicalAuthenticationText: String {
+        [type, app, version, requesterDeviceId, requesterFingerprint, targetDeviceId, requestId, String(issuedAt)]
+            .joined(separator: "|")
+    }
+}
+
+public struct ScreenCastStartResponse: Codable, Sendable {
+    public let type: String
+    public let accepted: Bool
+    public let requestId: String
+    public let reason: String?
+
+    public init(
+        type: String = "screen_cast_start_response",
+        accepted: Bool,
+        requestId: String,
+        reason: String? = nil
+    ) {
+        self.type = type
+        self.accepted = accepted
+        self.requestId = requestId
+        self.reason = reason
+    }
+}
+
 public struct TransferResult: Codable, Sendable {
     public let type: String
     public let transferId: String

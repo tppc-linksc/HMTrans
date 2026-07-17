@@ -1,6 +1,5 @@
 import { socket } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
-import screenCapture from 'libhmtrans_cast.so'
 import { errorText } from '../common/ErrorText'
 import {
   CAST_HEADER_LENGTH,
@@ -28,7 +27,7 @@ const RECONNECT_WINDOW_MS: number = 10000
 const NATIVE_SYNC_FRAME_FLAG: number = 1 << 1
 const NATIVE_CODEC_DATA_FLAG: number = 1 << 3
 
-export type CastQuality = 'smooth' | 'balanced' | 'quality'
+export type CastResolution = '720p' | '1080p' | '2k'
 export type CastSenderState = 'idle' | 'connecting' | 'authorizing' | 'casting' | 'reconnecting' | 'failed'
 
 export interface ScreenCastTarget {
@@ -40,7 +39,8 @@ export interface ScreenCastTarget {
   localDeviceName: string
   localFingerprint: string
   sharedSecret: string
-  quality: CastQuality
+  resolution: CastResolution
+  frameRate: number
 }
 
 export interface ScreenCastSenderCallbacks {
@@ -98,6 +98,25 @@ interface NativeScreenCaptureModule {
   startCapture(options: CaptureOptions): NativeCaptureStartResult
   stopCapture(): void
   isCapturing(): boolean
+  isConfigurationSupported(options: CaptureOptions): boolean
+}
+
+let nativeModulePromise: Promise<NativeScreenCaptureModule> | undefined
+
+/**
+ * 投屏是可选能力。只在用户打开投屏设置或真正开始投屏时加载 Native 模块，
+ * 避免不支持投屏的运行环境影响文件传输等基础功能。
+ */
+async function loadNativeScreenCaptureModule(): Promise<NativeScreenCaptureModule> {
+  if (!nativeModulePromise) {
+    nativeModulePromise = import('libhmtrans_cast.so').then((namespace) => {
+      return namespace.default as NativeScreenCaptureModule
+    }).catch((err: Error) => {
+      nativeModulePromise = undefined
+      throw new Error(`无法加载系统投屏组件：${errorText(err)}`)
+    })
+  }
+  return nativeModulePromise
 }
 
 /** 投屏发送器独占 51890 连接；四帧有界队列保证弱网时优先保持低延迟。 */
@@ -124,7 +143,7 @@ export class ScreenCastSenderService {
   private sentFrames: number = 0
   private sentBytes: number = 0
   private statisticsStartedAt: number = 0
-  private captureOptions: CaptureOptions = qualityOptions('balanced')
+  private captureOptions: CaptureOptions = captureOptions('1080p', 60)
   private reconnecting: boolean = false
   private mediaReady: boolean = false
   private waitingForKeyFrame: boolean = true
@@ -134,11 +153,13 @@ export class ScreenCastSenderService {
   private detail: string = '未在投屏'
   private fps: number = 0
   private bitrate: number = 0
-  private nativeModule: NativeScreenCaptureModule = screenCapture as NativeScreenCaptureModule
+  private nativeModule?: NativeScreenCaptureModule
 
-  constructor() {
-    this.nativeModule.onFrame((frame: NativeFrame) => this.enqueueFrame(frame))
-    this.nativeModule.onState((state: number, message: string) => {
+  private async ensureNativeModule(): Promise<NativeScreenCaptureModule> {
+    if (this.nativeModule) return this.nativeModule
+    const module = await loadNativeScreenCaptureModule()
+    module.onFrame((frame: NativeFrame) => this.enqueueFrame(frame))
+    module.onState((state: number, message: string) => {
       if (state < 0 && !this.stopped) {
         const detail = message === 'screen_capture_ended_by_system' ? '系统已结束屏幕录制' :
           `系统投屏采集异常（${Math.abs(state)}）`
@@ -146,34 +167,37 @@ export class ScreenCastSenderService {
       }
       if (message === 'screen_capture_stopped_by_app') return
     })
+    this.nativeModule = module
+    return module
   }
 
   async start(target: ScreenCastTarget, callbacks: ScreenCastSenderCallbacks): Promise<void> {
-    if (!this.stopped) await this.stop('重新开始投屏')
-    this.stopped = false
     this.target = target
     this.callbacks = callbacks
-    this.cipher = new ScreenCastCipher(target.sharedSecret)
-    this.captureOptions = qualityOptions(target.quality)
-    this.sessionId = util.generateRandomUUID(false)
-    this.sequence = 1
-    this.queue = []
-    this.queuedBytes = 0
-    this.sendTail = Promise.resolve()
-    this.droppedFrames = 0
-    this.sentFrames = 0
-    this.sentBytes = 0
-    this.statisticsStartedAt = Date.now()
-    this.reconnecting = false
-    this.mediaReady = false
-    this.waitingForKeyFrame = true
-    this.latestCodecConfig = undefined
-    this.lastMacSequence = -1
-    this.lastMacActivityAt = Date.now()
     try {
+      const nativeModule = await this.ensureNativeModule()
+      if (!this.stopped) await this.stop('重新开始投屏')
+      this.stopped = false
+      this.cipher = new ScreenCastCipher(target.sharedSecret)
+      this.captureOptions = captureOptions(target.resolution, target.frameRate)
+      this.sessionId = util.generateRandomUUID(false)
+      this.sequence = 1
+      this.queue = []
+      this.queuedBytes = 0
+      this.sendTail = Promise.resolve()
+      this.droppedFrames = 0
+      this.sentFrames = 0
+      this.sentBytes = 0
+      this.statisticsStartedAt = Date.now()
+      this.reconnecting = false
+      this.mediaReady = false
+      this.waitingForKeyFrame = true
+      this.latestCodecConfig = undefined
+      this.lastMacSequence = -1
+      this.lastMacActivityAt = Date.now()
       await this.connectAndHandshake(false)
       this.publishState('authorizing', '请在系统弹窗中允许屏幕录制')
-      const captureResult = this.nativeModule.startCapture(this.captureOptions)
+      const captureResult = nativeModule.startCapture(this.captureOptions)
       if (!captureResult.started) throw new Error(captureStartError(captureResult))
       await this.sendVideoConfig()
       this.mediaReady = true
@@ -182,7 +206,8 @@ export class ScreenCastSenderService {
       this.drainQueue().catch((err: Error) => this.reconnect().catch(() => this.fail(err.message)))
     } catch (err) {
       const error = err as Error
-      this.fail(error.message || '投屏启动失败')
+      if (this.stopped) this.publishState('failed', error.message || '投屏启动失败')
+      else this.fail(error.message || '投屏启动失败')
       throw error
     }
   }
@@ -191,7 +216,7 @@ export class ScreenCastSenderService {
     if (this.stopped) return
     this.stopped = true
     this.clearHeartbeat()
-    this.nativeModule.stopCapture()
+    this.nativeModule?.stopCapture()
     this.queue = []
     this.queuedBytes = 0
     this.mediaReady = false
@@ -204,7 +229,7 @@ export class ScreenCastSenderService {
   }
 
   isCasting(): boolean {
-    return !this.stopped && this.nativeModule.isCapturing()
+    return !this.stopped && (this.nativeModule?.isCapturing() ?? false)
   }
 
   currentState(): CastSenderState { return this.state }
@@ -223,12 +248,12 @@ export class ScreenCastSenderService {
     const client = socket.constructTCPSocketInstance()
     const ackPromise = this.waitForAck(client)
     client.on('error', () => {
-      if (!this.stopped && this.nativeModule.isCapturing() && this.client === client) {
+      if (!this.stopped && (this.nativeModule?.isCapturing() ?? false) && this.client === client) {
         this.reconnect().catch((err: Error) => this.fail(err.message))
       }
     })
     client.on('close', () => {
-      if (!this.stopped && this.nativeModule.isCapturing() && this.client === client) {
+      if (!this.stopped && (this.nativeModule?.isCapturing() ?? false) && this.client === client) {
         this.reconnect().catch((err: Error) => this.fail(err.message))
       }
     })
@@ -468,7 +493,7 @@ export class ScreenCastSenderService {
     if (this.stopped) return
     this.publishState('failed', detail)
     this.clearHeartbeat()
-    this.nativeModule.stopCapture()
+    this.nativeModule?.stopCapture()
     this.queue = []
     this.queuedBytes = 0
     this.mediaReady = false
@@ -496,10 +521,52 @@ export class ScreenCastSenderService {
   }
 }
 
-function qualityOptions(quality: CastQuality): CaptureOptions {
-  if (quality === 'smooth') return { width: 1280, height: 800, frameRate: 24, bitrate: 4 * 1024 * 1024 }
-  if (quality === 'quality') return { width: 2560, height: 1600, frameRate: 30, bitrate: 12 * 1024 * 1024 }
-  return { width: 1920, height: 1200, frameRate: 30, bitrate: 8 * 1024 * 1024 }
+interface CastResolutionSpec {
+  value: CastResolution
+  width: number
+  height: number
+}
+
+const CAST_RESOLUTION_SPECS: Array<CastResolutionSpec> = [
+  { value: '720p', width: 1280, height: 840 },
+  { value: '1080p', width: 1920, height: 1260 },
+  { value: '2k', width: 2560, height: 1680 },
+]
+const CAST_FRAME_RATES: Array<number> = [30, 60]
+
+/** 设置页使用同一 key 表示真机已验证的“分辨率 × 帧率”组合。 */
+export function castModeKey(resolution: string, frameRate: number): string {
+  return `${resolution}@${frameRate}`
+}
+
+/**
+ * 只公开当前真机 H.264 硬件编码器能够处理的组合。档位尺寸保持 MatePad 屏幕比例，
+ * 因此“720P/1080P”是清晰度级别，不会为了标准 16:9 尺寸把平板画面拉伸。
+ */
+export async function supportedCastModes(): Promise<Array<string>> {
+  const module = await loadNativeScreenCaptureModule()
+  const modes: Array<string> = []
+  CAST_RESOLUTION_SPECS.forEach((spec: CastResolutionSpec) => {
+    CAST_FRAME_RATES.forEach((frameRate: number) => {
+      const options = captureOptions(spec.value, frameRate)
+      try {
+        if (module.isConfigurationSupported(options)) modes.push(castModeKey(spec.value, frameRate))
+      } catch (_) {}
+    })
+  })
+  // 能力接口异常时只保留所有 API 23 设备都应能处理的保守档，避免设置页完全不可用。
+  return modes.length > 0 ? modes : [castModeKey('720p', 30)]
+}
+
+function captureOptions(resolution: CastResolution, requestedFrameRate: number): CaptureOptions {
+  const frameRate = requestedFrameRate === 30 ? 30 : 60
+  if (resolution === '720p') {
+    return { width: 1280, height: 840, frameRate, bitrate: (frameRate === 60 ? 7 : 5) * 1024 * 1024 }
+  }
+  if (resolution === '2k') {
+    return { width: 2560, height: 1680, frameRate, bitrate: (frameRate === 60 ? 24 : 16) * 1024 * 1024 }
+  }
+  return { width: 1920, height: 1260, frameRate, bitrate: (frameRate === 60 ? 14 : 9) * 1024 * 1024 }
 }
 
 function captureStartError(result: NativeCaptureStartResult): string {
@@ -521,6 +588,7 @@ function captureStageName(stage: string): string {
     case 'createEncoderSurface': return '创建 H.264 编码画布'
     case 'prepareEncoder': return '准备 H.264 编码器'
     case 'initialize': return '初始化录屏参数'
+    case 'configureFrameRate': return '配置录屏帧率'
     case 'startEncoder': return '启动 H.264 编码器'
     case 'startCaptureSurface': return '启动系统录屏'
     default: return '启动系统录屏'

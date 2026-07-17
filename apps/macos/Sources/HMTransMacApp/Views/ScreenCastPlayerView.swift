@@ -3,22 +3,23 @@ import AVFoundation
 import SwiftUI
 
 struct ScreenCastPlayerView: View {
-    let manager: ScreenCastManager
+    let session: ScreenCastSessionModel
     let isPictureInPicture: Bool
     let togglePictureInPicture: () -> Void
     let toggleFullScreen: () -> Void
+    let stop: () -> Void
 
     var body: some View {
         ZStack {
             Color.black
-            ScreenCastLayerView(displayLayer: manager.renderer.displayLayer)
+            ScreenCastLayerView(displayLayer: session.renderer.displayLayer)
             VStack {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(manager.deviceName)
+                        Text(session.deviceName)
                             .font(.system(size: isPictureInPicture ? 11 : 13, weight: .semibold))
                         if !isPictureInPicture {
-                            Text("\(manager.sourceWidth) × \(manager.sourceHeight) · \(manager.frameRate) fps · \(formatBitrate(manager.bitrate))")
+                            Text("\(session.sourceWidth) × \(session.sourceHeight) · \(session.frameRate) fps · \(formatBitrate(session.bitrate))")
                                 .font(.system(size: 9))
                                 .foregroundStyle(.secondary)
                         }
@@ -30,8 +31,8 @@ struct ScreenCastPlayerView: View {
                     .help(isPictureInPicture ? "返回普通窗口" : "画中画")
                     Button(action: toggleFullScreen) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                         .help("全屏")
-                    Button(role: .destructive, action: manager.stopCasting) { Image(systemName: "stop.fill") }
-                        .help("停止投屏")
+                    Button(role: .destructive, action: stop) { Image(systemName: "stop.fill") }
+                        .help("只停止这台 Pad 的投屏")
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.white)
@@ -91,35 +92,48 @@ private final class ScreenCastLayerHostView: NSView {
 
 @MainActor
 enum ScreenCastWindowRegistry {
-    private static var controller: ScreenCastWindowController?
+    private static var controllers: [String: ScreenCastWindowController] = [:]
 
-    static func show(manager: ScreenCastManager, pictureInPicture: Bool) {
-        if controller == nil {
-            controller = ScreenCastWindowController(manager: manager)
+    static func show(
+        session: ScreenCastSessionModel,
+        pictureInPicture: Bool,
+        stop: @escaping () -> Void
+    ) {
+        if controllers[session.id] == nil {
+            controllers[session.id] = ScreenCastWindowController(session: session, stop: stop)
         }
-        controller?.show(pictureInPicture: pictureInPicture)
+        controllers[session.id]?.show(pictureInPicture: pictureInPicture)
     }
 
-    static func updateAspectRatio(_ ratio: CGFloat) {
-        controller?.updateAspectRatio(ratio)
+    static func updateAspectRatio(sessionID: String, ratio: CGFloat) {
+        controllers[sessionID]?.updateAspectRatio(ratio)
     }
 
-    static func close() {
-        controller?.closeWithoutStopping()
-        controller = nil
+    static func close(sessionID: String) {
+        controllers.removeValue(forKey: sessionID)?.closeWithoutStopping()
+    }
+
+    static func closeAll() {
+        controllers.values.forEach { $0.closeWithoutStopping() }
+        controllers.removeAll()
     }
 }
 
 @MainActor
 private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
-    private static let pictureInPictureFrameKey = "screenCastPictureInPictureFrame"
-    private let manager: ScreenCastManager
+    private let session: ScreenCastSessionModel
+    private let stop: () -> Void
     private let window: NSWindow
     private var pictureInPicture = false
     private var snapWorkItem: DispatchWorkItem?
 
-    init(manager: ScreenCastManager) {
-        self.manager = manager
+    private var pictureInPictureFrameKey: String {
+        "screenCastPictureInPictureFrame.\(session.deviceID)"
+    }
+
+    init(session: ScreenCastSessionModel, stop: @escaping () -> Void) {
+        self.session = session
+        self.stop = stop
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -128,14 +142,14 @@ private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
         )
         super.init()
         window.delegate = self
-        window.title = "HM互传投屏"
+        window.title = "HM互传投屏 · \(session.deviceName)"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = .black
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 360, height: 240)
         updateContent()
-        updateAspectRatio(manager.sourceAspectRatio)
+        updateAspectRatio(session.sourceAspectRatio)
     }
 
     func show(pictureInPicture: Bool) {
@@ -155,7 +169,7 @@ private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        manager.stopCasting()
+        stop()
         return false
     }
 
@@ -169,13 +183,14 @@ private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
 
     private func updateContent() {
         window.contentViewController = NSHostingController(rootView: ScreenCastPlayerView(
-            manager: manager,
+            session: session,
             isPictureInPicture: pictureInPicture,
             togglePictureInPicture: { [weak self] in
                 guard let self else { return }
                 self.setPictureInPicture(!self.pictureInPicture)
             },
-            toggleFullScreen: { [weak self] in self?.toggleFullScreen() }
+            toggleFullScreen: { [weak self] in self?.toggleFullScreen() },
+            stop: stop
         ))
     }
 
@@ -185,27 +200,25 @@ private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
         if enabled {
             window.level = .floating
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            if let saved = UserDefaults.standard.string(forKey: Self.pictureInPictureFrameKey) {
+            if let saved = UserDefaults.standard.string(forKey: pictureInPictureFrameKey) {
                 window.setFrame(NSRectFromString(saved), display: true)
             } else {
                 let width: CGFloat = 420
-                window.setContentSize(NSSize(width: width, height: width / manager.sourceAspectRatio))
+                window.setContentSize(NSSize(width: width, height: width / session.sourceAspectRatio))
                 snapToNearestCorner(force: true)
             }
         } else {
-            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.pictureInPictureFrameKey)
+            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: pictureInPictureFrameKey)
             window.level = .normal
             window.collectionBehavior = [.managed, .fullScreenPrimary]
-            window.setContentSize(NSSize(width: 960, height: 960 / manager.sourceAspectRatio))
+            window.setContentSize(NSSize(width: 960, height: 960 / session.sourceAspectRatio))
             window.center()
         }
         updateContent()
     }
 
     private func toggleFullScreen() {
-        if pictureInPicture {
-            setPictureInPicture(false)
-        }
+        if pictureInPicture { setPictureInPicture(false) }
         window.toggleFullScreen(nil)
     }
 
@@ -223,7 +236,7 @@ private final class ScreenCastWindowController: NSObject, NSWindowDelegate {
         guard let nearest = corners.min(by: { distance($0, origin) < distance($1, origin) }) else { return }
         if force || distance(nearest, origin) < 110 {
             window.setFrameOrigin(nearest)
-            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.pictureInPictureFrameKey)
+            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: pictureInPictureFrameKey)
         }
     }
 

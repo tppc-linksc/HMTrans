@@ -137,7 +137,7 @@ public final class DiscoveryService: @unchecked Sendable {
             identityFingerprint: identityFingerprint,
             screenCastPort: screenCastPort,
             screenCastProtocolVersion: screenCastProtocolVersion,
-            screenCastCapabilities: ["receive-h264"]
+            screenCastCapabilities: ["receive-h264", "multi-cast-2", "network-test-v1"]
         )
         guard let data = try? JSONEncoder().encode(info) else { return }
         try? sendDatagram(fd: fd, data: data, address: address, port: discoveryPort)
@@ -162,7 +162,7 @@ public final class DiscoveryService: @unchecked Sendable {
                     identityFingerprint: identityFingerprint,
                     screenCastPort: screenCastPort,
                     screenCastProtocolVersion: screenCastProtocolVersion,
-                    screenCastCapabilities: ["receive-h264"]
+                    screenCastCapabilities: ["receive-h264", "multi-cast-2", "network-test-v1"]
                 )
                 let data = try JSONEncoder().encode(info)
                 try sendBroadcasts(fd: fd, data: data, port: discoveryPort)
@@ -241,7 +241,7 @@ public final class DiscoveryService: @unchecked Sendable {
             acknowledgedDeviceId: deviceId,
             screenCastPort: screenCastPort,
             screenCastProtocolVersion: screenCastProtocolVersion,
-            screenCastCapabilities: ["receive-h264"]
+            screenCastCapabilities: ["receive-h264", "multi-cast-2", "network-test-v1"]
         )
         guard let data = try? JSONEncoder().encode(info) else { return }
         do {

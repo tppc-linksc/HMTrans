@@ -283,7 +283,7 @@ export class PadTransferController {
   }
 
   async markReceivedFilePublished(transferId: string, _fileName: string, _path: string): Promise<void> {
-    this.host.runOnUi(() => this.updateHistoryDetail(transferId, '已保存到下载目录 HMTrans'))
+    this.updateHistoryDetail(transferId, '已保存到下载目录 HMTrans')
   }
 
   updateHistoryDetail(id: string, detailPrefix: string): void {

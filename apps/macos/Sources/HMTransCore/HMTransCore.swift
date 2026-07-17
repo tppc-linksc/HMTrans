@@ -25,9 +25,14 @@ public func requestPairing(
     requesterPort: UInt16,
     code: String,
     requesterFingerprint: String? = nil,
-    pairingSecret: String? = nil
+    pairingSecret: String? = nil,
+    networkTimeout: TimeInterval = 30
 ) throws -> PairingResponse {
-    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    let connection = try BlockingNetworkConnection.connect(
+        host: host,
+        port: port,
+        operationTimeout: networkTimeout
+    )
     defer { connection.cancel() }
     try sendJSONLine(
         PairingRequest(
@@ -65,6 +70,76 @@ public func requestUnpair(
         connection: connection
     )
     return try readJSONLine(connection: connection)
+}
+
+/// 使用配对时协商的 256 位密钥认证投屏请求。响应只表示 Pad 已接收请求；
+/// 真正的视频连接仍会再次走 v0.3 AES-GCM 握手。
+public func requestScreenCastStart(
+    host: String,
+    port: UInt16 = defaultPort,
+    requesterDeviceId: String,
+    requesterFingerprint: String,
+    targetDeviceId: String,
+    sharedSecret: String
+) throws -> ScreenCastStartResponse {
+    let requestID = UUID().uuidString.lowercased()
+    let issuedAt = Int64(Date().timeIntervalSince1970 * 1_000)
+    var request = ScreenCastStartRequest(
+        requesterDeviceId: requesterDeviceId,
+        requesterFingerprint: requesterFingerprint,
+        targetDeviceId: targetDeviceId,
+        requestId: requestID,
+        issuedAt: issuedAt,
+        signature: ""
+    )
+    let signature = try screenCastControlSignature(
+        sharedSecret: sharedSecret,
+        canonicalText: request.canonicalAuthenticationText
+    )
+    request = ScreenCastStartRequest(
+        requesterDeviceId: requesterDeviceId,
+        requesterFingerprint: requesterFingerprint,
+        targetDeviceId: targetDeviceId,
+        requestId: requestID,
+        issuedAt: issuedAt,
+        signature: signature
+    )
+
+    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
+    defer { connection.cancel() }
+    try sendJSONLine(request, connection: connection)
+    let response: ScreenCastStartResponse = try readJSONLine(connection: connection)
+    guard response.type == "screen_cast_start_response", response.requestId == requestID else {
+        throw HMTransError.protocolError("MatePad 返回了无效投屏响应")
+    }
+    return response
+}
+
+func screenCastControlSignature(sharedSecret: String, canonicalText: String) throws -> String {
+    guard let keyData = Data(hexEncodedControlSecret: sharedSecret), keyData.count == 32 else {
+        throw HMTransError.protocolError("该配对缺少 v0.3 投屏密钥，请删除设备后重新配对")
+    }
+    let code = HMAC<SHA256>.authenticationCode(
+        for: Data(canonicalText.utf8),
+        using: SymmetricKey(data: keyData)
+    )
+    return code.map { String(format: "%02x", $0) }.joined()
+}
+
+private extension Data {
+    init?(hexEncodedControlSecret text: String) {
+        guard text.count.isMultiple(of: 2) else { return nil }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(text.count / 2)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(index, offsetBy: 2)
+            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
+            bytes.append(byte)
+            index = next
+        }
+        self.init(bytes)
+    }
 }
 
 /// 通过兼容 HMTrans v0.2 的 TCP 线协议发送一个可续传文件载荷。
@@ -197,7 +272,7 @@ public func receiveOneFile(
 
     let blocking = try BlockingNetworkConnection(existing: connection)
     defer { blocking.cancel() }
-    let firstLine = try blocking.readLine()
+    let firstLine = try blocking.readLine(totalTimeout: 10)
     return try receiveFromConnection(
         connection: blocking,
         outputDirectory: outputDirectory,
@@ -211,9 +286,15 @@ public final class PersistentFileReceiver: @unchecked Sendable {
     private static let maximumOpenConnections = 16
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "HMTrans.PersistentReceiver", qos: .userInitiated)
+    private let connectionQueue = DispatchQueue(
+        label: "HMTrans.PersistentReceiver.Connections",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private var listener: NWListener?
     private var running = false
     private var openConnectionCount = 0
+    private var acceptedConnections: [ObjectIdentifier: NWConnection] = [:]
     private var activeTransfers: [String: BlockingNetworkConnection] = [:]
     private var pausedTransferIDs: Set<String> = []
     private var cancelledTransferIDs: Set<String> = []
@@ -246,7 +327,10 @@ public final class PersistentFileReceiver: @unchecked Sendable {
             }
             self.lock.lock()
             let canAccept = self.openConnectionCount < Self.maximumOpenConnections
-            if canAccept { self.openConnectionCount += 1 }
+            if canAccept {
+                self.openConnectionCount += 1
+                self.acceptedConnections[ObjectIdentifier(connection)] = connection
+            }
             self.lock.unlock()
             guard canAccept else {
                 coreLog.warning("Rejected TCP connection because the receiver is at capacity")
@@ -277,14 +361,17 @@ public final class PersistentFileReceiver: @unchecked Sendable {
     public func stop() {
         lock.lock()
         let current = listener
+        let accepted = Array(acceptedConnections.values)
         let active = Array(activeTransfers.values)
         listener = nil
+        acceptedConnections.removeAll()
         activeTransfers.removeAll()
         openConnectionCount = 0
         running = false
         lock.unlock()
 
         current?.cancel()
+        accepted.forEach { $0.cancel() }
         active.forEach { $0.cancel() }
     }
 
@@ -331,17 +418,20 @@ public final class PersistentFileReceiver: @unchecked Sendable {
         onProgress: ReceiveProgressHandler?,
         onConnectionResult: @escaping ReceiveCompletionHandler
     ) {
-        queue.async {
+        connectionQueue.async {
             var currentTransferID: String?
             defer {
                 self.lock.lock()
+                self.acceptedConnections.removeValue(forKey: ObjectIdentifier(connection))
                 self.openConnectionCount = max(0, self.openConnectionCount - 1)
                 self.lock.unlock()
             }
             do {
                 let blocking = try BlockingNetworkConnection(existing: connection)
                 defer { blocking.cancel() }
-                let firstLine = try blocking.readLine()
+                // 首条控制消息必须在固定总时限内完整到达，不能让慢速逐字节连接
+                // 通过反复刷新单次读取超时长期占用接收槽位。
+                let firstLine = try blocking.readLine(totalTimeout: 10)
                 let envelope = try JSONDecoder().decode(
                     IncomingEnvelope.self,
                     from: Data(firstLine.utf8)
@@ -524,14 +614,20 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         try box.value.get()
     }
 
-    func readLine(maxBytes: Int = 64 * 1024) throws -> String {
+    func readLine(maxBytes: Int = 64 * 1024, totalTimeout: TimeInterval? = nil) throws -> String {
+        let expiresAt = Date().addingTimeInterval(max(0.1, totalTimeout ?? operationTimeout))
         while inbox.count < maxBytes {
             if let newline = inbox.firstIndex(of: 0x0A) {
                 let lineData = inbox[..<newline]
                 inbox.removeSubrange(..<inbox.index(after: newline))
                 return String(decoding: lineData, as: UTF8.self)
             }
-            inbox.append(try readSome(maximumLength: 4096))
+            let remaining = expiresAt.timeIntervalSinceNow
+            guard remaining > 0 else {
+                connection.cancel()
+                throw HMTransError.system("控制消息接收超时")
+            }
+            inbox.append(try readSome(maximumLength: 4096, timeout: remaining))
         }
         throw HMTransError.protocolError("控制消息超过 \(maxBytes) bytes")
     }
@@ -607,7 +703,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
         try box.value.get()
     }
 
-    private func readSome(maximumLength: Int) throws -> Data {
+    private func readSome(maximumLength: Int, timeout: TimeInterval? = nil) throws -> Data {
         let semaphore = DispatchSemaphore(value: 0)
         let box = ResultBox<Data>()
         connection.receive(minimumIncompleteLength: 1, maximumLength: maximumLength) { data, _, isComplete, error in
@@ -622,7 +718,7 @@ private final class BlockingNetworkConnection: @unchecked Sendable {
             }
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + operationTimeout) == .success else {
+        guard semaphore.wait(timeout: .now() + max(0.1, timeout ?? operationTimeout)) == .success else {
             connection.cancel()
             throw HMTransError.system("接收超时，对方设备可能已离线")
         }

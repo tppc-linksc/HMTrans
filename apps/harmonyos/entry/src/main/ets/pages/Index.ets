@@ -8,7 +8,13 @@ import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
 import { BottomDock } from '../components/BottomDock'
 import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
-import { CastSettingsOverlay, PairingOverlay, PortEditorOverlay, PrivacyConsentOverlay } from '../components/AppOverlays'
+import {
+  CastSettingsOverlay,
+  InitializationOverlay,
+  PairingOverlay,
+  PortEditorOverlay,
+  PrivacyConsentOverlay,
+} from '../components/AppOverlays'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { BackgroundTransferService } from '../services/BackgroundTransferService'
 import { StagingStorageService } from '../services/StagingStorageService'
@@ -72,10 +78,13 @@ struct Index {
   @Local draftUdpPort: string = `${DISCOVERY_PORT}`
   @Local draftTcpPort: string = `${DEFAULT_PORT}`
   @Local castPortText: string = `${DEFAULT_CAST_PORT}`
-  @Local castQuality: string = 'balanced'
+  @Local castResolution: string = '1080p'
+  @Local castFrameRate: number = 60
+  @Local supportedCastModes: Array<string> = []
   @Local showCastSettings: boolean = false
   @Local draftCastPort: string = `${DEFAULT_CAST_PORT}`
-  @Local draftCastQuality: string = 'balanced'
+  @Local draftCastResolution: string = '1080p'
+  @Local draftCastFrameRate: number = 60
   @Local castState: string = 'idle'
   @Local castDetail: string = '未在投屏'
   @Local castDeviceId: string = ''
@@ -83,9 +92,13 @@ struct Index {
   @Local castFps: number = 0
   @Local castBitrate: number = 0
   @Local castDroppedFrames: number = 0
+  @Local networkTestState: string = 'idle'
+  @Local networkTestDetail: string = '测试 Pad 到 Mac 的实际投屏链路'
   @Local compactLayout: boolean = false
   @Local showPrivacyConsentDialog: boolean = false
   @Local contentUnlocked: boolean = false
+  @Local initializationComplete: boolean = false
+  @Local initializationFailed: boolean = false
   transferService: TcpTransferService = new TcpTransferService()
   transferStore: TransferStore = new TransferStore()
   archiveService: ArchiveService = new ArchiveService()
@@ -112,8 +125,10 @@ struct Index {
     this.receiveDirectoryService, this.transferStore,
   )
   discoveryService?: DiscoveryService
-  private bootstrapped: boolean = false
+  private controllersInitialized: boolean = false
+  private bootstrapInFlight: boolean = false
   private pageActive: boolean = false
+  private pendingUiTasks: Array<() => void> = []
   private privacyAccepted: boolean = false
   private privacyConsentResolver?: (agreed: boolean) => void
   deviceId: string = ''
@@ -133,21 +148,22 @@ struct Index {
 
   aboutToAppear(): void {
     this.pageActive = true
-    if (this.bootstrapped) {
-      return
+    this.flushPendingUiTasks()
+    if (!this.controllersInitialized) {
+      this.transferController = new PadTransferController(
+        this, this.transferService, this.transferStore, this.archiveService, this.stagingStorageService,
+        this.dropUriService, this.transferStateService, this.outgoingCoordinator,
+      )
+      this.networkController = new PadNetworkController(this)
+      this.controllersInitialized = true
     }
-    this.transferController = new PadTransferController(
-      this, this.transferService, this.transferStore, this.archiveService, this.stagingStorageService,
-      this.dropUriService, this.transferStateService, this.outgoingCoordinator,
-    )
-    this.networkController = new PadNetworkController(this)
-    this.bootstrapped = true
-    this.bootstrap()
+    this.startBootstrap()
   }
 
   onPageShow(): void {
     this.pageActive = true
-    if (!this.bootstrapped || !this.privacyAccepted) {
+    this.flushPendingUiTasks()
+    if (!this.initializationComplete || !this.privacyAccepted) {
       return
     }
     this.notificationActionService.register(this.abilityContext())
@@ -178,7 +194,15 @@ struct Index {
   build() {
     Stack() {
       if (this.contentUnlocked) {
-        this.MainLayout()
+        if (this.initializationComplete) {
+          this.MainLayout()
+        } else {
+          InitializationOverlay({
+            detail: this.statusText,
+            failed: this.initializationFailed,
+            onRetry: () => this.startBootstrap(),
+          })
+        }
       } else {
         PadPrivacyBlankPage()
       }
@@ -239,9 +263,12 @@ struct Index {
       if (this.showCastSettings) {
         CastSettingsOverlay({
           port: this.draftCastPort,
-          quality: this.draftCastQuality,
+          resolution: this.draftCastResolution,
+          frameRate: this.draftCastFrameRate,
+          supportedModes: this.supportedCastModes,
           onPortChanged: (value: string) => { this.draftCastPort = value },
-          onQualityChanged: (value: string) => { this.draftCastQuality = value },
+          onResolutionChanged: (value: string) => { this.draftCastResolution = value },
+          onFrameRateChanged: (value: number) => { this.draftCastFrameRate = value },
           onCancel: () => { this.showCastSettings = false },
           onSave: () => this.screenCastController.saveSettings(),
         })
@@ -347,7 +374,10 @@ struct Index {
       tcpPort: this.localTcpPort,
       networkServiceReady: this.receiverReady && this.discoveryEnabled,
       castPort: this.castPort,
-      castQuality: this.castQuality,
+      castResolution: this.castResolution,
+      castFrameRate: this.castFrameRate,
+      networkTestState: this.networkTestState,
+      networkTestDetail: this.networkTestDetail,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
       onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
       onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
@@ -357,6 +387,7 @@ struct Index {
       onClearStaging: () => this.confirmClearHistory(),
       onEditPorts: () => this.openPortEditor(),
       onEditCast: () => this.screenCastController.openSettings(),
+      onTestCastNetwork: () => this.screenCastController.runNetworkTest(),
       onOpenPrivacy: () => this.openPrivacyPolicy(),
       onCopyDiagnostics: () => this.diagnosticController.copy(),
     })
@@ -490,13 +521,34 @@ struct Index {
     return matches.length > 0 ? matches[0] : undefined
   }
 
-  private async bootstrap(): Promise<void> {
+  private startBootstrap(): void {
+    if (this.bootstrapInFlight || this.initializationComplete) return
+    this.bootstrapInFlight = true
+    this.initializationFailed = false
+    this.statusText = '正在准备本机身份和偏好设置'
+    this.bootstrap().then((completed: boolean) => {
+      this.runOnUi(() => {
+        this.initializationComplete = completed
+        this.initializationFailed = !completed && this.privacyAccepted
+      })
+    }).catch((err: Error) => {
+      this.runOnUi(() => {
+        this.statusText = `启动失败：${errorText(err)}`
+        this.initializationComplete = false
+        this.initializationFailed = true
+      })
+    }).finally(() => {
+      this.bootstrapInFlight = false
+    })
+  }
+
+  private async bootstrap(): Promise<boolean> {
     const context = this.abilityContext()
     this.notificationActionService.register(context)
     const accepted = await this.ensurePrivacyConsent(context)
     if (!accepted) {
       this.statusText = '未同意隐私政策，服务未启动'
-      return
+      return false
     }
     await this.loadPreferences(context)
     try {
@@ -505,7 +557,7 @@ struct Index {
       this.localDeviceDisplayName = ''
       this.statusText = `设备名称初始化失败：${errorText(err)}`
       this.showToast('设备名称权限未生效，发现与连接服务未启动')
-      return
+      return false
     }
     await this.restoreTransferState(context)
     // 七天过期清理会跳过所有从本地状态恢复、仍可续传的任务。
@@ -515,12 +567,13 @@ struct Index {
       7 * 24 * 60 * 60 * 1000
     )
     await this.network().refreshNetworkName()
-    if (this.localDeviceDisplayName.length === 0) return
+    if (this.localDeviceDisplayName.length === 0) return false
     this.regeneratePairingCode()
     await this.prepareReceiveDirectory(context)
     await this.network().ensureReceiverAndDiscovery()
     this.network().startDevicePruning()
     this.networkChangeService.start(() => this.network().handleNetworkChanged())
+    return true
   }
 
   // MARK: 隐私、存储与持久化偏好
@@ -615,15 +668,18 @@ struct Index {
       this.trustedDeviceIds = saved.trustedDeviceIds; this.trustedFingerprints = saved.trustedFingerprints
       this.trustedSharedSecrets = saved.trustedSharedSecrets
       this.castPortText = saved.castPort
-      this.castQuality = saved.castQuality
+      this.castResolution = saved.castResolution
+      this.castFrameRate = saved.castFrameRate
       this.backgroundProtectionEnabled = saved.backgroundProtectionEnabled
       this.autoReceiveTrustedEnabled = saved.autoReceiveTrustedEnabled
       this.receiverEnabled = saved.receiverEnabled; this.discoveryEnabled = saved.discoveryEnabled
       await this.backgroundTransferService.setEnabled(saved.backgroundProtectionEnabled, context)
     } catch (err) {
-      this.deviceId = `pad-${Date.now()}-${Math.floor(Math.random() * 100000)}`
-      this.identityFingerprint = `${Date.now()}${Math.floor(Math.random() * 1000000000)}`
       this.statusText = `偏好读取失败：${errorText(err)}`
+      // 不能以只存在于内存中的临时身份启动配对服务；否则下一次启动会被识别为另一台设备。
+      this.deviceId = ''
+      this.identityFingerprint = ''
+      throw new Error(this.statusText)
     }
   }
 
@@ -803,13 +859,46 @@ struct Index {
   }
 
   runOnUi(task: () => void): void {
-    if (!this.pageActive) return
+    if (!this.pageActive) {
+      // 页面切到后台时网络关闭是异步的，最后一批完成/失败回执仍必须保留；
+      // 返回页面后按原顺序回放，任务本身会同步持久化传输快照。
+      this.pendingUiTasks.push(task)
+      return
+    }
     try {
       this.getUIContext().runScopedTask(task)
     } catch (_) {
       // 作用域任务失败通常意味着页面或其 UI 上下文已经销毁。
       // 此时直接执行回调会从任意工作线程修改已经失效的响应式状态。
     }
+  }
+
+  private flushPendingUiTasks(): void {
+    if (!this.pageActive || this.pendingUiTasks.length === 0) return
+    const tasks = this.pendingUiTasks
+    this.pendingUiTasks = []
+    tasks.forEach((task: () => void) => {
+      try {
+        this.getUIContext().runScopedTask(task)
+      } catch (_) {
+        // 若页面上下文又被销毁，把尚未执行的状态变更留到下一次 onPageShow。
+        this.pendingUiTasks.push(task)
+      }
+    })
+  }
+
+  startScreenCastFromRemote(deviceId: string): void {
+    const device = this.connectedDevices.find((row: DeviceInfo) => row.deviceId === deviceId)
+    if (!device) {
+      this.statusText = 'Mac 投屏请求已失效，请确认双端仍在同一局域网'
+      return
+    }
+    this.runOnUi(() => {
+      this.statusText = `${device.deviceName} 请求投屏，请在系统界面确认共享范围`
+      this.screenCastController.start(device).catch((err: Error) => {
+        this.statusText = `Mac 发起投屏失败：${errorText(err)}`
+      })
+    })
   }
 
   updateBackgroundTransferActivity(active: boolean): void {

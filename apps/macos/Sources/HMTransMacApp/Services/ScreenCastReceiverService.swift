@@ -5,9 +5,12 @@ import OSLog
 
 private let screenCastLogger = Logger(subsystem: "com.linksc.hmtrans.mac", category: "ScreenCast")
 
-/// 独立于文件传输端口的投屏接收器。所有 Network.framework 回调都串行运行，
-/// 从而保证同一时刻最多只有一台 MatePad 占用 Mac 的解码窗口。
+/// 独立于文件传输端口的投屏接收器。监听器只管理会话注册；每条已接收连接
+/// 使用自己的串行队列解析、验序和解密，避免一台 Pad 的高码率流阻塞另一台。
 final class ScreenCastReceiverService: @unchecked Sendable {
+    static let maximumConcurrentStreams = ScreenCastAdmissionPolicy.maximumConcurrentStreams
+    private static let maximumPendingHandshakes = 8
+
     fileprivate enum AuthorizationResult {
         case accepted(String)
         case rejected(String)
@@ -15,29 +18,35 @@ final class ScreenCastReceiverService: @unchecked Sendable {
 
     struct Callbacks: Sendable {
         let onListening: @Sendable (UInt16) -> Void
-        let onConnected: @Sendable (ScreenCastHello) -> Void
-        let onVideoConfig: @Sendable (ScreenCastVideoConfig) -> Void
-        let onVideoFrame: @Sendable (Data, UInt64, Bool, Bool) -> Void
-        let onDisconnected: @Sendable (String) -> Void
+        let onConnected: @Sendable (String, ScreenCastHello) -> Void
+        let onVideoConfig: @Sendable (String, ScreenCastVideoConfig) -> Void
+        let onVideoFrame: @Sendable (String, Data, UInt64, Bool, Bool) -> Void
+        let onDisconnected: @Sendable (String, String) -> Void
+        let onNetworkTestCompleted: @Sendable (ScreenCastNetworkTestResult) -> Void
         let onFailure: @Sendable (String) -> Void
     }
 
-    private let queue = DispatchQueue(label: "HMTrans.ScreenCastReceiver", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "HMTrans.ScreenCastReceiver.Registry", qos: .userInitiated)
     private var listener: NWListener?
     /// 未完成 HELLO 鉴权的连接也必须由服务持有；否则 newConnectionHandler 返回后
     /// 会话立即释放，Network.framework 虽已接受 TCP，却永远不会注册 receive 回调。
     private var sessions: [ObjectIdentifier: ScreenCastReceiverSession] = [:]
-    private var activeSession: ScreenCastReceiverSession?
+    private var activeSessions: [String: (session: ScreenCastReceiverSession, hello: ScreenCastHello)] = [:]
+    private var activeNetworkTest: ScreenCastReceiverSession?
     private var callbacks: Callbacks?
 
     func start(port: UInt16, callbacks: Callbacks) throws {
-        let listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+        guard port > 0, let endpointPort = NWEndpoint.Port(rawValue: port) else {
+            throw HMTransError.usage("投屏端口必须是 1 到 65535 之间的整数")
+        }
+        let listener = try NWListener(using: .tcp, on: endpointPort)
         queue.sync {
             self.listener?.cancel()
             let existingSessions = Array(self.sessions.values)
             self.sessions.removeAll()
-            self.activeSession = nil
-            existingSessions.forEach { $0.close(reason: "投屏服务正在重启", notifyPeer: true) }
+            self.activeSessions.removeAll()
+            self.activeNetworkTest = nil
+            existingSessions.forEach { $0.requestClose(reason: "投屏服务正在重启", notifyPeer: true) }
             self.listener = listener
             self.callbacks = callbacks
 
@@ -59,7 +68,12 @@ final class ScreenCastReceiverService: @unchecked Sendable {
                     connection.cancel()
                     return
                 }
-                let session = ScreenCastReceiverSession(connection: connection, owner: self, queue: self.queue)
+                guard self.sessions.count < Self.maximumConcurrentStreams + Self.maximumPendingHandshakes else {
+                    screenCastLogger.warning("拒绝投屏连接：未鉴权连接数量已达上限")
+                    connection.cancel()
+                    return
+                }
+                let session = ScreenCastReceiverSession(connection: connection, owner: self)
                 self.sessions[ObjectIdentifier(session)] = session
                 session.start()
             }
@@ -74,14 +88,21 @@ final class ScreenCastReceiverService: @unchecked Sendable {
             listener = nil
             let existingSessions = Array(sessions.values)
             sessions.removeAll()
-            activeSession = nil
-            existingSessions.forEach { $0.close(reason: "Mac 已停止投屏服务", notifyPeer: true) }
+            activeSessions.removeAll()
+            activeNetworkTest = nil
+            existingSessions.forEach { $0.requestClose(reason: "Mac 已停止投屏服务", notifyPeer: true) }
         }
     }
 
-    func stopActiveStream(reason: String = "Mac 已停止投屏") {
+    func stopStream(sessionID: String, reason: String = "Mac 已停止投屏") {
         queue.async { [weak self] in
-            self?.activeSession?.close(reason: reason, notifyPeer: true)
+            self?.activeSessions[sessionID]?.session.requestClose(reason: reason, notifyPeer: true)
+        }
+    }
+
+    func stopAllStreams(reason: String = "Mac 已停止全部投屏") {
+        queue.async { [weak self] in
+            self?.activeSessions.values.forEach { $0.session.requestClose(reason: reason, notifyPeer: true) }
         }
     }
 
@@ -105,8 +126,11 @@ final class ScreenCastReceiverService: @unchecked Sendable {
         guard let secret = TrustedDevicesStore.sharedSecret(for: hello.deviceId), secret.count == 64 else {
             return .rejected("该配对来自旧版本，请删除设备后重新配对以启用投屏")
         }
-        guard activeSession == nil else {
-            return .rejected("Mac 正在接收另一台设备的投屏")
+        if let reason = ScreenCastAdmissionPolicy.rejectionReason(
+            existing: activeSessions.values.map { $0.hello },
+            candidate: hello
+        ) {
+            return .rejected(reason)
         }
         return .accepted(secret)
     }
@@ -114,7 +138,7 @@ final class ScreenCastReceiverService: @unchecked Sendable {
     private func claim(_ session: ScreenCastReceiverSession, hello: ScreenCastHello) -> AuthorizationResult {
         switch authorize(hello) {
         case let .accepted(secret):
-            activeSession = session
+            activeSessions[hello.sessionId] = (session, hello)
             return .accepted(secret)
         case let .rejected(reason):
             return .rejected(reason)
@@ -123,24 +147,55 @@ final class ScreenCastReceiverService: @unchecked Sendable {
 
     private func release(_ session: ScreenCastReceiverSession, reason: String) {
         sessions.removeValue(forKey: ObjectIdentifier(session))
-        if activeSession === session {
-            activeSession = nil
-            callbacks?.onDisconnected(reason)
+        if let entry = activeSessions.first(where: { $0.value.session === session }) {
+            activeSessions.removeValue(forKey: entry.key)
+            callbacks?.onDisconnected(entry.key, reason)
+        }
+        if activeNetworkTest === session {
+            activeNetworkTest = nil
         }
     }
 
     fileprivate func accept(_ session: ScreenCastReceiverSession, hello: ScreenCastHello) -> AuthorizationResult {
-        claim(session, hello: hello)
+        queue.sync { claim(session, hello: hello) }
     }
 
-    fileprivate func publishConfig(_ config: ScreenCastVideoConfig, from session: ScreenCastReceiverSession) {
-        guard activeSession === session else { return }
-        callbacks?.onVideoConfig(config)
+    fileprivate func acceptNetworkTest(
+        _ session: ScreenCastReceiverSession,
+        hello: ScreenCastNetworkTestHello
+    ) -> AuthorizationResult {
+        queue.sync {
+            guard hello.app == "HMTrans",
+                  hello.protocol == screenCastProtocolVersion,
+                  !hello.deviceId.isEmpty,
+                  !hello.identityFingerprint.isEmpty,
+                  !hello.sessionId.isEmpty,
+                  (8 * 1_024 * 1_024...64 * 1_024 * 1_024).contains(hello.payloadBytes),
+                  TrustedDevicesStore.matches(hello.deviceId, fingerprint: hello.identityFingerprint),
+                  let secret = TrustedDevicesStore.sharedSecret(for: hello.deviceId), secret.count == 64 else {
+                return .rejected("网络测试身份或参数无效")
+            }
+            guard activeSessions.isEmpty else {
+                return .rejected("请先停止投屏再进行网络测试")
+            }
+            guard activeNetworkTest == nil else {
+                return .rejected("另一项投屏网络测试正在进行")
+            }
+            activeNetworkTest = session
+            return .accepted(secret)
+        }
+    }
+
+    fileprivate func publishConfig(
+        _ config: ScreenCastVideoConfig,
+        sessionID: String,
+        from session: ScreenCastReceiverSession
+    ) {
+        callbacks?.onVideoConfig(sessionID, config)
     }
 
     fileprivate func authenticated(_ hello: ScreenCastHello, from session: ScreenCastReceiverSession) {
-        guard activeSession === session else { return }
-        callbacks?.onConnected(hello)
+        callbacks?.onConnected(hello.sessionId, hello)
     }
 
     fileprivate func publishFrame(
@@ -148,19 +203,24 @@ final class ScreenCastReceiverService: @unchecked Sendable {
         ptsUs: UInt64,
         keyFrame: Bool,
         codecConfig: Bool,
+        sessionID: String,
         from session: ScreenCastReceiverSession
     ) {
-        guard activeSession === session else { return }
-        callbacks?.onVideoFrame(data, ptsUs, keyFrame, codecConfig)
+        callbacks?.onVideoFrame(sessionID, data, ptsUs, keyFrame, codecConfig)
+    }
+
+    fileprivate func networkTestCompleted(_ result: ScreenCastNetworkTestResult) {
+        callbacks?.onNetworkTestCompleted(result)
     }
 
     fileprivate func sessionClosed(_ session: ScreenCastReceiverSession, reason: String) {
-        release(session, reason: reason)
+        queue.async { [weak self] in self?.release(session, reason: reason) }
     }
 }
 
 private final class ScreenCastReceiverSession: @unchecked Sendable {
     private static let heartbeatTimeout: TimeInterval = 6
+    private static let handshakeTimeout: TimeInterval = 10
 
     private let connection: NWConnection
     private weak var owner: ScreenCastReceiverService?
@@ -168,18 +228,26 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
     private var parser = ScreenCastPacketParser()
     private var cipher: ScreenCastCipher?
     private var hello: ScreenCastHello?
+    private var networkTestHello: ScreenCastNetworkTestHello?
+    private var networkTestStartedAt: Date?
+    private var networkTestReceivedBytes = 0
+    private var networkTestServerResultSent = false
     private var lastHeartbeat = Date()
     private var lastHeartbeatSent = Date.distantPast
+    private var handshakeTimer: DispatchSourceTimer?
     private var heartbeatTimer: DispatchSourceTimer?
     private var outgoingSequence: UInt64 = 1
     private var lastIncomingSequence: UInt64?
     private var didPublishAuthentication = false
     private var closed = false
 
-    init(connection: NWConnection, owner: ScreenCastReceiverService, queue: DispatchQueue) {
+    init(connection: NWConnection, owner: ScreenCastReceiverService) {
         self.connection = connection
         self.owner = owner
-        self.queue = queue
+        self.queue = DispatchQueue(
+            label: "HMTrans.ScreenCastReceiver.Session.\(UUID().uuidString)",
+            qos: .userInitiated
+        )
     }
 
     func start() {
@@ -187,6 +255,7 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
             guard let self else { return }
             switch state {
             case .ready:
+                startHandshakeWatchdog()
                 receiveNext()
             case let .failed(error):
                 close(reason: "投屏连接失败：\(error.localizedDescription)", notifyPeer: false)
@@ -199,14 +268,20 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
         connection.start(queue: queue)
     }
 
+    func requestClose(reason: String, notifyPeer: Bool) {
+        queue.async { [weak self] in self?.close(reason: reason, notifyPeer: notifyPeer) }
+    }
+
     func close(reason: String, notifyPeer: Bool) {
         guard !closed else { return }
         closed = true
         screenCastLogger.info("关闭投屏连接：\(reason, privacy: .public)")
+        handshakeTimer?.cancel()
+        handshakeTimer = nil
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
         owner?.sessionClosed(self, reason: reason)
-        if notifyPeer,
+        if notifyPeer, hello != nil,
            let packet = try? encryptedPacket(
                type: .streamControl,
                payload: encodeScreenCastJSON(ScreenCastStreamControl(command: "stop"))
@@ -248,26 +323,61 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
     }
 
     private func handle(_ packet: ScreenCastPacket) throws {
-        if hello == nil {
-            let validHello = packet.header.type == .hello
+        if hello == nil, networkTestHello == nil {
+            let validFirstPacket = (packet.header.type == .hello || packet.header.type == .networkTestHello)
                 && !packet.header.flags.contains(.encrypted)
                 && isNewIncomingSequence(packet.header.sequence)
-            guard validHello else {
+            guard validFirstPacket else {
                 screenCastLogger.error(
                     "首包无效：type=\(packet.header.type.rawValue) flags=\(packet.header.flags.rawValue) seq=\(packet.header.sequence) last=\(self.lastIncomingSequence ?? 0)"
                 )
                 throw ScreenCastProtocolError.invalidHeader
             }
+            handshakeTimer?.cancel()
+            handshakeTimer = nil
             lastIncomingSequence = packet.header.sequence
-            let hello = try decodeScreenCastJSON(ScreenCastHello.self, from: packet.payload)
-            switch owner?.accept(self, hello: hello) {
+            if packet.header.type == .networkTestHello {
+                let testHello = try decodeScreenCastJSON(ScreenCastNetworkTestHello.self, from: packet.payload)
+                switch owner?.acceptNetworkTest(self, hello: testHello) {
+                case let .accepted(secret):
+                    do {
+                        cipher = try ScreenCastCipher(sharedSecret: secret)
+                        networkTestHello = testHello
+                        send(try encryptedPacket(
+                            type: .ack,
+                            payload: encodeScreenCastJSON(
+                                ScreenCastAck(accepted: true, sessionId: testHello.sessionId)
+                            )
+                        ))
+                        lastHeartbeat = Date()
+                        startHeartbeatWatchdog()
+                    } catch {
+                        owner?.sessionClosed(self, reason: error.localizedDescription)
+                        throw error
+                    }
+                case let .rejected(reason):
+                    try sendPlainAndClose(
+                        type: .ack,
+                        payload: encodeScreenCastJSON(
+                            ScreenCastAck(accepted: false, sessionId: testHello.sessionId, reason: reason)
+                        ),
+                        reason: reason
+                    )
+                case .none:
+                    close(reason: "投屏网络测试服务不可用", notifyPeer: false)
+                }
+                return
+            }
+
+            let castHello = try decodeScreenCastJSON(ScreenCastHello.self, from: packet.payload)
+            switch owner?.accept(self, hello: castHello) {
             case let .accepted(secret):
                 do {
                     cipher = try ScreenCastCipher(sharedSecret: secret)
-                    self.hello = hello
+                    self.hello = castHello
                     send(try encryptedPacket(
                         type: .ack,
-                        payload: encodeScreenCastJSON(ScreenCastAck(accepted: true, sessionId: hello.sessionId))
+                        payload: encodeScreenCastJSON(ScreenCastAck(accepted: true, sessionId: castHello.sessionId))
                     ))
                     lastHeartbeat = Date()
                     startHeartbeatWatchdog()
@@ -277,9 +387,9 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
                 }
             case let .rejected(reason):
                 try sendPlainAndClose(
-                    type: .ack,
-                    payload: encodeScreenCastJSON(
-                        ScreenCastAck(accepted: false, sessionId: hello.sessionId, reason: reason)
+                        type: .ack,
+                        payload: encodeScreenCastJSON(
+                            ScreenCastAck(accepted: false, sessionId: castHello.sessionId, reason: reason)
                     ),
                     reason: reason
                 )
@@ -306,6 +416,7 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
         }
         switch packet.header.type {
         case .videoConfig:
+            guard let hello else { throw ScreenCastProtocolError.invalidHeader }
             let config = try decodeScreenCastJSON(ScreenCastVideoConfig.self, from: payload)
             guard config.codec == "h264-annexb",
                   (1...4096).contains(config.width),
@@ -316,15 +427,58 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
                 )
                 throw ScreenCastProtocolError.invalidHeader
             }
-            owner?.publishConfig(config, from: self)
+            owner?.publishConfig(config, sessionID: hello.sessionId, from: self)
         case .videoFrame:
+            guard let hello else { throw ScreenCastProtocolError.invalidHeader }
             owner?.publishFrame(
                 payload,
                 ptsUs: packet.header.presentationTimeUs,
                 keyFrame: packet.header.flags.contains(.keyFrame),
                 codecConfig: packet.header.flags.contains(.codecConfig),
+                sessionID: hello.sessionId,
                 from: self
             )
+        case .networkTestPing:
+            guard networkTestHello != nil else { throw ScreenCastProtocolError.invalidHeader }
+            send(try encryptedPacket(type: .networkTestPong, payload: payload))
+        case .networkTestData:
+            guard let testHello = networkTestHello,
+                  !networkTestServerResultSent else {
+                throw ScreenCastProtocolError.invalidHeader
+            }
+            if networkTestStartedAt == nil { networkTestStartedAt = Date() }
+            networkTestReceivedBytes += payload.count
+            guard networkTestReceivedBytes <= testHello.payloadBytes else {
+                throw ScreenCastProtocolError.payloadTooLarge
+            }
+            if networkTestReceivedBytes == testHello.payloadBytes {
+                let elapsed = max(0.001, Date().timeIntervalSince(networkTestStartedAt ?? Date()))
+                let throughput = Double(networkTestReceivedBytes * 8) / elapsed / 1_000_000
+                let result = ScreenCastNetworkTestResult(
+                    sessionId: testHello.sessionId,
+                    receivedBytes: networkTestReceivedBytes,
+                    durationMs: max(1, Int((elapsed * 1_000).rounded())),
+                    throughputMbps: throughput,
+                    averageRttMs: 0,
+                    jitterMs: 0,
+                    recommendation: Self.recommendation(for: throughput)
+                )
+                networkTestServerResultSent = true
+                send(try encryptedPacket(type: .networkTestResult, payload: encodeScreenCastJSON(result)))
+            }
+        case .networkTestResult:
+            guard let testHello = networkTestHello, networkTestServerResultSent else {
+                throw ScreenCastProtocolError.invalidHeader
+            }
+            let result = try decodeScreenCastJSON(ScreenCastNetworkTestResult.self, from: payload)
+            guard result.sessionId == testHello.sessionId,
+                  result.receivedBytes == testHello.payloadBytes else {
+                throw ScreenCastProtocolError.invalidHeader
+            }
+            owner?.networkTestCompleted(result)
+            close(reason: "投屏网络测试完成", notifyPeer: false)
+        case .networkTestPong:
+            throw ScreenCastProtocolError.invalidHeader
         case .heartbeat:
             break
         case .end:
@@ -332,15 +486,35 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
             close(reason: end?.reason ?? "MatePad 已停止投屏", notifyPeer: false)
         case .error:
             close(reason: String(data: payload, encoding: .utf8) ?? "MatePad 投屏异常", notifyPeer: false)
-        case .hello, .ack, .streamControl:
+        case .hello, .ack, .streamControl, .networkTestHello:
             screenCastLogger.error("鉴权后收到不允许的消息：type=\(packet.header.type.rawValue)")
             throw ScreenCastProtocolError.invalidHeader
         }
     }
 
+    private static func recommendation(for throughputMbps: Double) -> String {
+        if throughputMbps >= 120 { return "双路 1080P60；单路可尝试 2K60" }
+        if throughputMbps >= 80 { return "双路 1080P60" }
+        if throughputMbps >= 50 { return "双路 1080P30" }
+        if throughputMbps >= 25 { return "单路 1080P30" }
+        return "720P30；建议改善 Wi-Fi 信号"
+    }
+
     private func isNewIncomingSequence(_ sequence: UInt64) -> Bool {
         guard let lastIncomingSequence else { return true }
         return sequence > lastIncomingSequence
+    }
+
+    private func startHandshakeWatchdog() {
+        handshakeTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.handshakeTimeout)
+        timer.setEventHandler { [weak self] in
+            guard let self, !closed, hello == nil, networkTestHello == nil else { return }
+            close(reason: "投屏握手超时", notifyPeer: false)
+        }
+        handshakeTimer = timer
+        timer.resume()
     }
 
     private func startHeartbeatWatchdog() {

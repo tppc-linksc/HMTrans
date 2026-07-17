@@ -18,7 +18,8 @@ export interface PadPreferencesSnapshot {
   trustedFingerprints: Map<string, string>
   trustedSharedSecrets: Map<string, string>
   castPort: string
-  castQuality: string
+  castResolution: string
+  castFrameRate: number
   backgroundProtectionEnabled: boolean
   autoReceiveTrustedEnabled: boolean
   receiverEnabled: boolean
@@ -50,6 +51,10 @@ export class PadPreferencesService {
         Object.keys(values).forEach((key: string) => trustedSharedSecrets.set(key, values[key]))
       } catch (_) {}
 
+      const legacyCastQuality = await store.get('castQuality', 'balanced') as string
+      const legacyResolution = legacyCastQuality === 'smooth' ? '720p' :
+        legacyCastQuality === 'quality' ? '2k' : '1080p'
+      const legacyFrameRate = legacyCastQuality === 'smooth' ? 30 : 60
       return {
         host: await store.get('lastHost', '') as string,
         remotePort: await store.get('lastPort', `${DEFAULT_PORT}`) as string,
@@ -61,7 +66,8 @@ export class PadPreferencesService {
         trustedFingerprints,
         trustedSharedSecrets,
         castPort: await store.get('castPort', `${DEFAULT_CAST_PORT}`) as string,
-        castQuality: await store.get('castQuality', 'balanced') as string,
+        castResolution: await store.get('castResolution', legacyResolution) as string,
+        castFrameRate: await store.get('castFrameRate', legacyFrameRate) as number,
         backgroundProtectionEnabled: await store.get('backgroundProtectionEnabled', true) as boolean,
         autoReceiveTrustedEnabled: await store.get('autoReceiveTrustedEnabled', true) as boolean,
         receiverEnabled: await store.get('receiverEnabled', true) as boolean,
@@ -109,11 +115,13 @@ export class PadPreferencesService {
     }
   }
 
-  async saveCastSettings(context: common.UIAbilityContext, port: string, quality: string): Promise<void> {
+  async saveCastSettings(context: common.UIAbilityContext, port: string, resolution: string,
+    frameRate: number): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, NAME)
       await store.put('castPort', port)
-      await store.put('castQuality', quality)
+      await store.put('castResolution', resolution)
+      await store.put('castFrameRate', frameRate)
       await store.flush()
     } catch (err) {
       throw new Error(`投屏设置保存失败：${errorText(err)}`)

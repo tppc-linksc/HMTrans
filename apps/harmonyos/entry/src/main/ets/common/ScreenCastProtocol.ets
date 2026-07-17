@@ -1,5 +1,5 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit'
-import { arrayBufferToString, stringToArrayBuffer } from './Bytes'
+import { arrayBufferToString, stringToArrayBuffer, toHex } from './Bytes'
 import { errorText } from './ErrorText'
 
 export const CAST_HEADER_LENGTH: number = 32
@@ -18,6 +18,11 @@ export enum CastMessageType {
   HEARTBEAT = 6,
   ERROR = 7,
   END = 8,
+  NETWORK_TEST_HELLO = 9,
+  NETWORK_TEST_DATA = 10,
+  NETWORK_TEST_PING = 11,
+  NETWORK_TEST_PONG = 12,
+  NETWORK_TEST_RESULT = 13,
 }
 
 export enum CastPacketFlags {
@@ -52,6 +57,31 @@ export interface CastAck {
   accepted: boolean
   sessionId: string
   reason?: string
+}
+
+export interface CastNetworkTestHello {
+  app: string
+  protocol: string
+  deviceId: string
+  deviceName: string
+  identityFingerprint: string
+  sessionId: string
+  payloadBytes: number
+}
+
+export interface CastNetworkTestPing {
+  index: number
+  sentAtMs: number
+}
+
+export interface CastNetworkTestResult {
+  sessionId: string
+  receivedBytes: number
+  durationMs: number
+  throughputMbps: number
+  averageRttMs: number
+  jitterMs: number
+  recommendation: string
 }
 
 /** 持久配对密钥只在两台已配对设备之间保存；投屏会为每个包使用独立随机 nonce。 */
@@ -122,6 +152,31 @@ export class ScreenCastCipher {
   }
 }
 
+/** 控制端口的投屏启动请求使用同一配对密钥做 HMAC，不传输也不记录密钥。 */
+export function screenCastControlSignature(secretHex: string, canonicalText: string): string {
+  try {
+    const keyBytes = hexToBytes(secretHex)
+    if (keyBytes.length !== 32) throw new Error('投屏配对密钥无效，请删除设备后重新配对')
+    const generator = cryptoFramework.createSymKeyGenerator('HMAC')
+    const key = generator.convertKeySync({ data: keyBytes })
+    const mac = cryptoFramework.createMac('SHA256')
+    mac.initSync(key)
+    mac.updateSync({ data: new Uint8Array(stringToArrayBuffer(canonicalText)) })
+    return toHex(mac.doFinalSync().data)
+  } catch (err) {
+    throw new Error(`投屏控制请求认证失败：${errorText(err)}`)
+  }
+}
+
+export function secureHexEquals(lhs: string, rhs: string): boolean {
+  const left = hexToBytes(lhs)
+  const right = hexToBytes(rhs)
+  if (left.length === 0 || left.length !== right.length) return false
+  let difference = 0
+  for (let index = 0; index < left.length; index++) difference |= left[index] ^ right[index]
+  return difference === 0
+}
+
 /** Uint8Array 可能只是较大底层缓冲区的视图，协议层必须只发送当前视图范围。 */
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const result = new Uint8Array(bytes.byteLength)
@@ -139,11 +194,12 @@ export function decodeCastJson<T>(value: ArrayBuffer): T {
 
 export function buildCastHeader(type: CastMessageType, flags: number, payloadLength: number,
   sequence: number, ptsUs: number): ArrayBuffer {
-  if (type < CastMessageType.HELLO || type > CastMessageType.END || (flags & 0xF8) !== 0) {
+  if (type < CastMessageType.HELLO || type > CastMessageType.NETWORK_TEST_RESULT || (flags & 0xF8) !== 0) {
     throw new Error('投屏帧头参数无效')
   }
   const encryptedOverhead = (flags & CastPacketFlags.ENCRYPTED) !== 0 ? 28 : 0
-  const limit = (type === CastMessageType.VIDEO_FRAME ? CAST_MAX_MEDIA_BYTES : CAST_MAX_CONTROL_BYTES) +
+  const limit = (type === CastMessageType.VIDEO_FRAME || type === CastMessageType.NETWORK_TEST_DATA ?
+    CAST_MAX_MEDIA_BYTES : CAST_MAX_CONTROL_BYTES) +
     encryptedOverhead
   if (!Number.isSafeInteger(payloadLength) || payloadLength < 0 || payloadLength > limit) {
     throw new Error('投屏帧超过协议上限')
@@ -171,12 +227,13 @@ export function parseCastHeader(buffer: ArrayBuffer): CastPacket {
   const length = view.getUint32(12, false)
   const rawType = view.getUint8(6)
   const flags = view.getUint8(7)
-  if (rawType < CastMessageType.HELLO || rawType > CastMessageType.END || (flags & 0xF8) !== 0) {
+  if (rawType < CastMessageType.HELLO || rawType > CastMessageType.NETWORK_TEST_RESULT || (flags & 0xF8) !== 0) {
     throw new Error('投屏帧头参数无效')
   }
   const type = rawType as CastMessageType
   const encryptedOverhead = (flags & CastPacketFlags.ENCRYPTED) !== 0 ? 28 : 0
-  const limit = (type === CastMessageType.VIDEO_FRAME ? CAST_MAX_MEDIA_BYTES : CAST_MAX_CONTROL_BYTES) +
+  const limit = (type === CastMessageType.VIDEO_FRAME || type === CastMessageType.NETWORK_TEST_DATA ?
+    CAST_MAX_MEDIA_BYTES : CAST_MAX_CONTROL_BYTES) +
     encryptedOverhead
   if (length > limit) throw new Error('投屏帧超过协议上限')
   return {

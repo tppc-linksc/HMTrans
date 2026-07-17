@@ -5,11 +5,14 @@ import {
   DeviceInfo,
   FileMeta,
   PairingRequest,
+  ScreenCastStartRequest,
   UnpairRequest,
   createPairingRequest,
   createUnpairRequest,
+  screenCastStartAuthenticationText,
   wifiIpAddress,
 } from '../common/Protocol'
+import { screenCastControlSignature, secureHexEquals } from '../common/ScreenCastProtocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 import { TransferListItem, TransferState } from '../models/TransferListItem'
@@ -20,11 +23,13 @@ import { PadNetworkHost } from './PadNetworkHost'
 
 const DEVICE_TTL_MS: number = 12000
 const DEVICE_PRUNE_INTERVAL_MS: number = 4000
+const SCREEN_CAST_REQUEST_WINDOW_MS: number = 30000
 
 /** 在页面之外管理接收、发现、在线状态与配对决策。 */
 export class PadNetworkController {
   private host: PadNetworkHost
   private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
+  private recentScreenCastRequests: Map<string, number> = new Map()
 
   constructor(host: PadNetworkHost) {
     this.host = host
@@ -101,35 +106,27 @@ export class PadNetworkController {
           })
         },
         onProgress: (current: number, total: number, meta?: FileMeta) => {
-          this.host.runOnUi(() => {
-            const progressValue = total > 0 ? Math.floor(current / total * 100) : 100
-            if (meta) {
-              this.beginIncomingTransfer(meta)
-              this.host.updateCurrentTransfer(meta.transferId, progressValue, this.host.progressDetail(meta.transferId, current, total))
-            }
-          })
+          // socket 回调回到 ArkTS 运行时；传输模型与持久化不能依赖页面是否正在显示。
+          const progressValue = total > 0 ? Math.floor(current / total * 100) : 100
+          if (meta) {
+            this.beginIncomingTransfer(meta)
+            this.host.updateCurrentTransfer(meta.transferId, progressValue,
+              this.host.progressDetail(meta.transferId, current, total))
+          }
         },
         onReceived: (meta: FileMeta, path: string) => {
-          this.host.runOnUi(() => {
-            this.host.completeTransfer(meta.transferId, true, `已保存到 ${path}`, path)
-          })
+          this.host.completeTransfer(meta.transferId, true, `已保存到 ${path}`, path)
           this.host.markReceivedFilePublished(meta.transferId, meta.fileName, path).catch((err: Error) => {
-            this.host.runOnUi(() => {
-              this.host.updateHistoryDetail(meta.transferId, `文件打开索引更新失败：${errorText(err)}`)
-            })
+            this.host.updateHistoryDetail(meta.transferId, `文件打开索引更新失败：${errorText(err)}`)
           })
         },
         onFailed: (meta: FileMeta, reason: string) => {
-          this.host.runOnUi(() => {
-            this.host.transferStore.recordDiagnostic(this.errorCodeForReason(reason), reason, meta.transferId).catch(() => {})
-            this.host.completeTransfer(meta.transferId, false, this.userMessageForReason(reason))
-          })
+          this.host.transferStore.recordDiagnostic(this.errorCodeForReason(reason), reason, meta.transferId).catch(() => {})
+          this.host.completeTransfer(meta.transferId, false, this.userMessageForReason(reason))
         },
         onInterrupted: (meta: FileMeta, reason: string) => {
-          this.host.runOnUi(() => {
-            this.host.transferStore.recordDiagnostic('TRN-RECV-INT', reason, meta.transferId).catch(() => {})
-            this.host.markCurrentTransferState(meta.transferId, TransferState.Waiting, '连接中断，已保存断点')
-          })
+          this.host.transferStore.recordDiagnostic('TRN-RECV-INT', reason, meta.transferId).catch(() => {})
+          this.host.markCurrentTransferState(meta.transferId, TransferState.Waiting, '连接中断，已保存断点')
         },
         onTransferActivity: (active: boolean) => {
           this.host.updateBackgroundTransferActivity(active)
@@ -193,6 +190,28 @@ export class PadNetworkController {
             request.requesterDeviceId,
             `${device?.deviceName ?? '对方设备'} 已解除配对`,
           )
+          return true
+        },
+        onScreenCastStart: async (request: ScreenCastStartRequest) => {
+          const now = Date.now()
+          this.recentScreenCastRequests.forEach((seenAt: number, requestId: string) => {
+            if (now - seenAt > SCREEN_CAST_REQUEST_WINDOW_MS) this.recentScreenCastRequests.delete(requestId)
+          })
+          const device = this.host.connectedDevices.find((row: DeviceInfo) =>
+            row.deviceId === request.requesterDeviceId)
+          const secret = this.host.trustedSharedSecrets.get(request.requesterDeviceId) ?? ''
+          const fresh = Math.abs(now - request.issuedAt) <= SCREEN_CAST_REQUEST_WINDOW_MS
+          const notReplayed = !this.recentScreenCastRequests.has(request.requestId)
+          const identityValid = request.targetDeviceId === this.host.deviceId && device !== undefined &&
+            this.host.identityMatches(request.requesterDeviceId, request.requesterFingerprint) && secret.length === 64
+          if (!fresh || !notReplayed || !identityValid) return false
+          const expected = screenCastControlSignature(secret, screenCastStartAuthenticationText(request))
+          if (!secureHexEquals(expected, request.signature)) return false
+
+          this.recentScreenCastRequests.set(request.requestId, now)
+          // 先返回经过认证的接收结果，再在 UI 作用域中打开系统投屏授权界面，
+          // 避免控制连接被用户确认时间占满。
+          setTimeout(() => this.host.startScreenCastFromRemote(request.requesterDeviceId), 0)
           return true
         },
       }, this.host.receiveDirectory)

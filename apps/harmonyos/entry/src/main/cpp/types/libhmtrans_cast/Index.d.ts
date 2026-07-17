@@ -34,3 +34,6 @@ export function stopCapture(): void
 
 /** 返回当前是否处于采集状态。 */
 export function isCapturing(): boolean
+
+/** 查询当前真机 H.264 硬件编码器是否支持该分辨率与帧率组合。 */
+export function isConfigurationSupported(options: ScreenCaptureOptions): boolean

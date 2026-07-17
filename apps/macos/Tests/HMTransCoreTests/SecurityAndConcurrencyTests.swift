@@ -50,6 +50,17 @@ private final class ReceiveErrorBox: @unchecked Sendable {
     func load() -> Error? { lock.withLock { value } }
 }
 
+@Test("诊断信息会脱敏所有本地磁盘路径并保留网页地址")
+func diagnosticRedactionCoversMacVolumes() {
+    let source = "来源 /Volumes/Work/private.mov，缓存 /System/Volumes/Data/tmp/a.bin，主页 ~/Downloads/a.zip，帮助 https://hmt.tppc.top/privacy.html，设备 192.168.3.204"
+    let redacted = redactDiagnosticTextForSharing(source)
+    #expect(!redacted.contains("/Volumes/"))
+    #expect(!redacted.contains("/System/"))
+    #expect(!redacted.contains("~/Downloads"))
+    #expect(redacted.contains("https://hmt.tppc.top/privacy.html"))
+    #expect(redacted.contains("<local-ip>"))
+}
+
 @Test("对端半开时网络读取会超时而不是永久阻塞")
 func stalledPeerTimesOut() async throws {
     let queue = DispatchQueue(label: "HMTransTests.StalledPeer")
@@ -89,6 +100,63 @@ func stalledPeerTimesOut() async throws {
             networkTimeout: 0.2
         )
     }
+    #expect(started.duration(to: .now) < .seconds(2))
+}
+
+@Test("慢速未完成控制消息不会阻塞后续配对连接")
+func stalledControlLineDoesNotBlockAnotherConnection() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("HMTransConcurrentReceiver-\(UUID())", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let port = UInt16.random(in: 35_000...39_000)
+    let receiver = PersistentFileReceiver()
+    try receiver.start(
+        port: port,
+        outputDirectory: root.path,
+        onPairingRequest: { $0.code == "246810" },
+        shouldAccept: { _ in false },
+        onConnectionResult: { _ in }
+    )
+    defer { receiver.stop() }
+    try await Task.sleep(for: .milliseconds(250))
+
+    let stalled = NWConnection(
+        host: NWEndpoint.Host("127.0.0.1"),
+        port: try #require(NWEndpoint.Port(rawValue: port)),
+        using: .tcp
+    )
+    let stalledReady = ListenerReadyBox()
+    let stalledQueue = DispatchQueue(label: "HMTransTests.StalledControlLine")
+    stalled.stateUpdateHandler = { state in
+        guard case .ready = state else { return }
+        stalled.send(content: Data("{".utf8), completion: .contentProcessed { _ in
+            stalledReady.markReady()
+        })
+    }
+    stalled.start(queue: stalledQueue)
+    defer { stalled.cancel() }
+    for _ in 0..<50 where !stalledReady.isReady {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    try #require(stalledReady.isReady)
+
+    let started = ContinuousClock.now
+    let response = try requestPairing(
+        host: "127.0.0.1",
+        port: port,
+        requesterDeviceId: "pad",
+        requesterName: "MatePad",
+        requesterPlatform: "HarmonyOS",
+        requesterSystemVersion: "6.1",
+        requesterIP: "127.0.0.1",
+        requesterPort: 51888,
+        code: "246810",
+        requesterFingerprint: "fingerprint",
+        networkTimeout: 1
+    )
+    #expect(response.accepted)
     #expect(started.duration(to: .now) < .seconds(2))
 }
 

@@ -89,7 +89,7 @@ export class DiscoveryService {
     const sendBeacon = async () => {
       const info = createDeviceInfo(
         deviceName, transferPort, this.deviceId, localIp, networkName, systemVersion, this.identityFingerprint,
-        undefined, screenCastPort, '0.3.0', ['send-h264']
+        undefined, screenCastPort, '0.3.0', ['send-h264', 'remote-start-picker']
       )
       for (let index = 0; index < beaconTargets.length; index++) {
         try {
@@ -158,7 +158,7 @@ export class DiscoveryService {
     this.directedReplyAt.set(deviceId, now)
     const info = createDeviceInfo(
       deviceName, transferPort, this.deviceId, localIp, networkName, systemVersion, this.identityFingerprint, deviceId,
-      screenCastPort, '0.3.0', ['send-h264']
+      screenCastPort, '0.3.0', ['send-h264', 'remote-start-picker']
     )
     udp.send({
       data: JSON.stringify(info),

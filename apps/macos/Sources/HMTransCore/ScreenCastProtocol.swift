@@ -16,6 +16,11 @@ public enum ScreenCastMessageType: UInt8, Sendable {
     case heartbeat = 6
     case error = 7
     case end = 8
+    case networkTestHello = 9
+    case networkTestData = 10
+    case networkTestPing = 11
+    case networkTestPong = 12
+    case networkTestResult = 13
 }
 
 public struct ScreenCastPacketFlags: OptionSet, Sendable {
@@ -72,7 +77,7 @@ public struct ScreenCastHeader: Sendable, Equatable {
             throw ScreenCastProtocolError.invalidHeader
         }
         let encryptionOverhead = flags.contains(.encrypted) ? 28 : 0
-        let payloadLimit = type == .videoFrame
+        let payloadLimit = type == .videoFrame || type == .networkTestData
             ? screenCastMediaPayloadLimit + encryptionOverhead
             : screenCastControlPayloadLimit + encryptionOverhead
         guard payloadLength >= 0,
@@ -106,7 +111,7 @@ public struct ScreenCastHeader: Sendable, Equatable {
             throw ScreenCastProtocolError.invalidHeader
         }
         let encryptedOverhead = data[7] & ScreenCastPacketFlags.encrypted.rawValue == 0 ? 0 : 28
-        let limit = type == .videoFrame
+        let limit = type == .videoFrame || type == .networkTestData
             ? screenCastMediaPayloadLimit + encryptedOverhead
             : screenCastControlPayloadLimit + encryptedOverhead
         guard payloadLength <= UInt32(limit) else { throw ScreenCastProtocolError.payloadTooLarge }
@@ -131,6 +136,26 @@ public struct ScreenCastHello: Codable, Sendable {
     public let width: Int
     public let height: Int
     public let frameRate: Int
+}
+
+public enum ScreenCastAdmissionPolicy: Sendable {
+    public static let maximumConcurrentStreams = 2
+
+    public static func rejectionReason(
+        existing: [ScreenCastHello],
+        candidate: ScreenCastHello
+    ) -> String? {
+        if existing.count >= maximumConcurrentStreams { return "Mac 已达到两路投屏上限" }
+        if existing.contains(where: { $0.sessionId == candidate.sessionId || $0.deviceId == candidate.deviceId }) {
+            return "该设备已有投屏会话"
+        }
+        guard !existing.isEmpty else { return nil }
+        let profiles = existing + [candidate]
+        guard profiles.allSatisfy({ $0.width <= 1_920 && $0.height <= 1_260 && $0.frameRate <= 30 }) else {
+            return "多路投屏需要所有设备使用 1080P 级 / 30P"
+        }
+        return nil
+    }
 }
 
 public struct ScreenCastAck: Codable, Sendable {
@@ -160,6 +185,72 @@ public struct ScreenCastStreamControl: Codable, Sendable {
 
 public struct ScreenCastEnd: Codable, Sendable {
     public let reason: String
+}
+
+public struct ScreenCastNetworkTestHello: Codable, Sendable {
+    public let app: String
+    public let `protocol`: String
+    public let deviceId: String
+    public let deviceName: String
+    public let identityFingerprint: String
+    public let sessionId: String
+    public let payloadBytes: Int
+
+    public init(
+        app: String = "HMTrans",
+        protocol: String = screenCastProtocolVersion,
+        deviceId: String,
+        deviceName: String,
+        identityFingerprint: String,
+        sessionId: String,
+        payloadBytes: Int
+    ) {
+        self.app = app
+        self.protocol = `protocol`
+        self.deviceId = deviceId
+        self.deviceName = deviceName
+        self.identityFingerprint = identityFingerprint
+        self.sessionId = sessionId
+        self.payloadBytes = payloadBytes
+    }
+}
+
+public struct ScreenCastNetworkTestPing: Codable, Sendable {
+    public let index: Int
+    public let sentAtMs: Int64
+
+    public init(index: Int, sentAtMs: Int64) {
+        self.index = index
+        self.sentAtMs = sentAtMs
+    }
+}
+
+public struct ScreenCastNetworkTestResult: Codable, Sendable, Equatable {
+    public let sessionId: String
+    public let receivedBytes: Int
+    public let durationMs: Int
+    public let throughputMbps: Double
+    public let averageRttMs: Double
+    public let jitterMs: Double
+    public let recommendation: String
+
+    public init(
+        sessionId: String,
+        receivedBytes: Int,
+        durationMs: Int,
+        throughputMbps: Double,
+        averageRttMs: Double,
+        jitterMs: Double,
+        recommendation: String
+    ) {
+        self.sessionId = sessionId
+        self.receivedBytes = receivedBytes
+        self.durationMs = durationMs
+        self.throughputMbps = throughputMbps
+        self.averageRttMs = averageRttMs
+        self.jitterMs = jitterMs
+        self.recommendation = recommendation
+    }
 }
 
 public struct ScreenCastPacket: Sendable {

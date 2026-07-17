@@ -32,9 +32,11 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreLocation"),
                 .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("Network"),
-                .linkedFramework("QuartzCore")
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("VideoToolbox")
             ]
         ),
         .testTarget(

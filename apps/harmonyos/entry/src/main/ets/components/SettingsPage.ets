@@ -9,7 +9,10 @@ export struct PadSettingsPage {
   @Param tcpPort: number = 51888
   @Param networkServiceReady: boolean = false
   @Param castPort: number = 51890
-  @Param castQuality: string = 'balanced'
+  @Param castResolution: string = '1080p'
+  @Param castFrameRate: number = 60
+  @Param networkTestState: string = 'idle'
+  @Param networkTestDetail: string = '测试 Pad 到 Mac 的实际投屏链路'
   @Param downloadDirectoryReady: boolean = false
   @Param onReceiverChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onDiscoveryChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
@@ -19,6 +22,7 @@ export struct PadSettingsPage {
   @Param onCheckDownload: () => void = () => {}
   @Param onEditPorts: () => void = () => {}
   @Param onEditCast: () => void = () => {}
+  @Param onTestCastNetwork: () => void = () => {}
   @Param onOpenPrivacy: () => void = () => {}
   @Param onCopyDiagnostics: () => void = () => {}
 
@@ -48,7 +52,11 @@ export struct PadSettingsPage {
           this.onEditPorts)
         Divider().color($r('app.color.divider'))
         this.NavigationRow('投屏',
-          `${this.qualityLabel()} · TCP ${this.castPort} · 仅 MatePad 投屏到 Mac`, this.onEditCast)
+          `${this.resolutionLabel()} · ${this.castFrameRate}P · TCP ${this.castPort} · 仅 MatePad 投屏到 Mac`,
+          this.onEditCast)
+        Divider().color($r('app.color.divider'))
+        this.ActionRow('投屏网络测试', this.networkTestDetail,
+          this.networkTestState === 'running' ? '测试中' : '开始', this.onTestCastNetwork)
       }.width('100%').padding({ left: 18, right: 18 }).backgroundColor($r('app.color.surface_translucent'))
         .borderRadius(22).border({ width: 1, color: $r('app.color.border_subtle') })
       Row() {
@@ -63,10 +71,10 @@ export struct PadSettingsPage {
     }.width('100%')
   }
 
-  private qualityLabel(): string {
-    if (this.castQuality === 'smooth') return '流畅画质'
-    if (this.castQuality === 'quality') return '高清画质'
-    return '均衡画质'
+  private resolutionLabel(): string {
+    if (this.castResolution === '720p') return '720P 级'
+    if (this.castResolution === '2k') return '2K 级'
+    return '1080P 级'
   }
 
   @Builder
