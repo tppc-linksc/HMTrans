@@ -15,6 +15,11 @@ VOLUME_ICON_PATH="$ICON_WORK_DIR/VolumeIcon.icns"
 DEVICE_NAME=""
 MOUNT_DIR=""
 
+# Validated Finder layout metadata for a 900 x 480 icon-view window. Embedding the
+# metadata makes the DMG layout deterministic and avoids changing the user's
+# Finder preferences while packaging.
+DMG_LAYOUT_GZIP_BASE64='H4sICLurWWoAAy5EU19TdG9yZQDtl0FPE0EUgN+UIgsFu9IixINu0ngjuCRKMBxYFwxyUAhtEAJYd7vTumGZaXa3VCQkPevVxB/gH/DoH/DszZN69OzRm852XqUWOHiC6HzN5pvpvnk7M9vd6QAAsRveNIAOABpIp4fgVDQ8TpBC94uDJDm4K0rv3XrgR/HpuRQKxQVCPrtTbjOqu0H382uan0iqL91/aUCQGdgpPuPNYuzEjch2wq2kVuI8cDtlx133abOs5xc4ix2f0bDdwPeoCNl+7DOPN23eYF601XVCE5T1icPD6Rlz0pg1zaNJ4/CuKcq3Z82jI00bK9yaWyvvBnuMv5QdJgR7PtIzkldyJH5lH0dCXndG8hVHog0OZYZHLmf1K9nRbC6XH7s6PjFe1nOuU9mthUnvFnjAQzto0K1a6HvFulPxWW0jps/jov+ClvXRntA16j05/qp0UBcx+Z6YpZBS1s63Uq1GNN7oKm9uR2I2lmO6t8yqXOTfF7O4Uo99zqJ1GkbCm04YOqxG7YOdwHFpsMJsHsd8b8OvcCZ7lW0nEdXVkCYJCvPf5ZwUrM1OYVIWdCh0JkzL98wgKTHO6GDB8mR9ULz2b8IcLMEqUIjFDL+Bt/AOPsBH+ALf4AchZIjkyBi5Tm4Qk9whM2ReNk117tK1nktY8i7tF0MWcFZr1wCG4R7UxScAHyrgiGv5wIFBtBzwCv4uxRKVeiT8+WebdroMPICHUIJQtBHRMCUs8vzZisz0tFJI8B5pmfPthkKhuIAk7wcDbaFb0gTPp9DprjY62kBb6JY0wbgUOo3W0DraQFvoljS+tAhuPghemeAOhehoA2391ZAViv+GPik9Wf/vn73/VygU/zAkvVhctOH3huAEyVpriONppwGc/kcAY5OleAKOYw20hW5Jqz8CCsV58QvPTcYaBBgAAA=='
+
 cleanup() {
   if [ -n "$DEVICE_NAME" ]; then
     diskutil eject "$DEVICE_NAME" >/dev/null 2>&1 || true
@@ -145,31 +150,12 @@ fi
 ditto "$APP_PATH" "$MOUNT_DIR/HMTrans.app"
 ln -s /Applications "$MOUNT_DIR/Applications"
 
-sleep 2
-
-osascript <<EOF >/dev/null
-tell application "Finder"
-  open disk "$VOLUME_NAME"
-  delay 1
-  set dmgWindow to container window of disk "$VOLUME_NAME"
-  set current view of dmgWindow to icon view
-  set toolbar visible of dmgWindow to false
-  set statusbar visible of dmgWindow to false
-  set bounds of dmgWindow to {160, 160, 1060, 640}
-  set theViewOptions to the icon view options of dmgWindow
-  set icon size of theViewOptions to 160
-  set text size of theViewOptions to 14
-  tell disk "$VOLUME_NAME"
-    set position of item "HMTrans.app" to {310, 220}
-    set position of item "Applications" to {590, 220}
-    update without registering applications
-    delay 1
-  end tell
-  close dmgWindow
-  open disk "$VOLUME_NAME"
-end tell
-delay 1
-EOF
+DS_STORE_PATH="$MOUNT_DIR/.DS_Store"
+printf '%s' "$DMG_LAYOUT_GZIP_BASE64" | base64 -D | gzip -dc > "$DS_STORE_PATH"
+if [ ! -s "$DS_STORE_PATH" ]; then
+  echo "Failed to write the DMG Finder layout: $DS_STORE_PATH" >&2
+  exit 1
+fi
 
 apply_volume_icon
 sync
