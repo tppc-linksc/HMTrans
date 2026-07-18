@@ -1,6 +1,7 @@
 import { socket } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
 import { errorText } from '../common/ErrorText'
+import { withTimeout } from '../common/AsyncTimeout'
 import {
   CAST_HEADER_LENGTH,
   CAST_PROTOCOL_VERSION,
@@ -41,19 +42,6 @@ interface ReceivedTestPacket {
   payload: ArrayBuffer
 }
 
-function withTimeout<T>(operation: Promise<T>, reason: string, timeoutMs: number = TEST_TIMEOUT_MS): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), timeoutMs)
-    operation.then((value: T) => {
-      clearTimeout(timer)
-      resolve(value)
-    }).catch((err: Error) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-  })
-}
-
 /**
  * 从 Pad 向 Mac 发送内存测试数据。协议复用投屏端口、配对密钥和 AES-GCM，
  * 不访问公网、不写临时文件，测量结果更接近真实投屏链路。
@@ -76,8 +64,8 @@ export class ScreenCastNetworkTestService {
   async run(target: ScreenCastNetworkTestTarget): Promise<CastNetworkTestResult> {
     const client = socket.constructTCPSocketInstance()
     this.client = client
-    this.cipher = new ScreenCastCipher(target.sharedSecret)
     this.sessionId = util.generateRandomUUID(false)
+    this.cipher = new ScreenCastCipher(target.sharedSecret, this.sessionId, 'screen-cast-network-test-v1')
     this.outgoingSequence = 1
     this.lastIncomingSequence = -1
     this.receiveBuffer = new ArrayBuffer(0)
@@ -102,7 +90,7 @@ export class ScreenCastNetworkTestService {
         data: castPacket(CastMessageType.NETWORK_TEST_HELLO, CastPacketFlags.NONE,
           encodeCastJson(hello), this.nextSequence(), 0),
       })
-      const ack = await withTimeout(ackPromise, 'Mac 未响应投屏网络测试')
+      const ack = await withTimeout(ackPromise, TEST_TIMEOUT_MS, 'Mac 未响应投屏网络测试')
       if (!ack.accepted || ack.sessionId !== this.sessionId) {
         throw new Error(ack.reason ?? 'Mac 拒绝了投屏网络测试')
       }
@@ -112,7 +100,7 @@ export class ScreenCastNetworkTestService {
         const ping: CastNetworkTestPing = { index, sentAtMs: Date.now() }
         const pongPromise = this.waitForPong()
         await this.sendEncrypted(CastMessageType.NETWORK_TEST_PING, encodeCastJson(ping))
-        const pong = await withTimeout(pongPromise, '投屏网络延迟测试超时', 5000)
+        const pong = await withTimeout(pongPromise, 5000, '投屏网络延迟测试超时')
         if (pong.index !== index) throw new Error('投屏网络测试响应乱序')
         rtts.push(Math.max(0, Date.now() - pong.sentAtMs))
       }
@@ -126,7 +114,7 @@ export class ScreenCastNetworkTestService {
         await this.sendEncrypted(CastMessageType.NETWORK_TEST_DATA, payload)
         sent += size
       }
-      const serverResult = await withTimeout(serverResultPromise, 'Mac 未返回投屏网络测试结果')
+      const serverResult = await withTimeout(serverResultPromise, TEST_TIMEOUT_MS, 'Mac 未返回投屏网络测试结果')
       const averageRtt = rtts.reduce((sum: number, value: number) => sum + value, 0) / Math.max(1, rtts.length)
       let jitterTotal = 0
       for (let index = 1; index < rtts.length; index++) jitterTotal += Math.abs(rtts[index] - rtts[index - 1])

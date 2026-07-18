@@ -14,12 +14,26 @@ struct ScreenCastDecodeOutcome: Sendable {
 }
 
 final class ScreenCastVideoRenderer: @unchecked Sendable {
+    private struct PendingFrame: @unchecked Sendable {
+        let data: Data
+        let presentationTimeUs: UInt64
+        let isKeyFrame: Bool
+        let isCodecConfig: Bool
+        let completion: @Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void
+    }
+
+    private static let maximumPendingFrames = 4
+    private static let maximumPendingBytes = 32 * 1024 * 1024
     let displayLayer: AVSampleBufferDisplayLayer
     private let decodeQueue = DispatchQueue(
         label: "HMTrans.ScreenCastVideoRenderer.\(UUID().uuidString)",
         qos: .userInteractive
     )
     private let renderer: AVSampleBufferVideoRenderer
+    private let pendingLock = NSLock()
+    private var pendingFrames: [PendingFrame] = []
+    private var pendingBytes = 0
+    private var drainScheduled = false
     private var formatDescription: CMVideoFormatDescription?
     private var decompressionSession: VTDecompressionSession?
     private var sps: Data?
@@ -41,6 +55,8 @@ final class ScreenCastVideoRenderer: @unchecked Sendable {
     }
 
     func reset() {
+        let discarded = discardPendingFrames()
+        discarded.forEach { $0(.success(ScreenCastDecodeOutcome(displayed: false, width: 0, height: 0))) }
         decodeQueue.sync {
             if let decompressionSession {
                 VTDecompressionSessionInvalidate(decompressionSession)
@@ -63,23 +79,113 @@ final class ScreenCastVideoRenderer: @unchecked Sendable {
         isCodecConfig: Bool,
         completion: @escaping @Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void
     ) {
-        decodeQueue.async { [self] in
+        let frame = PendingFrame(
+            data: data,
+            presentationTimeUs: presentationTimeUs,
+            isKeyFrame: isKeyFrame,
+            isCodecConfig: isCodecConfig,
+            completion: completion
+        )
+        let admission = admit(frame)
+        admission.discarded.forEach {
+            $0(.success(ScreenCastDecodeOutcome(displayed: false, width: 0, height: 0)))
+        }
+        guard admission.accepted else { return }
+        if admission.shouldScheduleDrain {
+            decodeQueue.async { [self] in drainPendingFrames() }
+        }
+    }
+
+    private func drainPendingFrames() {
+        while let frame = takeNextPendingFrame() {
             do {
                 let displayed = try enqueue(
-                    annexB: data,
-                    presentationTimeUs: presentationTimeUs,
-                    isKeyFrame: isKeyFrame,
-                    isCodecConfig: isCodecConfig
+                    annexB: frame.data,
+                    presentationTimeUs: frame.presentationTimeUs,
+                    isKeyFrame: frame.isKeyFrame,
+                    isCodecConfig: frame.isCodecConfig
                 )
-                completion(.success(ScreenCastDecodeOutcome(
+                frame.completion(.success(ScreenCastDecodeOutcome(
                     displayed: displayed,
                     width: Int(videoDimensions.width),
                     height: Int(videoDimensions.height)
                 )))
             } catch {
-                completion(.failure(error))
+                frame.completion(.failure(error))
             }
         }
+    }
+
+    private func admit(_ frame: PendingFrame) -> (
+        accepted: Bool,
+        shouldScheduleDrain: Bool,
+        discarded: [@Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void]
+    ) {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        var discarded: [@Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void] = []
+        // 新参数集替换旧参数集；新关键帧到达时清除旧预测帧和旧关键帧，
+        // 但保留最新参数集，使积压恢复始终从可解码边界开始。
+        if frame.isCodecConfig {
+            removePendingFrames(where: { $0.isCodecConfig }, discarded: &discarded)
+        } else if frame.isKeyFrame {
+            removePendingFrames(where: { !$0.isCodecConfig }, discarded: &discarded)
+        }
+        while pendingFrames.count >= Self.maximumPendingFrames ||
+                pendingBytes + frame.data.count > Self.maximumPendingBytes {
+            if let index = pendingFrames.firstIndex(where: { !$0.isKeyFrame && !$0.isCodecConfig }) {
+                let removed = pendingFrames.remove(at: index)
+                pendingBytes -= removed.data.count
+                discarded.append(removed.completion)
+            } else if !frame.isKeyFrame && !frame.isCodecConfig {
+                discarded.append(frame.completion)
+                return (false, false, discarded)
+            } else if !pendingFrames.isEmpty {
+                let removed = pendingFrames.removeFirst()
+                pendingBytes -= removed.data.count
+                discarded.append(removed.completion)
+            } else {
+                discarded.append(frame.completion)
+                return (false, false, discarded)
+            }
+        }
+        pendingFrames.append(frame)
+        pendingBytes += frame.data.count
+        let shouldSchedule = !drainScheduled
+        drainScheduled = true
+        return (true, shouldSchedule, discarded)
+    }
+
+    private func removePendingFrames(
+        where shouldRemove: (PendingFrame) -> Bool,
+        discarded: inout [@Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void]
+    ) {
+        for index in pendingFrames.indices.reversed() where shouldRemove(pendingFrames[index]) {
+            let removed = pendingFrames.remove(at: index)
+            pendingBytes -= removed.data.count
+            discarded.append(removed.completion)
+        }
+    }
+
+    private func takeNextPendingFrame() -> PendingFrame? {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        guard !pendingFrames.isEmpty else {
+            drainScheduled = false
+            return nil
+        }
+        let frame = pendingFrames.removeFirst()
+        pendingBytes -= frame.data.count
+        return frame
+    }
+
+    private func discardPendingFrames() -> [@Sendable (Result<ScreenCastDecodeOutcome, Error>) -> Void] {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        let completions = pendingFrames.map(\.completion)
+        pendingFrames.removeAll(keepingCapacity: true)
+        pendingBytes = 0
+        return completions
     }
 
     private func enqueue(
@@ -144,8 +250,9 @@ final class ScreenCastVideoRenderer: @unchecked Sendable {
             throw ScreenCastVideoError.cannotCreateBlockBuffer(createBlockStatus)
         }
         let replaceStatus = avcc.withUnsafeBytes { bytes in
-            CMBlockBufferReplaceDataBytes(
-                with: bytes.baseAddress!,
+            guard let baseAddress = bytes.baseAddress else { return kCMBlockBufferBadLengthParameterErr }
+            return CMBlockBufferReplaceDataBytes(
+                with: baseAddress,
                 blockBuffer: blockBuffer,
                 offsetIntoDestination: 0,
                 dataLength: avcc.count
@@ -280,9 +387,12 @@ final class ScreenCastVideoRenderer: @unchecked Sendable {
         var result: CMFormatDescription?
         let status: OSStatus = sps.withUnsafeBytes { spsBytes in
             pps.withUnsafeBytes { ppsBytes in
+                guard let spsAddress = spsBytes.bindMemory(to: UInt8.self).baseAddress,
+                      let ppsAddress = ppsBytes.bindMemory(to: UInt8.self).baseAddress
+                else { return kCMFormatDescriptionError_InvalidParameter }
                 var pointers: [UnsafePointer<UInt8>] = [
-                    spsBytes.bindMemory(to: UInt8.self).baseAddress!,
-                    ppsBytes.bindMemory(to: UInt8.self).baseAddress!,
+                    spsAddress,
+                    ppsAddress,
                 ]
                 var sizes = [sps.count, pps.count]
                 return CMVideoFormatDescriptionCreateFromH264ParameterSets(

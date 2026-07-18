@@ -1,6 +1,7 @@
 import { socket } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
 import { errorText } from '../common/ErrorText'
+import { withTimeout } from '../common/AsyncTimeout'
 import {
   CAST_HEADER_LENGTH,
   CAST_HEARTBEAT_INTERVAL_MS,
@@ -29,6 +30,7 @@ const NATIVE_CODEC_DATA_FLAG: number = 1 << 3
 
 export type CastResolution = '720p' | '1080p' | '2k'
 export type CastSenderState = 'idle' | 'connecting' | 'authorizing' | 'casting' | 'reconnecting' | 'failed'
+export type CastNetworkTestState = 'idle' | 'running' | 'completed' | 'failed'
 
 export interface ScreenCastTarget {
   host: string
@@ -126,6 +128,7 @@ export class ScreenCastSenderService {
   private target?: ScreenCastTarget
   private cipher?: ScreenCastCipher
   private sessionId: string = ''
+  private connectionId: string = ''
   private sequence: number = 1
   private queue: Array<QueuedFrame> = []
   private queuedBytes: number = 0
@@ -178,9 +181,10 @@ export class ScreenCastSenderService {
       const nativeModule = await this.ensureNativeModule()
       if (!this.stopped) await this.stop('重新开始投屏')
       this.stopped = false
-      this.cipher = new ScreenCastCipher(target.sharedSecret)
       this.captureOptions = captureOptions(target.resolution, target.frameRate)
       this.sessionId = util.generateRandomUUID(false)
+      this.connectionId = ''
+      this.cipher = undefined
       this.sequence = 1
       this.queue = []
       this.queuedBytes = 0
@@ -260,10 +264,14 @@ export class ScreenCastSenderService {
     try {
       await client.connect({ address: { address: target.host, port: target.port }, timeout: 10000 })
       this.client = client
+      // 每次 TCP 建连（包括自动重连）都使用新的上下文密钥，旧连接密文不能在新连接重放。
+      this.connectionId = util.generateRandomUUID(false)
+      this.cipher = new ScreenCastCipher(target.sharedSecret, `${this.sessionId}|${this.connectionId}`)
       const hello: CastHello = {
         app: 'HMTrans', protocol: CAST_PROTOCOL_VERSION, deviceId: target.localDeviceId,
         deviceName: target.localDeviceName, identityFingerprint: target.localFingerprint,
-        sessionId: this.sessionId, codec: 'h264-annexb', width: this.captureOptions.width,
+        sessionId: this.sessionId, connectionId: this.connectionId,
+        codec: 'h264-annexb', width: this.captureOptions.width,
         height: this.captureOptions.height, frameRate: this.captureOptions.frameRate,
       }
       await client.send({ data: castPacket(CastMessageType.HELLO, CastPacketFlags.NONE, encodeCastJson(hello), 0, 0) })
@@ -608,12 +616,4 @@ function captureErrorName(errorCode: number): string {
     case 9: return '当前设备不支持该录屏配置'
     default: return '系统返回异常'
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), timeoutMs)
-    promise.then((value: T) => { clearTimeout(timer); resolve(value) })
-      .catch((err: Error) => { clearTimeout(timer); reject(err) })
-  })
 }

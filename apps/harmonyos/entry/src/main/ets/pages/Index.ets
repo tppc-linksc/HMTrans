@@ -1,8 +1,14 @@
 import { common } from '@kit.AbilityKit'
 import { preferences } from '@kit.ArkData'
 import { DEFAULT_CAST_PORT, DEFAULT_PORT, DISCOVERY_PORT, DeviceInfo, FileMeta } from '../common/Protocol'
+import { HMTRANS_SECURITY_VERSION } from '../common/PairingSecurity'
 import { nowText } from '../common/Formatters'
-import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
+import {
+  TransferDirection,
+  TransferListItem,
+  TransferListItemOptions,
+  TransferState,
+} from '../models/TransferListItem'
 import { PadConnectionPage } from '../components/ConnectionPage'
 import { TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
@@ -29,6 +35,7 @@ import { NetworkChangeService } from '../services/NetworkChangeService'
 import { PadDialogService } from '../services/PadDialogService'
 import { DeviceIdentityService } from '../services/DeviceIdentityService'
 import { TransferNotificationActionService } from '../services/TransferNotificationActionService'
+import { CastNetworkTestState, CastSenderState } from '../services/ScreenCastSenderService'
 import { TransferSnapshot, TransferStore } from '../persistence/TransferStore'
 import { errorText } from '../common/ErrorText'
 import { PadTransferController } from '../controllers/PadTransferController'
@@ -44,6 +51,15 @@ const PRIVACY_ACCEPTED_KEY: string = 'privacyAccepted'
 const PRIVACY_ACCEPTED_VERSION_KEY: string = 'privacyAcceptedVersion'
 const PRIVACY_VERSION: string = '2026-07-16'
 const PRIVACY_POLICY_URL: string = 'https://hmt.tppc.top/privacy.html'
+const MAX_PENDING_UI_TASKS: number = 256
+const PENDING_UI_TASK_TTL_MS: number = 2 * 60 * 1000
+const MAX_PENDING_UI_TASK_ATTEMPTS: number = 2
+
+interface PendingUiTask {
+  operation: () => void
+  enqueuedAt: number
+  attempts: number
+}
 
 @Entry
 @ComponentV2
@@ -85,14 +101,14 @@ struct Index {
   @Local draftCastPort: string = `${DEFAULT_CAST_PORT}`
   @Local draftCastResolution: string = '1080p'
   @Local draftCastFrameRate: number = 60
-  @Local castState: string = 'idle'
+  @Local castState: CastSenderState = 'idle'
   @Local castDetail: string = '未在投屏'
   @Local castDeviceId: string = ''
   @Local castDeviceName: string = ''
   @Local castFps: number = 0
   @Local castBitrate: number = 0
   @Local castDroppedFrames: number = 0
-  @Local networkTestState: string = 'idle'
+  @Local networkTestState: CastNetworkTestState = 'idle'
   @Local networkTestDetail: string = '测试 Pad 到 Mac 的实际投屏链路'
   @Local compactLayout: boolean = false
   @Local showPrivacyConsentDialog: boolean = false
@@ -128,13 +144,14 @@ struct Index {
   private controllersInitialized: boolean = false
   private bootstrapInFlight: boolean = false
   private pageActive: boolean = false
-  private pendingUiTasks: Array<() => void> = []
+  private pendingUiTasks: Array<PendingUiTask> = []
   private privacyAccepted: boolean = false
   private privacyConsentResolver?: (agreed: boolean) => void
   deviceId: string = ''
   identityFingerprint: string = ''
   trustedFingerprints: Map<string, string> = new Map()
   trustedSharedSecrets: Map<string, string> = new Map()
+  trustedSecurityVersions: Map<string, number> = new Map()
   deviceLastSeenAt: Map<string, number> = new Map()
   confirmedDeviceLastSeenAt: Map<string, number> = new Map()
   activeTransferDeviceIds: Map<string, string> = new Map()
@@ -435,7 +452,7 @@ struct Index {
     const matches = item.deviceId.length > 0 ?
       this.freshDevices.filter((device: DeviceInfo) => device.deviceId === item.deviceId) :
       this.freshDevices.filter((device: DeviceInfo) => device.deviceName === item.peerName)
-    if (item.direction !== '发送' || matches.length !== 1) {
+    if (item.direction !== TransferDirection.Sending || matches.length !== 1) {
       this.statusText = `请先重新连接 ${item.peerName}`
       return
     }
@@ -667,6 +684,7 @@ struct Index {
       this.deviceId = saved.deviceId; this.identityFingerprint = saved.identityFingerprint
       this.trustedDeviceIds = saved.trustedDeviceIds; this.trustedFingerprints = saved.trustedFingerprints
       this.trustedSharedSecrets = saved.trustedSharedSecrets
+      this.trustedSecurityVersions = saved.trustedSecurityVersions
       this.castPortText = saved.castPort
       this.castResolution = saved.castResolution
       this.castFrameRate = saved.castFrameRate
@@ -691,7 +709,7 @@ struct Index {
       const restoredCurrent: Array<TransferListItem> = []
       const unavailableHistory: Array<TransferListItem> = []
       snapshot.current.forEach((item: TransferListItem) => {
-        if (item.direction === '发送' && !this.archiveService.sourceExists(item.stagingPath)) {
+        if (item.direction === TransferDirection.Sending && !this.archiveService.sourceExists(item.stagingPath)) {
           unavailableHistory.push(this.sourceUnavailableItem(item))
           return
         }
@@ -806,10 +824,13 @@ struct Index {
       this.trustedDeviceIds = this.trustedDeviceIds.concat([deviceId])
     }
     this.trustedFingerprints.set(deviceId, fingerprint)
-    if (sharedSecret && sharedSecret.length === 64) this.trustedSharedSecrets.set(deviceId, sharedSecret.toLowerCase())
+    if (sharedSecret && sharedSecret.length === 64) {
+      this.trustedSharedSecrets.set(deviceId, sharedSecret.toLowerCase())
+      this.trustedSecurityVersions.set(deviceId, HMTRANS_SECURITY_VERSION)
+    }
     try {
       await this.padPreferencesService.saveTrust(this.abilityContext(), this.trustedDeviceIds,
-        this.trustedFingerprints, this.trustedSharedSecrets)
+        this.trustedFingerprints, this.trustedSharedSecrets, this.trustedSecurityVersions)
     } catch (err) {
       this.statusText = `配对信任保存失败：${errorText(err)}`
       throw new Error(errorText(err))
@@ -821,6 +842,7 @@ struct Index {
     this.trustedDeviceIds = this.trustedDeviceIds.filter((id: string) => id !== deviceId)
     this.trustedFingerprints.delete(deviceId)
     this.trustedSharedSecrets.delete(deviceId)
+    this.trustedSecurityVersions.delete(deviceId)
     this.persistedDevices = this.persistedDevices.filter((row: DeviceInfo) => row.deviceId !== deviceId)
     this.selectedDeviceIds = this.selectedDeviceIds.filter((id: string) => id !== deviceId)
     this.confirmedDeviceLastSeenAt.delete(deviceId)
@@ -832,7 +854,7 @@ struct Index {
       await this.saveTarget()
     }
     await this.padPreferencesService.saveTrust(this.abilityContext(), this.trustedDeviceIds,
-      this.trustedFingerprints, this.trustedSharedSecrets)
+      this.trustedFingerprints, this.trustedSharedSecrets, this.trustedSecurityVersions)
     await this.transferStore.removeDevice(deviceId)
     this.statusText = statusMessage
   }
@@ -848,7 +870,9 @@ struct Index {
     if (!deviceId || deviceId.length === 0) {
       return false
     }
-    return this.trustedDeviceIds.indexOf(deviceId) >= 0
+    return this.trustedDeviceIds.indexOf(deviceId) >= 0 &&
+      this.trustedSecurityVersions.get(deviceId) === HMTRANS_SECURITY_VERSION &&
+      (this.trustedSharedSecrets.get(deviceId)?.length ?? 0) === 64
   }
 
   identityMatches(deviceId?: string, fingerprint?: string): boolean {
@@ -862,7 +886,7 @@ struct Index {
     if (!this.pageActive) {
       // 页面切到后台时网络关闭是异步的，最后一批完成/失败回执仍必须保留；
       // 返回页面后按原顺序回放，任务本身会同步持久化传输快照。
-      this.pendingUiTasks.push(task)
+      this.enqueueUiTask(task)
       return
     }
     try {
@@ -870,6 +894,7 @@ struct Index {
     } catch (_) {
       // 作用域任务失败通常意味着页面或其 UI 上下文已经销毁。
       // 此时直接执行回调会从任意工作线程修改已经失效的响应式状态。
+      this.enqueueUiTask(task)
     }
   }
 
@@ -877,14 +902,22 @@ struct Index {
     if (!this.pageActive || this.pendingUiTasks.length === 0) return
     const tasks = this.pendingUiTasks
     this.pendingUiTasks = []
-    tasks.forEach((task: () => void) => {
+    const now = Date.now()
+    tasks.forEach((pending: PendingUiTask) => {
+      if (now - pending.enqueuedAt > PENDING_UI_TASK_TTL_MS ||
+        pending.attempts >= MAX_PENDING_UI_TASK_ATTEMPTS) return
       try {
-        this.getUIContext().runScopedTask(task)
+        this.getUIContext().runScopedTask(pending.operation)
       } catch (_) {
         // 若页面上下文又被销毁，把尚未执行的状态变更留到下一次 onPageShow。
-        this.pendingUiTasks.push(task)
+        this.enqueueUiTask(pending.operation, pending.enqueuedAt, pending.attempts + 1)
       }
     })
+  }
+
+  private enqueueUiTask(operation: () => void, enqueuedAt: number = Date.now(), attempts: number = 0): void {
+    if (this.pendingUiTasks.length >= MAX_PENDING_UI_TASKS) this.pendingUiTasks.shift()
+    this.pendingUiTasks.push({ operation, enqueuedAt, attempts })
   }
 
   startScreenCastFromRemote(deviceId: string): void {
@@ -915,7 +948,9 @@ struct Index {
   }
 
   abilityContext(): common.UIAbilityContext {
-    return this.getUIContext().getHostContext() as common.UIAbilityContext
+    const context = this.getUIContext().getHostContext()
+    if (!context) throw new Error('当前页面尚未绑定 UIAbilityContext')
+    return context as common.UIAbilityContext
   }
 
   async startReceiverForSettings(): Promise<boolean> {
@@ -1049,7 +1084,7 @@ struct Index {
     this.transfers().confirmCancelTransferGroup(item)
   }
 
-  markCurrentTransferState(id: string, state: string, detail: string): void {
+  markCurrentTransferState(id: string, state: TransferState, detail: string): void {
     this.transfers().markCurrentTransferState(id, state, detail)
   }
 

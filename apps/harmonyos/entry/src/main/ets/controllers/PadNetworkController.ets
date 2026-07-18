@@ -1,21 +1,25 @@
 import { common } from '@kit.AbilityKit'
 import { wifiManager } from '@kit.ConnectivityKit'
-import { util } from '@kit.ArkTS'
 import {
   DeviceInfo,
   FileMeta,
   PairingRequest,
   ScreenCastStartRequest,
   UnpairRequest,
-  createPairingRequest,
-  createUnpairRequest,
   screenCastStartAuthenticationText,
   wifiIpAddress,
 } from '../common/Protocol'
+import {
+  authenticatedUnpairRequest,
+  HMTRANS_SECURITY_VERSION,
+  PairingInitiatorSession,
+  verifyFileMetaAuthentication,
+  verifyUnpairRequest,
+} from '../common/PairingSecurity'
 import { screenCastControlSignature, secureHexEquals } from '../common/ScreenCastProtocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
-import { TransferListItem, TransferState } from '../models/TransferListItem'
+import { TransferDirection, TransferListItem, TransferState } from '../models/TransferListItem'
 import { SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
 import { DeviceIdentityService } from '../services/DeviceIdentityService'
@@ -24,12 +28,15 @@ import { PadNetworkHost } from './PadNetworkHost'
 const DEVICE_TTL_MS: number = 12000
 const DEVICE_PRUNE_INTERVAL_MS: number = 4000
 const SCREEN_CAST_REQUEST_WINDOW_MS: number = 30000
+const FILE_AUTHENTICATION_WINDOW_MS: number = 5 * 60 * 1000
+const MAX_RECENT_FILE_AUTHENTICATIONS: number = 2048
 
 /** 在页面之外管理接收、发现、在线状态与配对决策。 */
 export class PadNetworkController {
   private host: PadNetworkHost
   private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
   private recentScreenCastRequests: Map<string, number> = new Map()
+  private recentFileAuthentications: Map<string, number> = new Map()
 
   constructor(host: PadNetworkHost) {
     this.host = host
@@ -51,7 +58,7 @@ export class PadNetworkController {
       id: meta.transferId,
       fileName: meta.fileName,
       peerName: meta.senderName ?? meta.senderPlatform ?? 'Mac',
-      direction: '接收',
+      direction: TransferDirection.Receiving,
       progress: 0,
       detail: `等待接收 · ${sourceSummary} · 载荷 ${formatBytes(meta.fileSize)}`,
       state: TransferState.Active,
@@ -132,14 +139,18 @@ export class PadNetworkController {
           this.host.updateBackgroundTransferActivity(active)
         },
         onIncoming: async (meta: FileMeta) => {
-          if (this.host.identityMatches(meta.senderDeviceId, meta.senderFingerprint) && this.host.autoReceiveTrustedEnabled) {
+          const secret = this.host.trustedSharedSecrets.get(meta.senderDeviceId ?? '') ?? ''
+          const authenticated = this.host.identityMatches(meta.senderDeviceId, meta.senderFingerprint) &&
+            secret.length === 64 && verifyFileMetaAuthentication(meta, secret) &&
+            this.acceptFileAuthentication(meta)
+          if (authenticated && this.host.autoReceiveTrustedEnabled) {
             this.host.runOnUi(() => {
               this.beginIncomingTransfer(meta)
               this.host.statusText = `自动接收：${meta.fileName}`
             })
             return true
           }
-          if (this.host.identityMatches(meta.senderDeviceId, meta.senderFingerprint)) {
+          if (authenticated) {
             return await this.showIncomingPrompt(meta)
           }
           this.host.runOnUi(() => {
@@ -147,17 +158,16 @@ export class PadNetworkController {
           })
           return false
         },
-        onPairing: async (request: PairingRequest) => {
-          const expected = this.host.pairingCode.replace(/\D/g, '')
+        onPairingCode: async (request: PairingRequest) => {
           const accepted = this.host.pairingSeconds > 0 &&
-            request.code.replace(/\D/g, '') === expected &&
-            request.requesterFingerprint !== undefined && request.requesterFingerprint.length > 0
-          if (accepted) {
-            await this.host.trustDevice(
-              request.requesterDeviceId,
-              request.requesterFingerprint,
-              request.pairingSecret,
-            )
+            request.targetDeviceId === this.host.deviceId &&
+            request.targetFingerprint === this.host.identityFingerprint &&
+            request.requesterFingerprint.length > 0 &&
+            request.securityVersion === HMTRANS_SECURITY_VERSION
+          return accepted ? this.host.pairingCode : undefined
+        },
+        onPairingEstablished: async (request: PairingRequest, sharedSecret: string) => {
+            await this.host.trustDevice(request.requesterDeviceId, request.requesterFingerprint, sharedSecret)
             const pairedDevice: DeviceInfo = {
               app: 'HMTrans',
               version: request.requesterSystemVersion,
@@ -175,14 +185,14 @@ export class PadNetworkController {
             await this.host.rememberDevice(pairedDevice)
             this.host.runOnUi(() => {
               this.selectDevice(pairedDevice)
-              this.host.statusText = `已与 ${request.requesterName} 完成配对，正在确认连接`
+              this.host.statusText = `已与 ${request.requesterName} 完成安全配对，正在确认连接`
             })
-          }
-          return accepted
         },
         onUnpair: async (request: UnpairRequest) => {
-          const accepted = request.targetDeviceId === this.host.deviceId &&
-            this.host.identityMatches(request.requesterDeviceId, request.requesterFingerprint)
+          const secret = this.host.trustedSharedSecrets.get(request.requesterDeviceId) ?? ''
+          const accepted = request.targetDeviceId === this.host.deviceId && secret.length === 64 &&
+            this.host.identityMatches(request.requesterDeviceId, request.requesterFingerprint) &&
+            verifyUnpairRequest(request, secret)
           if (!accepted) return false
           const device = this.host.nearbyDevices.find((row: DeviceInfo) =>
             row.deviceId === request.requesterDeviceId)
@@ -226,6 +236,26 @@ export class PadNetworkController {
     }
   }
 
+  private acceptFileAuthentication(meta: FileMeta): boolean {
+    const id = meta.authenticationId ?? ''
+    if (id.length === 0) return false
+    const now = Date.now()
+    this.recentFileAuthentications.forEach((seenAt: number, authenticationId: string) => {
+      if (now - seenAt > FILE_AUTHENTICATION_WINDOW_MS) this.recentFileAuthentications.delete(authenticationId)
+    })
+    if (this.recentFileAuthentications.has(id)) return false
+    if (this.recentFileAuthentications.size >= MAX_RECENT_FILE_AUTHENTICATIONS) {
+      let oldestId: string = ''
+      let oldestAt: number = Number.MAX_SAFE_INTEGER
+      this.recentFileAuthentications.forEach((seenAt: number, authenticationId: string) => {
+        if (seenAt < oldestAt) { oldestAt = seenAt; oldestId = authenticationId }
+      })
+      if (oldestId.length > 0) this.recentFileAuthentications.delete(oldestId)
+    }
+    this.recentFileAuthentications.set(id, now)
+    return true
+  }
+
   errorCodeForReason(reason: string): string {
     if (reason.indexOf('insufficient_space') >= 0) return 'STO-SPACE-001'
     if (reason.indexOf('hash_mismatch') >= 0) return 'TRN-HASH-001'
@@ -267,6 +297,7 @@ export class PadNetworkController {
             this.host.trustedDeviceIds = this.host.trustedDeviceIds.filter((id: string) => id !== device.deviceId)
             this.host.trustedFingerprints.delete(device.deviceId)
             this.host.trustedSharedSecrets.delete(device.deviceId)
+            this.host.trustedSecurityVersions.delete(device.deviceId)
             this.host.selectedDeviceIds = this.host.selectedDeviceIds.filter((id: string) => id !== device.deviceId)
             this.host.statusText = `设备身份已变化，请重新配对：${device.deviceName}`
             this.host.transferStore.recordDiagnostic(
@@ -473,7 +504,7 @@ export class PadNetworkController {
       const hasSource = this.host.archiveService.sourceExists(item.stagingPath)
       const routesToDevice = item.deviceId.length > 0 ? item.deviceId === device.deviceId :
         item.peerName === device.deviceName && sameNameCount === 1
-      return item.direction === '发送' && item.state === TransferState.Waiting && hasSource &&
+      return item.direction === TransferDirection.Sending && item.state === TransferState.Waiting && hasSource &&
         routesToDevice && !this.host.activeTransferDeviceIds.has(item.id)
     })
     candidates.forEach((item: TransferListItem) => {
@@ -539,12 +570,16 @@ export class PadNetworkController {
 
   /** 用户主动移除设备时，先发出远端撤销通知，再立即清除本机状态。 */
   async forgetDevice(device: DeviceInfo): Promise<void> {
-    const request = createUnpairRequest(
-      this.host.deviceId,
-      this.host.identityFingerprint,
-      device.deviceId,
-    )
-    this.notifyUnpairWithRetry(device, request)
+    const secret = this.host.trustedSharedSecrets.get(device.deviceId)
+    if (secret) {
+      const request = authenticatedUnpairRequest(
+        this.host.deviceId,
+        this.host.identityFingerprint,
+        device.deviceId,
+        secret,
+      )
+      this.notifyUnpairWithRetry(device, request)
+    }
     await this.host.forgetTrustedDevice(device.deviceId, `已移除设备：${device.deviceName}`)
   }
 
@@ -556,27 +591,25 @@ export class PadNetworkController {
     }
     try {
       this.host.statusText = `正在校验 ${device.deviceName} 的配对码`
-      // 由输入六位码的一端生成共享密钥；对端校验成功后双方同时落盘。
-      const pairingSecret = (util.generateRandomUUID(false) + util.generateRandomUUID(false))
-        .replace(/-/g, '').toLowerCase()
-      const request = createPairingRequest(
-        this.host.deviceId,
-        this.host.localDeviceName(),
-        'HarmonyOS',
-        this.host.localSystemVersion(),
-        this.host.localIp.length > 0 ? this.host.localIp : '0.0.0.0',
-        this.host.localTcpPort,
-        this.host.pairingInput,
-        this.host.identityFingerprint,
-        pairingSecret
-      )
-      const response = await this.host.transferService.requestPairing(device.ip, device.port, request)
-      if (!response.accepted) {
-        this.host.statusText = response.reason === 'protocol_incompatible' ?
+      const session = new PairingInitiatorSession({
+        requesterDeviceId: this.host.deviceId,
+        requesterName: this.host.localDeviceName(),
+        requesterPlatform: 'HarmonyOS',
+        requesterSystemVersion: this.host.localSystemVersion(),
+        requesterIP: this.host.localIp.length > 0 ? this.host.localIp : '0.0.0.0',
+        requesterPort: this.host.localTcpPort,
+        requesterFingerprint: this.host.identityFingerprint,
+        targetDeviceId: device.deviceId,
+        targetFingerprint: device.identityFingerprint ?? '',
+        code: this.host.pairingInput,
+      })
+      const outcome = await this.host.transferService.requestPairing(device.ip, device.port, session)
+      if (!outcome.response.accepted || !outcome.sharedSecret) {
+        this.host.statusText = outcome.response.reason === 'protocol_incompatible' ?
           '配对失败：双端协议版本不一致，请更新到同一版本' : '配对失败：配对码错误或已过期'
         return
       }
-      await this.host.trustDevice(device.deviceId, device.identityFingerprint, pairingSecret)
+      await this.host.trustDevice(device.deviceId, device.identityFingerprint, outcome.sharedSecret)
       await this.host.rememberDevice(device)
       this.host.pairingTarget = undefined
       this.host.pairingInput = ''

@@ -21,7 +21,7 @@ export class TransferStateService {
     item.confirmedOffset = Math.floor(item.fileSize * progress / 100); item.updatedAt = Date.now()
   }
 
-  mark(current: Array<TransferListItem>, id: string, state: string, detail: string): void {
+  mark(current: Array<TransferListItem>, id: string, state: TransferState, detail: string): void {
     const item = current.find((row: TransferListItem) => row.id === id)
     if (!item) return
     item.state = state; item.detail = detail; item.updatedAt = Date.now()

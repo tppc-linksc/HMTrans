@@ -90,6 +90,10 @@ public struct FileMeta: Codable, Sendable {
     public let sourceSize: Int64?
     public let sourceFileCount: Int?
     public let senderFingerprint: String?
+    public let authenticationVersion: Int?
+    public let authenticationId: String?
+    public let issuedAt: Int64?
+    public let signature: String?
 
     public init(
         type: String = "file_meta", app: String = "HMTrans", version: String = hmTransProtocolVersion,
@@ -97,7 +101,9 @@ public struct FileMeta: Codable, Sendable {
         senderPlatform: String? = nil, fileName: String, fileSize: Int64, sha256: String,
         chunkSize: Int = defaultChunkSize, totalChunks: Int, resumeSupported: Bool? = true,
         sourceKind: String? = "file", payloadKind: String? = "file", sourceName: String? = nil,
-        sourceSize: Int64? = nil, sourceFileCount: Int? = nil, senderFingerprint: String? = nil
+        sourceSize: Int64? = nil, sourceFileCount: Int? = nil, senderFingerprint: String? = nil,
+        authenticationVersion: Int? = nil, authenticationId: String? = nil,
+        issuedAt: Int64? = nil, signature: String? = nil
     ) {
         self.type = type; self.app = app; self.version = version; self.transferId = transferId
         self.senderDeviceId = senderDeviceId; self.senderName = senderName; self.senderPlatform = senderPlatform
@@ -106,6 +112,19 @@ public struct FileMeta: Codable, Sendable {
         self.sourceKind = sourceKind; self.payloadKind = payloadKind; self.sourceName = sourceName
         self.sourceSize = sourceSize; self.sourceFileCount = sourceFileCount
         self.senderFingerprint = senderFingerprint
+        self.authenticationVersion = authenticationVersion; self.authenticationId = authenticationId
+        self.issuedAt = issuedAt; self.signature = signature
+    }
+
+    public var canonicalAuthenticationText: String {
+        canonicalFields([
+            type, app, version, transferId, senderDeviceId ?? "", senderFingerprint ?? "",
+            senderName ?? "", senderPlatform ?? "", fileName, String(fileSize), sha256,
+            String(chunkSize), String(totalChunks), String(resumeSupported ?? false),
+            sourceKind ?? "", payloadKind ?? "", sourceName ?? "", String(sourceSize ?? -1),
+            String(sourceFileCount ?? -1), String(authenticationVersion ?? 0),
+            authenticationId ?? "", String(issuedAt ?? 0)
+        ])
     }
 }
 
@@ -130,21 +149,65 @@ public struct PairingRequest: Codable, Sendable {
     public let requesterSystemVersion: String
     public let requesterIP: String
     public let requesterPort: UInt16
-    public let code: String
-    public let requesterFingerprint: String?
-    public let pairingSecret: String?
+    public let requesterFingerprint: String
+    public let targetDeviceId: String
+    public let targetFingerprint: String
+    public let requestId: String
+    /// X.509 SubjectPublicKeyInfo DER 的 Base64；只包含本次握手的 X25519 临时公钥。
+    public let requesterPublicKey: String
+    public let securityVersion: Int
 
     public init(
         type: String = "pairing_request", app: String = "HMTrans", version: String = hmTransProtocolVersion,
         requesterDeviceId: String, requesterName: String, requesterPlatform: String,
-        requesterSystemVersion: String, requesterIP: String, requesterPort: UInt16, code: String,
-        requesterFingerprint: String? = nil, pairingSecret: String? = nil
+        requesterSystemVersion: String, requesterIP: String, requesterPort: UInt16,
+        requesterFingerprint: String, targetDeviceId: String, targetFingerprint: String,
+        requestId: String, requesterPublicKey: String, securityVersion: Int = hmTransSecurityVersion
     ) {
         self.type = type; self.app = app; self.version = version; self.requesterDeviceId = requesterDeviceId
         self.requesterName = requesterName; self.requesterPlatform = requesterPlatform
         self.requesterSystemVersion = requesterSystemVersion; self.requesterIP = requesterIP
-        self.requesterPort = requesterPort; self.code = code; self.requesterFingerprint = requesterFingerprint
-        self.pairingSecret = pairingSecret
+        self.requesterPort = requesterPort; self.requesterFingerprint = requesterFingerprint
+        self.targetDeviceId = targetDeviceId; self.targetFingerprint = targetFingerprint
+        self.requestId = requestId; self.requesterPublicKey = requesterPublicKey
+        self.securityVersion = securityVersion
+    }
+
+    func authenticationTranscript(responderPublicKey: String) -> String {
+        [
+            "HMTrans-pairing-v1", requestId, requesterDeviceId, requesterFingerprint,
+            targetDeviceId, targetFingerprint, requesterPublicKey, responderPublicKey
+        ].joined(separator: "|")
+    }
+}
+
+public struct PairingChallenge: Codable, Sendable {
+    public let type: String
+    public let accepted: Bool
+    public let requestId: String
+    public let responderPublicKey: String
+    public let proof: String
+    public let securityVersion: Int
+    public let reason: String?
+
+    public init(
+        type: String = "pairing_challenge", accepted: Bool, requestId: String,
+        responderPublicKey: String = "", proof: String = "",
+        securityVersion: Int = hmTransSecurityVersion, reason: String? = nil
+    ) {
+        self.type = type; self.accepted = accepted; self.requestId = requestId
+        self.responderPublicKey = responderPublicKey; self.proof = proof
+        self.securityVersion = securityVersion; self.reason = reason
+    }
+}
+
+public struct PairingConfirmation: Codable, Sendable {
+    public let type: String
+    public let requestId: String
+    public let proof: String
+
+    public init(type: String = "pairing_confirmation", requestId: String, proof: String) {
+        self.type = type; self.requestId = requestId; self.proof = proof
     }
 }
 
@@ -152,9 +215,14 @@ public struct PairingResponse: Codable, Sendable {
     public let type: String
     public let accepted: Bool
     public let reason: String?
+    public let securityVersion: Int
 
-    public init(type: String = "pairing_response", accepted: Bool, reason: String? = nil) {
+    public init(
+        type: String = "pairing_response", accepted: Bool, reason: String? = nil,
+        securityVersion: Int = hmTransSecurityVersion
+    ) {
         self.type = type; self.accepted = accepted; self.reason = reason
+        self.securityVersion = securityVersion
     }
 }
 
@@ -166,10 +234,14 @@ public struct UnpairRequest: Codable, Sendable {
     public let requesterDeviceId: String
     public let requesterFingerprint: String
     public let targetDeviceId: String
+    public let requestId: String
+    public let issuedAt: Int64
+    public let signature: String
 
     public init(
         type: String = "unpair_request", app: String = "HMTrans", version: String = hmTransProtocolVersion,
-        requesterDeviceId: String, requesterFingerprint: String, targetDeviceId: String
+        requesterDeviceId: String, requesterFingerprint: String, targetDeviceId: String,
+        requestId: String, issuedAt: Int64, signature: String
     ) {
         self.type = type
         self.app = app
@@ -177,6 +249,16 @@ public struct UnpairRequest: Codable, Sendable {
         self.requesterDeviceId = requesterDeviceId
         self.requesterFingerprint = requesterFingerprint
         self.targetDeviceId = targetDeviceId
+        self.requestId = requestId
+        self.issuedAt = issuedAt
+        self.signature = signature
+    }
+
+    public var canonicalAuthenticationText: String {
+        canonicalFields([
+            type, app, version, requesterDeviceId, requesterFingerprint,
+            targetDeviceId, requestId, String(issuedAt)
+        ])
     }
 }
 
@@ -284,6 +366,10 @@ public struct ReceiveConnectionError: LocalizedError, Sendable {
 public typealias ProgressHandler = @Sendable (_ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveProgressHandler = @Sendable (_ meta: FileMeta, _ current: Int64, _ total: Int64) -> Void
 public typealias ReceiveDecisionHandler = @Sendable (_ meta: FileMeta) -> Bool
-public typealias PairingRequestHandler = @Sendable (_ request: PairingRequest) -> Bool
+public typealias PairingRequestHandler = @Sendable (_ request: PairingRequest) -> PairingAuthorization?
 public typealias UnpairRequestHandler = @Sendable (_ request: UnpairRequest) -> Bool
 public typealias ReceiveCompletionHandler = @Sendable (_ result: Result<ReceivedFile?, Error>) -> Void
+
+private func canonicalFields(_ fields: [String]) -> String {
+    fields.map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
+}

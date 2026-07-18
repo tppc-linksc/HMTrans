@@ -1,4 +1,5 @@
 import Foundation
+import HMTransCore
 
 struct LocalPairingIdentity: Sendable {
     let deviceID: String
@@ -19,6 +20,7 @@ enum PairingConfigurationStore {
         var trustedDeviceIDs: Set<String>
         var trustedFingerprints: [String: String]
         var sharedSecrets: [String: String]?
+        var securityVersions: [String: Int]?
     }
 
     /** 可变缓存只在同一个锁内访问；封装后避免把共享可变状态暴露为全局变量。 */
@@ -43,13 +45,22 @@ enum PairingConfigurationStore {
 
     static func contains(_ deviceID: String?) -> Bool {
         guard let deviceID, !deviceID.isEmpty else { return false }
-        return storage.lock.withLock { loadLocked().trustedDeviceIDs.contains(deviceID) }
+        return storage.lock.withLock {
+            let configuration = loadLocked()
+            return configuration.trustedDeviceIDs.contains(deviceID)
+                && configuration.securityVersions?[deviceID] == hmTransSecurityVersion
+                && configuration.sharedSecrets?[deviceID]?.count == 64
+        }
     }
 
-    static func insert(_ deviceID: String?, fingerprint: String?, sharedSecret: String? = nil) {
+    static func insert(
+        _ deviceID: String?, fingerprint: String?, sharedSecret: String? = nil,
+        securityVersion: Int = hmTransSecurityVersion
+    ) {
         guard let deviceID, !deviceID.isEmpty else { return }
         storage.lock.withLock {
             var configuration = loadLocked()
+            configuration.schemaVersion = 2
             configuration.trustedDeviceIDs.insert(deviceID)
             if let fingerprint, !fingerprint.isEmpty {
                 configuration.trustedFingerprints[deviceID] = fingerprint
@@ -58,6 +69,9 @@ enum PairingConfigurationStore {
                 var secrets = configuration.sharedSecrets ?? [:]
                 secrets[deviceID] = sharedSecret.lowercased()
                 configuration.sharedSecrets = secrets
+                var versions = configuration.securityVersions ?? [:]
+                versions[deviceID] = securityVersion
+                configuration.securityVersions = versions
             }
             saveLocked(configuration)
         }
@@ -65,7 +79,11 @@ enum PairingConfigurationStore {
 
     static func sharedSecret(for deviceID: String?) -> String? {
         guard let deviceID, !deviceID.isEmpty else { return nil }
-        return storage.lock.withLock { loadLocked().sharedSecrets?[deviceID] }
+        return storage.lock.withLock {
+            let configuration = loadLocked()
+            guard configuration.securityVersions?[deviceID] == hmTransSecurityVersion else { return nil }
+            return configuration.sharedSecrets?[deviceID]
+        }
     }
 
     static func matches(_ deviceID: String?, fingerprint: String?) -> Bool {
@@ -76,6 +94,8 @@ enum PairingConfigurationStore {
             let configuration = loadLocked()
             return configuration.trustedDeviceIDs.contains(deviceID)
                 && configuration.trustedFingerprints[deviceID] == fingerprint
+                && configuration.securityVersions?[deviceID] == hmTransSecurityVersion
+                && configuration.sharedSecrets?[deviceID]?.count == 64
         }
     }
 
@@ -86,6 +106,7 @@ enum PairingConfigurationStore {
             configuration.trustedDeviceIDs.remove(deviceID)
             configuration.trustedFingerprints.removeValue(forKey: deviceID)
             configuration.sharedSecrets?.removeValue(forKey: deviceID)
+            configuration.securityVersions?.removeValue(forKey: deviceID)
             saveLocked(configuration)
         }
     }
@@ -112,7 +133,8 @@ enum PairingConfigurationStore {
                 ?? UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
             trustedDeviceIDs: trustedIDs,
             trustedFingerprints: trustedFingerprints,
-            sharedSecrets: nil
+            sharedSecrets: nil,
+            securityVersions: nil
         )
         if saveLocked(configuration) {
             removeLegacyValues()

@@ -10,6 +10,8 @@ import {
   PROTOCOL_VERSION,
   FileMeta,
   PairingRequest,
+  PairingChallenge,
+  PairingConfirmation,
   PairingResponse,
   UnpairRequest,
   UnpairResponse,
@@ -29,8 +31,15 @@ import {
 import { fileNameFromUri } from '../common/Formatters'
 import { fileSize, sha256FileAsync } from './FileHashService'
 import { errorText } from '../common/ErrorText'
+import { withTimeout } from '../common/AsyncTimeout'
 import { ZipSafetyService } from './ZipSafetyService'
 import { ControlLineInbox } from './ControlLineInbox'
+import {
+  authenticateFileMeta,
+  HMTRANS_SECURITY_VERSION,
+  PairingInitiatorSession,
+  PairingResponderSession,
+} from '../common/PairingSecurity'
 
 const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
 const MAX_ACTIVE_CONNECTIONS: number = 16
@@ -43,7 +52,8 @@ export interface TransferCallbacks {
   onStatus: (value: string) => void
   onProgress: (current: number, total: number, meta?: FileMeta) => void
   onIncoming: (meta: FileMeta) => Promise<boolean>
-  onPairing: (request: PairingRequest) => Promise<boolean>
+  onPairingCode: (request: PairingRequest) => Promise<string | undefined>
+  onPairingEstablished: (request: PairingRequest, sharedSecret: string) => Promise<void>
   onUnpair?: (request: UnpairRequest) => Promise<boolean>
   onScreenCastStart?: (request: ScreenCastStartRequest) => Promise<boolean>
   onReceived?: (meta: FileMeta, path: string) => void
@@ -67,6 +77,12 @@ export interface SendFileOptions {
   sourceSize?: number
   sourceFileCount?: number
   senderFingerprint?: string
+  sharedSecret?: string
+}
+
+export interface PairingRequestOutcome {
+  response: PairingResponse
+  sharedSecret?: string
 }
 
 interface MessageEnvelope {
@@ -97,20 +113,6 @@ class LineReader {
     }
     return lines
   }
-}
-
-/** 为控制响应增加明确上限，避免对端失联后任务永久挂起。 */
-function withTimeout<T>(operation: Promise<T>, timeoutMs: number, reason: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), timeoutMs)
-    operation.then((value: T) => {
-      clearTimeout(timer)
-      resolve(value)
-    }).catch((err: Error) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-  })
 }
 
 class TransferSessionControl {
@@ -216,18 +218,30 @@ export class TcpTransferService {
     return this.outgoingSessions.size === 0 && this.incomingConnections.size === 0
   }
 
-  async requestPairing(host: string, port: number, request: PairingRequest): Promise<PairingResponse> {
+  async requestPairing(host: string, port: number,
+    session: PairingInitiatorSession): Promise<PairingRequestOutcome> {
     const client = socket.constructTCPSocketInstance()
     const inbox = new ControlLineInbox()
     client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
     client.on('error', (err) => inbox.fail(new Error(errorText(err))))
     try {
       await client.connect({ address: { address: host, port }, timeout: 10000 })
-      await client.send({ data: encodeJsonLine(request) })
-      const line = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS, 'pairing_response_timeout')
-      const response = parseJsonLine<PairingResponse>(line)
+      await client.send({ data: encodeJsonLine(session.request) })
+      const challengeLine = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS,
+        'pairing_challenge_timeout')
+      const challenge = parseJsonLine<PairingChallenge>(challengeLine)
+      if (challenge.type !== 'pairing_challenge') throw new Error('invalid_pairing_challenge')
+      const answer = session.answer(challenge)
+      await client.send({ data: encodeJsonLine(answer.confirmation) })
+      const responseLine = await withTimeout(inbox.nextLine(), CONTROL_RESPONSE_TIMEOUT_MS,
+        'pairing_response_timeout')
+      const response = parseJsonLine<PairingResponse>(responseLine)
       if (response.type !== 'pairing_response') throw new Error('invalid_pairing_response')
-      return response
+      return {
+        response,
+        sharedSecret: response.accepted && response.securityVersion === HMTRANS_SECURITY_VERSION ?
+          answer.sharedSecret : undefined,
+      }
     } catch (err) {
       throw new Error(`pairing_request_failed: ${errorText(err)}`)
     } finally {
@@ -274,8 +288,16 @@ export class TcpTransferService {
     callbacks.onStatus(`计算校验值：${payloadName}`)
     const size = fileSize(uri)
     const sha256 = await sha256FileAsync(uri)
-    const meta = createFileMeta(payloadName, size, sha256, senderDeviceId, senderName, 'HarmonyOS', transferId,
+    const unsignedMeta = createFileMeta(payloadName, size, sha256, senderDeviceId, senderName, 'HarmonyOS', transferId,
       sourceKind, originalSourceName, sourceSize, sourceFileCount, senderFingerprint)
+    const meta = options.sharedSecret ? authenticateFileMeta(unsignedMeta, options.sharedSecret) : unsignedMeta
+    let lastProgressAt = 0
+    const reportProgress = (current: number): void => {
+      const now = Date.now()
+      if (current !== 0 && current < size && now - lastProgressAt < 100) return
+      lastProgressAt = now
+      callbacks.onProgress(current, size)
+    }
 
     const client = socket.constructTCPSocketInstance()
     const inbox = new ControlLineInbox()
@@ -315,7 +337,7 @@ export class TcpTransferService {
       if (resumeOffset < 0 || resumeOffset > size) {
         throw new Error(`接收方返回了无效断点：${resumeOffset}/${size}`)
       }
-      callbacks.onProgress(resumeOffset, size)
+      reportProgress(resumeOffset)
 
       const file = fs.openSync(uri, fs.OpenMode.READ_ONLY)
       const buffer = new ArrayBuffer(DEFAULT_CHUNK_SIZE)
@@ -333,7 +355,7 @@ export class TcpTransferService {
           await control.checkpoint()
           await client.send({ data: sliceArrayBuffer(buffer, count) })
           sent += count
-          callbacks.onProgress(sent, size)
+          reportProgress(sent)
         }
       } finally {
         try {
@@ -387,11 +409,14 @@ export class TcpTransferService {
       this.activeConnections.push(connection)
       const reader = new LineReader()
       let meta: FileMeta | undefined
+      let pairingRequest: PairingRequest | undefined
+      let pairingResponder: PairingResponderSession | undefined
       let targetPath = ''
       let targetPartPath = ''
       let targetMetaPath = ''
       let targetFile: fs.File | undefined
       let received = 0
+      let lastProgressAt = 0
       let activityStarted = false
       let connectionFinished = false
       let idleTimer: number | undefined
@@ -432,6 +457,13 @@ export class TcpTransferService {
         idleTimer = setTimeout(() => {
           interruptConnection('receive_idle_timeout').catch(() => {})
         }, RECEIVE_IDLE_TIMEOUT_MS)
+      }
+      const reportReceiveProgress = (): void => {
+        if (!meta) return
+        const now = Date.now()
+        if (received !== 0 && received < meta.fileSize && now - lastProgressAt < 100) return
+        lastProgressAt = now
+        callbacks.onProgress(received, meta.fileSize, meta)
       }
       resetIdleTimer()
 
@@ -483,10 +515,12 @@ export class TcpTransferService {
         await finishConnection()
       }
 
-      connection.on('message', async (info: socket.SocketMessageInfo) => {
-        if (connectionFinished) return
-        resetIdleTimer()
-        try {
+      let messageTail: Promise<void> = Promise.resolve()
+      connection.on('message', (info: socket.SocketMessageInfo) => {
+        messageTail = messageTail.then(async () => {
+          if (connectionFinished) return
+          resetIdleTimer()
+          try {
           if (!meta) {
             const lines = reader.append(info.message)
             if (lines.length === 0) {
@@ -494,15 +528,57 @@ export class TcpTransferService {
             }
 
             const envelope = parseJsonLine<MessageEnvelope>(lines[0])
+            if (envelope.type === 'pairing_confirmation' && pairingRequest && pairingResponder) {
+              const confirmation = parseJsonLine<PairingConfirmation>(lines[0])
+              const accepted = pairingResponder.accepts(confirmation)
+              if (accepted) {
+                await callbacks.onPairingEstablished(pairingRequest, pairingResponder.sharedSecret)
+              }
+              await connection.send({
+                data: encodeJsonLine(createPairingResponse(
+                  accepted,
+                  accepted ? undefined : 'invalid_pairing_code',
+                  HMTRANS_SECURITY_VERSION,
+                )),
+              })
+              await finishConnection()
+              return
+            }
             if (envelope.type === 'pairing_request') {
               const request = parseJsonLine<PairingRequest>(lines[0])
               const compatible = request.app === APP_NAME && request.version === PROTOCOL_VERSION &&
-                request.requesterDeviceId.length > 0 && request.requesterFingerprint !== undefined &&
-                request.requesterFingerprint.length > 0
-              const accepted = compatible && await callbacks.onPairing(request)
-              const reason = accepted ? undefined : compatible ? 'invalid_pairing_code' : 'protocol_incompatible'
-              await connection.send({ data: encodeJsonLine(createPairingResponse(accepted, reason)) })
-              await finishConnection()
+                request.requesterDeviceId.length > 0 && request.requesterFingerprint.length > 0 &&
+                request.targetDeviceId.length > 0 && request.targetFingerprint.length > 0 &&
+                request.requestId.length > 0 && request.requesterPublicKey.length > 0 &&
+                request.securityVersion === HMTRANS_SECURITY_VERSION
+              const code = compatible ? await callbacks.onPairingCode(request) : undefined
+              if (!compatible || code === undefined) {
+                const challenge: PairingChallenge = {
+                  type: 'pairing_challenge',
+                  accepted: false,
+                  requestId: request.requestId,
+                  responderPublicKey: '',
+                  proof: '',
+                  securityVersion: HMTRANS_SECURITY_VERSION,
+                  reason: compatible ? 'pairing_code_expired' : 'protocol_incompatible',
+                }
+                await connection.send({ data: encodeJsonLine(challenge) })
+                await finishConnection()
+                return
+              }
+              try {
+                pairingRequest = request
+                pairingResponder = new PairingResponderSession(request, code)
+                await connection.send({ data: encodeJsonLine(pairingResponder.challenge) })
+              } catch (_) {
+                const challenge: PairingChallenge = {
+                  type: 'pairing_challenge', accepted: false, requestId: request.requestId,
+                  responderPublicKey: '', proof: '', securityVersion: HMTRANS_SECURITY_VERSION,
+                  reason: 'invalid_pairing_handshake',
+                }
+                await connection.send({ data: encodeJsonLine(challenge) })
+                await finishConnection()
+              }
               return
             }
 
@@ -510,7 +586,8 @@ export class TcpTransferService {
               const request = parseJsonLine<UnpairRequest>(lines[0])
               const compatible = request.app === APP_NAME && request.version === PROTOCOL_VERSION &&
                 request.requesterDeviceId.length > 0 && request.requesterFingerprint.length > 0 &&
-                request.targetDeviceId.length > 0
+                request.targetDeviceId.length > 0 && request.requestId.length > 0 &&
+                Number.isSafeInteger(request.issuedAt) && request.signature.length === 64
               const accepted = compatible && (callbacks.onUnpair ? await callbacks.onUnpair(request) : false)
               const reason = accepted ? undefined : compatible ? 'identity_mismatch' : 'protocol_incompatible'
               await connection.send({ data: encodeJsonLine(createUnpairResponse(accepted, reason)) })
@@ -619,7 +696,7 @@ export class TcpTransferService {
             callbacks.onTransferActivity?.(true)
             activityStarted = true
             await connection.send({ data: encodeJsonLine(createReceiveDecision(true, undefined, resumeOffset)) })
-            callbacks.onProgress(received, meta.fileSize, meta)
+            reportReceiveProgress()
             callbacks.onStatus(`接收中：${safeName}`)
             await finalizeIncoming()
             return
@@ -631,23 +708,24 @@ export class TcpTransferService {
 
           fs.writeSync(targetFile.fd, info.message)
           received += info.message.byteLength
-          callbacks.onProgress(received, meta.fileSize, meta)
+          reportReceiveProgress()
 
           await finalizeIncoming()
-        } catch (err) {
-          const errorDetail = errorText(err)
-          const storageFull = errorDetail.indexOf('ENOSPC') >= 0 || errorDetail.indexOf('No space') >= 0 ||
-            errorDetail.indexOf('errno:28') >= 0 || errorDetail.indexOf('code:28') >= 0
-          const failureReason = storageFull ? 'insufficient_space' : `receive_exception:${errorDetail}`
-          callbacks.onStatus(storageFull ? '接收失败：存储空间不足，请清理空间后继续' : `接收错误：${errorDetail}`)
-          if (meta) {
-            await connection.send({
-              data: encodeJsonLine(createTransferResult(meta.transferId, null, failureReason)),
-            }).catch(() => {})
-            callbacks.onFailed?.(meta, failureReason)
+          } catch (err) {
+            const errorDetail = errorText(err)
+            const storageFull = errorDetail.indexOf('ENOSPC') >= 0 || errorDetail.indexOf('No space') >= 0 ||
+              errorDetail.indexOf('errno:28') >= 0 || errorDetail.indexOf('code:28') >= 0
+            const failureReason = storageFull ? 'insufficient_space' : `receive_exception:${errorDetail}`
+            callbacks.onStatus(storageFull ? '接收失败：存储空间不足，请清理空间后继续' : `接收错误：${errorDetail}`)
+            if (meta) {
+              await connection.send({
+                data: encodeJsonLine(createTransferResult(meta.transferId, null, failureReason)),
+              }).catch(() => {})
+              callbacks.onFailed?.(meta, failureReason)
+            }
+            await finishConnection()
           }
-          await finishConnection()
-        }
+        })
       })
       connection.on('close', () => {
         interruptConnection('connection_closed').catch(() => {})

@@ -1,4 +1,4 @@
-import { TransferListItem, TransferState } from '../models/TransferListItem'
+import { TransferDirection, TransferListItem, TransferState } from '../models/TransferListItem'
 
 /** 统一展示当前任务与历史记录，任务变更交由上层处理。 */
 @ComponentV2
@@ -159,13 +159,15 @@ export struct TransferHistoryPage {
   }
 
   private retryIfAvailable(item: TransferListItem): void {
-    if (item.direction === '发送' && (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
+    if (item.direction === TransferDirection.Sending &&
+      (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
       this.onRetryHistory(item)
     }
   }
 
   private stateLabel(item: TransferListItem): string {
-    if (item.direction === '发送' && (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
+    if (item.direction === TransferDirection.Sending &&
+      (item.state === TransferState.Failed || item.state === TransferState.Cancelled)) {
       return `${item.state} · 点按重试`
     }
     return item.state

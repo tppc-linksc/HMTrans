@@ -115,6 +115,7 @@ final class ScreenCastReceiverService: @unchecked Sendable {
         guard !hello.deviceId.isEmpty,
               !hello.identityFingerprint.isEmpty,
               !hello.sessionId.isEmpty,
+              !hello.connectionId.isEmpty,
               (1...4096).contains(hello.width),
               (1...4096).contains(hello.height),
               (1...60).contains(hello.frameRate) else {
@@ -341,7 +342,11 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
                 switch owner?.acceptNetworkTest(self, hello: testHello) {
                 case let .accepted(secret):
                     do {
-                        cipher = try ScreenCastCipher(sharedSecret: secret)
+                        cipher = try ScreenCastCipher(
+                            sharedSecret: secret,
+                            sessionID: testHello.sessionId,
+                            purpose: "screen-cast-network-test-v1"
+                        )
                         networkTestHello = testHello
                         send(try encryptedPacket(
                             type: .ack,
@@ -373,7 +378,10 @@ private final class ScreenCastReceiverSession: @unchecked Sendable {
             switch owner?.accept(self, hello: castHello) {
             case let .accepted(secret):
                 do {
-                    cipher = try ScreenCastCipher(sharedSecret: secret)
+                    cipher = try ScreenCastCipher(
+                        sharedSecret: secret,
+                        sessionID: "\(castHello.sessionId)|\(castHello.connectionId)"
+                    )
                     self.hello = castHello
                     send(try encryptedPacket(
                         type: .ack,

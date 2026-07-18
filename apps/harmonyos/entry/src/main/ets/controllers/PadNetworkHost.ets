@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit'
 import { DeviceInfo, FileMeta } from '../common/Protocol'
-import { TransferListItem, TransferListItemOptions } from '../models/TransferListItem'
+import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { DiscoveryService } from '../services/DiscoveryService'
 import { TcpTransferService } from '../services/TcpTransferService'
@@ -17,6 +17,7 @@ export interface PadNetworkRuntimeHost {
   receiveDirectory: string
   trustedFingerprints: Map<string, string>
   trustedSharedSecrets: Map<string, string>
+  trustedSecurityVersions: Map<string, number>
   deviceLastSeenAt: Map<string, number>
   confirmedDeviceLastSeenAt: Map<string, number>
   activeTransferDeviceIds: Map<string, string>
@@ -67,7 +68,7 @@ export interface PadNetworkActionHost {
   saveTarget(): Promise<void>
   sendPreparedSource(source: SendableSource, device: DeviceInfo, reuseTransferId?: string,
     groupId?: string, cleanupSource?: boolean): Promise<boolean>
-  markCurrentTransferState(id: string, state: string, detail: string): void
+  markCurrentTransferState(id: string, state: TransferState, detail: string): void
   completeTransfer(id: string, success: boolean, detail: string, localPath?: string): void
   updateCurrentTransfer(id: string, progress: number, detail: string): void
   upsertCurrentTransfer(item: TransferListItemOptions): void

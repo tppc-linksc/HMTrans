@@ -60,7 +60,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>26.0</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>用于在同一局域网内发现 MatePad、传输文件并接收已配对设备发起的屏幕投放，数据不会上传云端。</string>
-  <key>NSLocationWhenInUseUsageDescription</key>
+  <key>NSLocationUsageDescription</key>
   <string>用于显示当前连接的 Wi-Fi 网络名称，网络信息只在本机使用。</string>
   <key>CFBundleDocumentTypes</key>
   <array>

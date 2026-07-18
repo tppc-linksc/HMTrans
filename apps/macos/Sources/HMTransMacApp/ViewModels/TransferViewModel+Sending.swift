@@ -57,6 +57,10 @@ extension TransferViewModel {
     ) {
         let targetHost = targetDevice.ip
         let targetPort = targetDevice.port
+        guard let targetSharedSecret = TrustedDevicesStore.sharedSecret(for: targetDevice.deviceId) else {
+            status = "该设备仍使用旧版配对信息，请移除后重新安全配对"
+            return
+        }
         guard !isLocalIPv4Address(targetHost) else {
             clearSavedTarget()
             status = "已阻止发送到本机地址，请等待发现 MatePad"
@@ -70,20 +74,24 @@ extension TransferViewModel {
         let senderName = deviceName
         let senderFingerprint = identityFingerprint
         let generation = transferGeneration
+        let progressThrottle = progressUpdateThrottle
 
         Task.detached { [weak self] in
             guard let gate = self?.sendConcurrencyGate,
                   let sourceStore = self?.sharedPreparedSources else { return }
             await gate.acquire()
-            defer { Task { await gate.release() } }
             let isCurrentGeneration = await MainActor.run { self?.transferGeneration == generation }
-            guard isCurrentGeneration else { return }
+            guard isCurrentGeneration else {
+                await gate.release()
+                return
+            }
             guard tcpPortIsOpen(host: targetHost, port: targetPort, timeout: 0.8) else {
                 await MainActor.run {
                     self?.isSending = false
                     self?.progress = 0
                     self?.markDeviceUnreachable(targetDevice, reason: "接收端口不可达")
                 }
+                await gate.release()
                 return
             }
 
@@ -150,8 +158,14 @@ extension TransferViewModel {
                         sourceSize: prepared.sourceSize,
                         sourceFileCount: prepared.sourceFileCount,
                         senderFingerprint: senderFingerprint,
+                        sharedSecret: targetSharedSecret,
                         control: control,
                         onProgress: { current, total in
+                            guard progressThrottle.shouldPublish(
+                                id: transferId.uuidString,
+                                current: current,
+                                total: total
+                            ) else { return }
                             Task { @MainActor in
                                 if let currentIndex = self?.currentTransfers.firstIndex(where: { $0.id == transferId }) {
                                     self?.currentTransfers[currentIndex].state = .active
@@ -214,6 +228,7 @@ extension TransferViewModel {
                         groupID: groupID ?? transferId,
                         preserveForResume: shouldWaitForReconnect && !wasCancelled
                     )
+                    await gate.release()
                     return
                 }
             }
@@ -223,6 +238,7 @@ extension TransferViewModel {
                 self?.isSending = false
                 self?.status = "发送完成"
             }
+            await gate.release()
         }
     }
 }

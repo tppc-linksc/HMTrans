@@ -1,6 +1,7 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit'
-import { arrayBufferToString, stringToArrayBuffer, toHex } from './Bytes'
+import { arrayBufferToString, stringToArrayBuffer } from './Bytes'
 import { errorText } from './ErrorText'
+import { authenticationCode, derivePurposeKey, secureHexEquals } from './PairingSecurity'
 
 export const CAST_HEADER_LENGTH: number = 32
 export const CAST_PROTOCOL_VERSION: string = '0.3.0'
@@ -47,6 +48,7 @@ export interface CastHello {
   deviceName: string
   identityFingerprint: string
   sessionId: string
+  connectionId: string
   codec: string
   width: number
   height: number
@@ -88,9 +90,9 @@ export interface CastNetworkTestResult {
 export class ScreenCastCipher {
   private key: cryptoFramework.SymKey
 
-  constructor(secretHex: string) {
-    const keyBytes = hexToBytes(secretHex)
-    if (keyBytes.length !== 32) throw new Error('投屏配对密钥无效，请删除设备后重新配对')
+  constructor(secretHex: string, sessionId: string, purpose: string = 'screen-cast-media-v1') {
+    if (!sessionId.length) throw new Error('投屏会话标识无效')
+    const keyBytes = derivePurposeKey(secretHex, purpose, sessionId)
     const generator = cryptoFramework.createSymKeyGenerator('AES256')
     this.key = generator.convertKeySync({ data: keyBytes })
   }
@@ -105,10 +107,10 @@ export class ScreenCastCipher {
         authTag: { data: new Uint8Array(16) },
       }
       const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-      // API 22+ 的同步入口会直接在当前投屏发送任务中完成小帧加密，避免每一帧都
-      // 经过异步任务调度并挤压媒体发送与心跳处理。
-      cipher.initSync(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
-      const encrypted = cipher.doFinalSync({ data: new Uint8Array(plain) })
+      // 编码回调最终回到 ArkUI 运行时；使用异步密码接口把 AES-GCM 原生计算移出
+      // 当前 JS 调度片段，避免 2K/高帧率时同步加密长期占用界面与心跳任务。
+      await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, this.key, params)
+      const encrypted = await cipher.doFinal({ data: new Uint8Array(plain) })
       const encryptedBytes = encrypted.data
       // HarmonyOS 6.1 的 GCM doFinalSync 返回 ciphertext || authTag；部分 SDK 实现
       // 则只返回 ciphertext 并把 tag 写回 params.authTag。不能无条件再追加 tag，
@@ -143,8 +145,8 @@ export class ScreenCastCipher {
         authTag: { data: tag },
       }
       const cipher = cryptoFramework.createCipher('AES256|GCM|NoPadding')
-      cipher.initSync(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
-      const plain = cipher.doFinalSync({ data: ciphertext })
+      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, this.key, params)
+      const plain = await cipher.doFinal({ data: ciphertext })
       return exactArrayBuffer(plain.data)
     } catch (err) {
       throw new Error(`投屏数据解密失败：${errorText(err)}`)
@@ -155,27 +157,13 @@ export class ScreenCastCipher {
 /** 控制端口的投屏启动请求使用同一配对密钥做 HMAC，不传输也不记录密钥。 */
 export function screenCastControlSignature(secretHex: string, canonicalText: string): string {
   try {
-    const keyBytes = hexToBytes(secretHex)
-    if (keyBytes.length !== 32) throw new Error('投屏配对密钥无效，请删除设备后重新配对')
-    const generator = cryptoFramework.createSymKeyGenerator('HMAC')
-    const key = generator.convertKeySync({ data: keyBytes })
-    const mac = cryptoFramework.createMac('SHA256')
-    mac.initSync(key)
-    mac.updateSync({ data: new Uint8Array(stringToArrayBuffer(canonicalText)) })
-    return toHex(mac.doFinalSync().data)
+    return authenticationCode(secretHex, 'screen-cast-control-auth-v1', canonicalText)
   } catch (err) {
     throw new Error(`投屏控制请求认证失败：${errorText(err)}`)
   }
 }
 
-export function secureHexEquals(lhs: string, rhs: string): boolean {
-  const left = hexToBytes(lhs)
-  const right = hexToBytes(rhs)
-  if (left.length === 0 || left.length !== right.length) return false
-  let difference = 0
-  for (let index = 0; index < left.length; index++) difference |= left[index] ^ right[index]
-  return difference === 0
-}
+export { secureHexEquals }
 
 /** Uint8Array 可能只是较大底层缓冲区的视图，协议层必须只发送当前视图范围。 */
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -259,16 +247,6 @@ export function concatBuffers(buffers: Array<ArrayBuffer>): ArrayBuffer {
     offset += item.byteLength
   })
   return result.buffer
-}
-
-export function hexToBytes(value: string): Uint8Array {
-  const normalized = value.trim().toLowerCase()
-  if (normalized.length % 2 !== 0 || !/^[0-9a-f]+$/.test(normalized)) return new Uint8Array()
-  const result = new Uint8Array(normalized.length / 2)
-  for (let index = 0; index < result.length; index++) {
-    result[index] = Number.parseInt(normalized.substring(index * 2, index * 2 + 2), 16)
-  }
-  return result
 }
 
 function writeUInt64(view: DataView, offset: number, value: number): void {

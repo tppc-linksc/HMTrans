@@ -24,31 +24,38 @@ public func requestPairing(
     requesterIP: String,
     requesterPort: UInt16,
     code: String,
-    requesterFingerprint: String? = nil,
-    pairingSecret: String? = nil,
+    requesterFingerprint: String,
+    targetDeviceId: String,
+    targetFingerprint: String,
     networkTimeout: TimeInterval = 30
-) throws -> PairingResponse {
+) throws -> PairingOutcome {
+    let initiator = try PairingInitiatorState(
+        requesterDeviceId: requesterDeviceId,
+        requesterName: requesterName,
+        requesterPlatform: requesterPlatform,
+        requesterSystemVersion: requesterSystemVersion,
+        requesterIP: requesterIP,
+        requesterPort: requesterPort,
+        requesterFingerprint: requesterFingerprint,
+        targetDeviceId: targetDeviceId,
+        targetFingerprint: targetFingerprint,
+        code: code
+    )
     let connection = try BlockingNetworkConnection.connect(
         host: host,
         port: port,
         operationTimeout: networkTimeout
     )
     defer { connection.cancel() }
-    try sendJSONLine(
-        PairingRequest(
-            requesterDeviceId: requesterDeviceId,
-            requesterName: requesterName,
-            requesterPlatform: requesterPlatform,
-            requesterSystemVersion: requesterSystemVersion,
-            requesterIP: requesterIP,
-            requesterPort: requesterPort,
-            code: code.filter(\.isNumber),
-            requesterFingerprint: requesterFingerprint,
-            pairingSecret: pairingSecret
-        ),
-        connection: connection
-    )
-    return try readJSONLine(connection: connection)
+    try sendJSONLine(initiator.request, connection: connection)
+    let challenge: PairingChallenge = try readJSONLine(connection: connection)
+    let (confirmation, sharedSecret) = try initiator.answer(challenge)
+    try sendJSONLine(confirmation, connection: connection)
+    let response: PairingResponse = try readJSONLine(connection: connection)
+    guard response.accepted, response.securityVersion == hmTransSecurityVersion else {
+        return PairingOutcome(response: response, sharedSecret: nil)
+    }
+    return PairingOutcome(response: response, sharedSecret: sharedSecret)
 }
 
 /// 通知在线对端撤销配对。调用方应无论通知结果如何都立即清理本机信任。
@@ -57,18 +64,35 @@ public func requestUnpair(
     port: UInt16 = defaultPort,
     requesterDeviceId: String,
     requesterFingerprint: String,
-    targetDeviceId: String
+    targetDeviceId: String,
+    sharedSecret: String
 ) throws -> UnpairResponse {
+    let requestID = UUID().uuidString.lowercased()
+    let issuedAt = Int64(Date().timeIntervalSince1970 * 1_000)
+    var request = UnpairRequest(
+        requesterDeviceId: requesterDeviceId,
+        requesterFingerprint: requesterFingerprint,
+        targetDeviceId: targetDeviceId,
+        requestId: requestID,
+        issuedAt: issuedAt,
+        signature: ""
+    )
+    let signature = try hmTransAuthenticationCode(
+        sharedSecret: sharedSecret,
+        purpose: "unpair-control-auth-v1",
+        canonicalText: request.canonicalAuthenticationText
+    )
+    request = UnpairRequest(
+        requesterDeviceId: requesterDeviceId,
+        requesterFingerprint: requesterFingerprint,
+        targetDeviceId: targetDeviceId,
+        requestId: requestID,
+        issuedAt: issuedAt,
+        signature: signature
+    )
     let connection = try BlockingNetworkConnection.connect(host: host, port: port)
     defer { connection.cancel() }
-    try sendJSONLine(
-        UnpairRequest(
-            requesterDeviceId: requesterDeviceId,
-            requesterFingerprint: requesterFingerprint,
-            targetDeviceId: targetDeviceId
-        ),
-        connection: connection
-    )
+    try sendJSONLine(request, connection: connection)
     return try readJSONLine(connection: connection)
 }
 
@@ -116,30 +140,11 @@ public func requestScreenCastStart(
 }
 
 func screenCastControlSignature(sharedSecret: String, canonicalText: String) throws -> String {
-    guard let keyData = Data(hexEncodedControlSecret: sharedSecret), keyData.count == 32 else {
-        throw HMTransError.protocolError("该配对缺少 v0.3 投屏密钥，请删除设备后重新配对")
-    }
-    let code = HMAC<SHA256>.authenticationCode(
-        for: Data(canonicalText.utf8),
-        using: SymmetricKey(data: keyData)
+    try hmTransAuthenticationCode(
+        sharedSecret: sharedSecret,
+        purpose: "screen-cast-control-auth-v1",
+        canonicalText: canonicalText
     )
-    return code.map { String(format: "%02x", $0) }.joined()
-}
-
-private extension Data {
-    init?(hexEncodedControlSecret text: String) {
-        guard text.count.isMultiple(of: 2) else { return nil }
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(text.count / 2)
-        var index = text.startIndex
-        while index < text.endIndex {
-            let next = text.index(index, offsetBy: 2)
-            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
-            bytes.append(byte)
-            index = next
-        }
-        self.init(bytes)
-    }
 }
 
 /// 通过兼容 HMTrans v0.2 的 TCP 线协议发送一个可续传文件载荷。
@@ -157,6 +162,7 @@ public func sendFile(
     sourceSize: Int64? = nil,
     sourceFileCount: Int? = nil,
     senderFingerprint: String? = nil,
+    sharedSecret: String? = nil,
     networkTimeout: TimeInterval = 30,
     control: TransferControl? = nil,
     onProgress: ProgressHandler? = nil
@@ -170,7 +176,7 @@ public func sendFile(
     let fileSize = fileSizeNumber.int64Value
     let sha256 = try sha256Hex(for: fileURL, control: control)
     let totalChunks = Int((fileSize + Int64(defaultChunkSize) - 1) / Int64(defaultChunkSize))
-    let meta = FileMeta(
+    let unsignedMeta = FileMeta(
         transferId: transferId,
         senderDeviceId: senderDeviceId,
         senderName: senderName,
@@ -187,6 +193,11 @@ public func sendFile(
         sourceFileCount: sourceFileCount ?? 1,
         senderFingerprint: senderFingerprint
     )
+    let meta = if let sharedSecret {
+        try authenticatedFileMeta(unsignedMeta, sharedSecret: sharedSecret)
+    } else {
+        unsignedMeta
+    }
 
     let connection = try BlockingNetworkConnection.connect(
         host: host,
@@ -441,15 +452,37 @@ public final class PersistentFileReceiver: @unchecked Sendable {
                     let compatible = request.app == "HMTrans"
                         && request.version == hmTransProtocolVersion
                         && !request.requesterDeviceId.isEmpty
-                        && request.requesterFingerprint?.isEmpty == false
-                    let accepted = compatible && (onPairingRequest?(request) ?? false)
-                    try sendJSONLine(
-                        PairingResponse(
-                            accepted: accepted,
-                            reason: accepted ? nil : compatible ? "invalid_pairing_code" : "protocol_incompatible"
-                        ),
-                        connection: blocking
-                    )
+                        && !request.requesterFingerprint.isEmpty
+                        && !request.targetDeviceId.isEmpty
+                        && !request.targetFingerprint.isEmpty
+                        && request.securityVersion == hmTransSecurityVersion
+                    guard compatible, let authorization = onPairingRequest?(request) else {
+                        try sendJSONLine(PairingChallenge(
+                            accepted: false,
+                            requestId: request.requestId,
+                            reason: compatible ? "pairing_code_expired" : "protocol_incompatible"
+                        ), connection: blocking)
+                        return
+                    }
+                    let responder: PairingResponderState
+                    do {
+                        responder = try PairingResponderState(request: request, code: authorization.code)
+                    } catch {
+                        try sendJSONLine(PairingChallenge(
+                            accepted: false,
+                            requestId: request.requestId,
+                            reason: "invalid_pairing_handshake"
+                        ), connection: blocking)
+                        return
+                    }
+                    try sendJSONLine(responder.challenge, connection: blocking)
+                    let confirmation: PairingConfirmation = try readJSONLine(connection: blocking)
+                    let accepted = responder.accepts(confirmation)
+                    if accepted { authorization.establish(sharedSecret: responder.masterSecret) }
+                    try sendJSONLine(PairingResponse(
+                        accepted: accepted,
+                        reason: accepted ? nil : "invalid_pairing_code"
+                    ), connection: blocking)
                     return
                 }
                 if envelope.type == "unpair_request" {

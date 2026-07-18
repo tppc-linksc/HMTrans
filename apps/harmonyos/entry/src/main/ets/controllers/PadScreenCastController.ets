@@ -4,6 +4,7 @@ import { errorText } from '../common/ErrorText'
 import { PadPreferencesService } from '../services/PadPreferencesService'
 import {
   CastResolution,
+  CastNetworkTestState,
   CastSenderState,
   ScreenCastSenderService,
   castModeKey,
@@ -23,14 +24,14 @@ export interface PadScreenCastHost {
   draftCastPort: string
   draftCastResolution: string
   draftCastFrameRate: number
-  castState: string
+  castState: CastSenderState
   castDetail: string
   castDeviceId: string
   castDeviceName: string
   castFps: number
   castBitrate: number
   castDroppedFrames: number
-  networkTestState: string
+  networkTestState: CastNetworkTestState
   networkTestDetail: string
   selectedDeviceId: string
   deviceId: string

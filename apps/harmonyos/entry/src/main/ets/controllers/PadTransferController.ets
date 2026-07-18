@@ -3,7 +3,12 @@ import { picker } from '@kit.CoreFileKit'
 import { DeviceInfo, FileMeta } from '../common/Protocol'
 import { formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
-import { TransferListItem, TransferListItemOptions, TransferState } from '../models/TransferListItem'
+import {
+  TransferDirection,
+  TransferListItem,
+  TransferListItemOptions,
+  TransferState,
+} from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from '../services/ArchiveService'
 import { DropUriService } from '../services/DropUriService'
 import { OutgoingTransferCallbacks, OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordinator'
@@ -23,6 +28,7 @@ export interface PadTransferHost {
   selectedDeviceId: string
   deviceId: string
   identityFingerprint: string
+  trustedSharedSecrets: Map<string, string>
   activeTransferDeviceIds: Map<string, string>
   connectedDevices: Array<DeviceInfo>
   selectedDevice: DeviceInfo | undefined
@@ -106,6 +112,7 @@ export class PadTransferController {
       deviceId: this.host.deviceId,
       deviceName: this.host.localDeviceName(),
       fingerprint: this.host.identityFingerprint,
+      sharedSecrets: this.host.trustedSharedSecrets,
     }, this.outgoingCallbacks())
   }
 
@@ -124,6 +131,7 @@ export class PadTransferController {
       deviceId: this.host.deviceId,
       deviceName: this.host.localDeviceName(),
       fingerprint: this.host.identityFingerprint,
+      sharedSecrets: this.host.trustedSharedSecrets,
     }, this.outgoingCallbacks(), transferId, groupId, cleanupSource)
   }
 
@@ -152,7 +160,7 @@ export class PadTransferController {
   }
 
   toggleTransferPause(item: TransferListItem): void {
-    if (item.direction === '接收') {
+    if (item.direction === TransferDirection.Receiving) {
       if (item.state === TransferState.Paused) {
         this.transferService.resumeTransfer(item.id)
         this.markCurrentTransferState(item.id, TransferState.Waiting, '接收已恢复，等待发送端重连')
@@ -196,7 +204,7 @@ export class PadTransferController {
 
   cancelTransfer(item: TransferListItem): void {
     this.clearAutomaticResume(item.id)
-    if (item.direction === '发送') this.outgoingCoordinator.cancel(item.id)
+    if (item.direction === TransferDirection.Sending) this.outgoingCoordinator.cancel(item.id)
     else this.transferService.cancelTransfer(item.id)
     this.host.activeTransferDeviceIds.delete(item.id)
     this.host.currentTransfers = this.host.currentTransfers.filter((row: TransferListItem) => row.id !== item.id)
@@ -235,7 +243,7 @@ export class PadTransferController {
     }
   }
 
-  markCurrentTransferState(id: string, state: string, detail: string): void {
+  markCurrentTransferState(id: string, state: TransferState, detail: string): void {
     this.transferStateService.mark(this.host.currentTransfers, id, state, detail)
     this.host.persistTransferState(true)
   }

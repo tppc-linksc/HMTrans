@@ -115,7 +115,10 @@ func stalledControlLineDoesNotBlockAnotherConnection() async throws {
     try receiver.start(
         port: port,
         outputDirectory: root.path,
-        onPairingRequest: { $0.code == "246810" },
+        onPairingRequest: { request in
+            guard request.targetDeviceId == "mac", request.targetFingerprint == "mac-fingerprint" else { return nil }
+            return PairingAuthorization(code: "246810") { _ in }
+        },
         shouldAccept: { _ in false },
         onConnectionResult: { _ in }
     )
@@ -154,9 +157,12 @@ func stalledControlLineDoesNotBlockAnotherConnection() async throws {
         requesterPort: 51888,
         code: "246810",
         requesterFingerprint: "fingerprint",
+        targetDeviceId: "mac",
+        targetFingerprint: "mac-fingerprint",
         networkTimeout: 1
     )
-    #expect(response.accepted)
+    #expect(response.response.accepted)
+    #expect(response.sharedSecret?.count == 64)
     #expect(started.duration(to: .now) < .seconds(2))
 }
 
@@ -273,25 +279,34 @@ func pairingRequiresCurrentCode() async throws {
     try receiver.start(
         port: port,
         outputDirectory: root.path,
-        onPairingRequest: { $0.code == "246810" && $0.requesterFingerprint == "fingerprint" },
+        onPairingRequest: { request in
+            guard request.requesterFingerprint == "fingerprint",
+                  request.targetDeviceId == "mac", request.targetFingerprint == "mac-fingerprint"
+            else { return nil }
+            return PairingAuthorization(code: "246810") { _ in }
+        },
         shouldAccept: { _ in false },
         onConnectionResult: { _ in }
     )
     defer { receiver.stop() }
     try await Task.sleep(for: .milliseconds(250))
 
-    let rejected = try requestPairing(
-        host: "127.0.0.1", port: port, requesterDeviceId: "pad", requesterName: "MatePad",
-        requesterPlatform: "HarmonyOS", requesterSystemVersion: "6.1", requesterIP: "127.0.0.1",
-        requesterPort: 51888, code: "000000", requesterFingerprint: "fingerprint"
-    )
+    #expect(throws: HMTransError.self) {
+        try requestPairing(
+            host: "127.0.0.1", port: port, requesterDeviceId: "pad", requesterName: "MatePad",
+            requesterPlatform: "HarmonyOS", requesterSystemVersion: "6.1", requesterIP: "127.0.0.1",
+            requesterPort: 51888, code: "000000", requesterFingerprint: "fingerprint",
+            targetDeviceId: "mac", targetFingerprint: "mac-fingerprint"
+        )
+    }
     let accepted = try requestPairing(
         host: "127.0.0.1", port: port, requesterDeviceId: "pad", requesterName: "MatePad",
         requesterPlatform: "HarmonyOS", requesterSystemVersion: "6.1", requesterIP: "127.0.0.1",
-        requesterPort: 51888, code: "246 810", requesterFingerprint: "fingerprint"
+        requesterPort: 51888, code: "246 810", requesterFingerprint: "fingerprint",
+        targetDeviceId: "mac", targetFingerprint: "mac-fingerprint"
     )
-    #expect(!rejected.accepted)
-    #expect(accepted.accepted)
+    #expect(accepted.response.accepted)
+    #expect(accepted.sharedSecret?.count == 64)
 }
 
 @Test("解除配对只接受已验证身份发给本机的请求")
@@ -300,13 +315,21 @@ func unpairRequiresTrustedIdentityAndTarget() async throws {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let port = UInt16.random(in: 49_001...52_000)
+    let sharedSecret = String(repeating: "33", count: 32)
     let receiver = PersistentFileReceiver()
     try receiver.start(
         port: port,
         outputDirectory: root.path,
         onUnpairRequest: {
-            $0.requesterDeviceId == "pad" && $0.requesterFingerprint == "trusted-fingerprint"
-                && $0.targetDeviceId == "mac"
+            guard $0.requesterDeviceId == "pad", $0.requesterFingerprint == "trusted-fingerprint",
+                  $0.targetDeviceId == "mac",
+                  let expected = try? hmTransAuthenticationCode(
+                      sharedSecret: sharedSecret,
+                      purpose: "unpair-control-auth-v1",
+                      canonicalText: $0.canonicalAuthenticationText
+                  )
+            else { return false }
+            return hmTransSecureHexEquals($0.signature, expected)
         },
         shouldAccept: { _ in false },
         onConnectionResult: { _ in }
@@ -316,14 +339,44 @@ func unpairRequiresTrustedIdentityAndTarget() async throws {
 
     let rejected = try requestUnpair(
         host: "127.0.0.1", port: port, requesterDeviceId: "pad",
-        requesterFingerprint: "wrong-fingerprint", targetDeviceId: "mac"
+        requesterFingerprint: "wrong-fingerprint", targetDeviceId: "mac", sharedSecret: sharedSecret
     )
     let accepted = try requestUnpair(
         host: "127.0.0.1", port: port, requesterDeviceId: "pad",
-        requesterFingerprint: "trusted-fingerprint", targetDeviceId: "mac"
+        requesterFingerprint: "trusted-fingerprint", targetDeviceId: "mac", sharedSecret: sharedSecret
     )
     #expect(!rejected.accepted)
     #expect(accepted.accepted)
+}
+
+@Test("文件元数据认证绑定内容并使用独立用途密钥")
+func fileMetaAuthenticationRejectsTampering() throws {
+    let secret = String(repeating: "44", count: 32)
+    let original = FileMeta(
+        transferId: "transfer-1",
+        senderDeviceId: "mac",
+        fileName: "report.pdf",
+        fileSize: 123,
+        sha256: String(repeating: "a", count: 64),
+        totalChunks: 1,
+        senderFingerprint: "fingerprint"
+    )
+    let signed = try authenticatedFileMeta(original, sharedSecret: secret)
+    #expect(verifyFileMetaAuthentication(signed, sharedSecret: secret))
+    let tampered = FileMeta(
+        transferId: signed.transferId,
+        senderDeviceId: signed.senderDeviceId,
+        fileName: "changed.pdf",
+        fileSize: signed.fileSize,
+        sha256: signed.sha256,
+        totalChunks: signed.totalChunks,
+        senderFingerprint: signed.senderFingerprint,
+        authenticationVersion: signed.authenticationVersion,
+        authenticationId: signed.authenticationId,
+        issuedAt: signed.issuedAt,
+        signature: signed.signature
+    )
+    #expect(!verifyFileMetaAuthentication(tampered, sharedSecret: secret))
 }
 
 @Test("两个设备可同时接收不同文件且内容保持一致")

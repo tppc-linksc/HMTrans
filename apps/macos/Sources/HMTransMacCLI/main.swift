@@ -7,6 +7,9 @@ struct Options {
     var port: UInt16 = defaultPort
     var filePath: String?
     var outputDirectory: String = defaultReceiveDirectory()
+    var deviceId: String?
+    var fingerprint: String?
+    var sharedSecret: String?
 }
 
 @main
@@ -60,6 +63,12 @@ func parseOptions(_ args: [String]) throws -> Options {
             options.filePath = try nextValue()
         case "--dir":
             options.outputDirectory = NSString(string: try nextValue()).expandingTildeInPath
+        case "--device-id":
+            options.deviceId = try nextValue()
+        case "--fingerprint":
+            options.fingerprint = try nextValue()
+        case "--secret":
+            options.sharedSecret = try nextValue().lowercased()
         case "-h", "--help":
             throw HMTransError.usage(usageText())
         default:
@@ -71,27 +80,45 @@ func parseOptions(_ args: [String]) throws -> Options {
     if command == "send" {
         guard options.host != nil else { throw HMTransError.usage("send 需要 --host") }
         guard options.filePath != nil else { throw HMTransError.usage("send 需要 --file") }
+        guard options.deviceId?.isEmpty == false else { throw HMTransError.usage("send 需要 --device-id") }
+        guard options.fingerprint?.isEmpty == false else { throw HMTransError.usage("send 需要 --fingerprint") }
+        guard options.sharedSecret?.count == 64 else { throw HMTransError.usage("send 需要 64 位十六进制 --secret") }
     } else if command != "receive" {
         throw HMTransError.usage("未知命令：\(command)")
+    } else if options.sharedSecret?.count != 64 {
+        throw HMTransError.usage("receive 需要 64 位十六进制 --secret")
     }
 
     return options
 }
 
 func runSend(_ options: Options) throws {
-    guard let host = options.host, let path = options.filePath else {
+    guard let host = options.host, let path = options.filePath,
+          let deviceId = options.deviceId, let fingerprint = options.fingerprint,
+          let sharedSecret = options.sharedSecret else {
         throw HMTransError.usage(usageText())
     }
 
     let fileURL = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
     print("开始发送：\(fileURL.lastPathComponent)")
-    try sendFile(fileURL: fileURL, host: host, port: options.port, onProgress: { current, total in
+    try sendFile(
+        fileURL: fileURL,
+        host: host,
+        port: options.port,
+        senderDeviceId: deviceId,
+        senderName: Host.current().localizedName ?? "Mac CLI",
+        senderPlatform: "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)",
+        senderFingerprint: fingerprint,
+        sharedSecret: sharedSecret,
+        onProgress: { current, total in
         printProgress(prefix: "发送中", current: current, total: total)
-    })
+        }
+    )
     print("\n传输完成，接收方校验通过。")
 }
 
 func runReceive(_ options: Options) throws {
+    guard let sharedSecret = options.sharedSecret else { throw HMTransError.usage(usageText()) }
     print("HMTrans 正在监听 0.0.0.0:\(options.port)")
     print("接收目录：\(options.outputDirectory)")
     print("等待一个传输请求...")
@@ -100,6 +127,10 @@ func runReceive(_ options: Options) throws {
         port: options.port,
         outputDirectory: options.outputDirectory,
         shouldAccept: { meta in
+            guard verifyFileMetaAuthentication(meta, sharedSecret: sharedSecret) else {
+                print("拒绝：文件元数据认证失败")
+                return false
+            }
             print("")
             print("收到文件请求：")
             print("  文件名：\(meta.fileName)")
@@ -123,13 +154,14 @@ func runReceive(_ options: Options) throws {
 
 func usageText() -> String {
     """
-    HMTrans V0.2
+    HMTrans V0.3
 
     接收：
-      swift run hmtrans receive [--port 51888] [--dir ~/Downloads/HMTrans]
+      swift run hmtrans receive --secret <64位配对主密钥> [--port 51888] [--dir ~/Downloads/HMTrans]
 
     发送：
-      swift run hmtrans send --host 192.168.1.35 --file /path/to/file [--port 51888]
+      swift run hmtrans send --host 192.168.1.35 --file /path/to/file \
+        --device-id <本机设备ID> --fingerprint <本机身份指纹> --secret <64位配对主密钥> [--port 51888]
 
     图形端：
       swift run HMTransMac

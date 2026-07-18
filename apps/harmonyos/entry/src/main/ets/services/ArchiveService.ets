@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit'
 import { taskpool } from '@kit.ArkTS'
 import { zlib } from '@kit.BasicServicesKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
-import { fileNameFromUri } from '../common/Formatters'
+import { fileNameFromUri, fileTypeLabel } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 
 export interface SendableSource {
@@ -96,7 +96,7 @@ export class ArchiveService {
         displayName,
         isArchive: false,
         fileSize: this.safeFileSize(stagedPath),
-        fileType: this.fileTypeLabel(displayName),
+        fileType: fileTypeLabel(displayName),
         stagingOwned: true,
         sourceSize: this.safeFileSize(stagedPath),
         sourceFileCount: 1,
@@ -180,14 +180,6 @@ export class ArchiveService {
       return `HMTrans-${Date.now()}`
     }
     return sanitized
-  }
-
-  private fileTypeLabel(fileName: string): string {
-    const index = fileName.lastIndexOf('.')
-    if (index < 0 || index === fileName.length - 1) {
-      return '文件'
-    }
-    return fileName.substring(index + 1).toUpperCase()
   }
 
   private isDirectory(uri: string): boolean {

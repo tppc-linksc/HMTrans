@@ -17,6 +17,7 @@ export interface PadPreferencesSnapshot {
   trustedDeviceIds: Array<string>
   trustedFingerprints: Map<string, string>
   trustedSharedSecrets: Map<string, string>
+  trustedSecurityVersions: Map<string, number>
   castPort: string
   castResolution: string
   castFrameRate: number
@@ -42,9 +43,14 @@ export class PadPreferencesService {
       const trustedText = await store.get(TRUST_KEY, '') as string
       const trustedFingerprints: Map<string, string> = new Map()
       const trustedSharedSecrets: Map<string, string> = new Map()
+      const trustedSecurityVersions: Map<string, number> = new Map()
       try {
         const values = JSON.parse(await store.get('trustedDeviceFingerprintsV1', '{}') as string) as Record<string, string>
         Object.keys(values).forEach((key: string) => trustedFingerprints.set(key, values[key]))
+      } catch (_) {}
+      try {
+        const values = JSON.parse(await store.get('trustedSecurityVersionsV1', '{}') as string) as Record<string, number>
+        Object.keys(values).forEach((key: string) => trustedSecurityVersions.set(key, values[key]))
       } catch (_) {}
       try {
         const values = JSON.parse(await store.get('trustedSharedSecretsV1', '{}') as string) as Record<string, string>
@@ -65,6 +71,7 @@ export class PadPreferencesService {
         trustedDeviceIds: trustedText.length > 0 ? trustedText.split(',') : [],
         trustedFingerprints,
         trustedSharedSecrets,
+        trustedSecurityVersions,
         castPort: await store.get('castPort', `${DEFAULT_CAST_PORT}`) as string,
         castResolution: await store.get('castResolution', legacyResolution) as string,
         castFrameRate: await store.get('castFrameRate', legacyFrameRate) as number,
@@ -97,7 +104,7 @@ export class PadPreferencesService {
   }
 
   async saveTrust(context: common.UIAbilityContext, ids: Array<string>, fingerprints: Map<string, string>,
-    sharedSecrets?: Map<string, string>): Promise<void> {
+    sharedSecrets?: Map<string, string>, securityVersions?: Map<string, number>): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, NAME)
       const values: Record<string, string> = {}
@@ -108,6 +115,11 @@ export class PadPreferencesService {
         const secrets: Record<string, string> = {}
         sharedSecrets.forEach((value: string, key: string) => { secrets[key] = value })
         await store.put('trustedSharedSecretsV1', JSON.stringify(secrets))
+      }
+      if (securityVersions) {
+        const versions: Record<string, number> = {}
+        securityVersions.forEach((value: number, key: string) => { versions[key] = value })
+        await store.put('trustedSecurityVersionsV1', JSON.stringify(versions))
       }
       await store.flush()
     } catch (err) {

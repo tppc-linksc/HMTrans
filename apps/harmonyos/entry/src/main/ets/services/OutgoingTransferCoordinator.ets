@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { fileNameFromUri, fileTypeLabel } from '../common/Formatters'
 import { DeviceInfo, FileMeta, PairingRequest } from '../common/Protocol'
-import { TransferListItemOptions, TransferState } from '../models/TransferListItem'
+import { TransferDirection, TransferListItemOptions, TransferState } from '../models/TransferListItem'
 import { ArchiveService, SendableSource } from './ArchiveService'
 import { TcpTransferService, TransferCallbacks } from './TcpTransferService'
 import { errorText } from '../common/ErrorText'
@@ -11,6 +11,7 @@ export interface OutgoingIdentity {
   deviceId: string
   deviceName: string
   fingerprint: string
+  sharedSecrets: Map<string, string>
 }
 
 export interface OutgoingTransferCallbacks {
@@ -128,7 +129,8 @@ export class OutgoingTransferCoordinator {
     this.queuedControls.set(transferId, queueControl)
     callbacks.onBegin({
       id: transferId, groupId: groupId ?? transferId, fileName: source.displayName, peerName: device.deviceName,
-      direction: '发送', progress: 0, detail: source.isArchive ? '已压缩为 zip，等待发送' : '排队等待传输',
+      direction: TransferDirection.Sending, progress: 0,
+      detail: source.isArchive ? '已压缩为 zip，等待发送' : '排队等待传输',
       state: TransferState.Preparing, timeText: '', startedAt: Date.now(), fileSize: source.fileSize,
       fileType: source.fileType, localPath: source.originalUri, stagingPath: source.uri,
       sourceSize: source.sourceSize, sourceFileCount: source.sourceFileCount,
@@ -142,7 +144,8 @@ export class OutgoingTransferCoordinator {
           onStatus: callbacks.onStatus,
           onProgress: (current: number, total: number) => callbacks.onProgress(transferId, current, total),
           onIncoming: async (_meta: FileMeta) => false,
-          onPairing: async (_request: PairingRequest) => false,
+          onPairingCode: async (_request: PairingRequest) => undefined,
+          onPairingEstablished: async (_request: PairingRequest, _sharedSecret: string) => {},
           onTransferActivity: callbacks.onActivity,
         }
         await queueControl.checkpoint()
@@ -161,6 +164,7 @@ export class OutgoingTransferCoordinator {
             sourceSize: source.sourceSize,
             sourceFileCount: source.sourceFileCount,
             senderFingerprint: identity.fingerprint,
+            sharedSecret: identity.sharedSecrets.get(device.deviceId),
           })
           callbacks.onComplete(transferId)
         } catch (err) {
@@ -194,7 +198,8 @@ export class OutgoingTransferCoordinator {
   private failureOptions(uri: string, device: DeviceInfo, id: string, groupId: string,
     detail: string): TransferListItemOptions {
     const name = fileNameFromUri(uri)
-    return { id, groupId, fileName: name, peerName: device.deviceName, direction: '发送', progress: 0, detail,
+    return { id, groupId, fileName: name, peerName: device.deviceName,
+      direction: TransferDirection.Sending, progress: 0, detail,
       state: TransferState.Failed, timeText: '', startedAt: Date.now(), fileSize: 0, fileType: fileTypeLabel(name), localPath: uri }
   }
 

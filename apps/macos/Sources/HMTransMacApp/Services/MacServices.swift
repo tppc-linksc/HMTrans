@@ -9,8 +9,16 @@ enum TrustedDevicesStore {
         PairingConfigurationStore.contains(deviceId)
     }
 
-    static func insert(_ deviceId: String?, fingerprint: String?, sharedSecret: String? = nil) {
-        PairingConfigurationStore.insert(deviceId, fingerprint: fingerprint, sharedSecret: sharedSecret)
+    static func insert(
+        _ deviceId: String?, fingerprint: String?, sharedSecret: String? = nil,
+        securityVersion: Int = hmTransSecurityVersion
+    ) {
+        PairingConfigurationStore.insert(
+            deviceId,
+            fingerprint: fingerprint,
+            sharedSecret: sharedSecret,
+            securityVersion: securityVersion
+        )
     }
 
     static func sharedSecret(for deviceId: String?) -> String? {
@@ -26,8 +34,60 @@ enum TrustedDevicesStore {
     }
 }
 
+/// 把 1 MB 网络分块产生的高频进度事件收敛到每任务约 10 Hz；首帧和完成帧始终上报。
+final class TransferProgressThrottle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastUpdates: [String: TimeInterval] = [:]
+    private let interval: TimeInterval
+
+    init(interval: TimeInterval = 0.1) {
+        self.interval = interval
+    }
+
+    func shouldPublish(id: String, current: Int64, total: Int64) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        defer { lock.unlock() }
+        if current == 0 || current >= total {
+            lastUpdates.removeValue(forKey: id)
+            return true
+        }
+        if let last = lastUpdates[id], now - last < interval { return false }
+        lastUpdates[id] = now
+        return true
+    }
+}
+
+/// 文件元数据签名允许短时间时钟偏差，但同一个认证 ID 只能使用一次，阻止局域网抓包后重放接收提示。
+private final class FileMetadataReplayGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [String: TimeInterval] = [:]
+    private let retention: TimeInterval = 5 * 60
+    private let maximumEntries = 2_048
+
+    func accept(_ meta: FileMeta) -> Bool {
+        guard let id = meta.authenticationId, !id.isEmpty else { return false }
+        let now = Date().timeIntervalSince1970
+        return lock.withLock {
+            seen = seen.filter { now - $0.value <= retention }
+            guard seen[id] == nil else { return false }
+            if seen.count >= maximumEntries, let oldest = seen.min(by: { $0.value < $1.value })?.key {
+                seen.removeValue(forKey: oldest)
+            }
+            seen[id] = now
+            return true
+        }
+    }
+}
+
+private let fileMetadataReplayGuard = FileMetadataReplayGuard()
+
 func confirmIncomingFile(_ meta: FileMeta) -> Bool {
-    TrustedDevicesStore.matches(meta.senderDeviceId, fingerprint: meta.senderFingerprint)
+    guard TrustedDevicesStore.matches(meta.senderDeviceId, fingerprint: meta.senderFingerprint),
+          let sharedSecret = TrustedDevicesStore.sharedSecret(for: meta.senderDeviceId)
+    else { return false }
+    return verifyFileMetaAuthentication(meta, sharedSecret: sharedSecret)
+        && fileMetadataReplayGuard.accept(meta)
 }
 
 @MainActor

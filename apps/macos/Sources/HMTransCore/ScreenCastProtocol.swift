@@ -132,6 +132,7 @@ public struct ScreenCastHello: Codable, Sendable {
     public let deviceName: String
     public let identityFingerprint: String
     public let sessionId: String
+    public let connectionId: String
     public let codec: String
     public let width: Int
     public let height: Int
@@ -290,11 +291,13 @@ public struct ScreenCastPacketParser: Sendable {
 public struct ScreenCastCipher: Sendable {
     private let key: SymmetricKey
 
-    public init(sharedSecret: String) throws {
-        guard let keyData = Data(hexEncoded: sharedSecret), keyData.count == 32 else {
-            throw ScreenCastProtocolError.invalidSecret
-        }
-        key = SymmetricKey(data: keyData)
+    public init(
+        sharedSecret: String,
+        sessionID: String,
+        purpose: String = "screen-cast-media-v1"
+    ) throws {
+        guard !sessionID.isEmpty else { throw ScreenCastProtocolError.invalidSecret }
+        key = try hmTransDerivedKey(sharedSecret: sharedSecret, purpose: purpose, context: sessionID)
     }
 
     public func encrypt(_ data: Data, authenticating header: Data) throws -> Data {
@@ -321,20 +324,6 @@ public func decodeScreenCastJSON<T: Decodable>(_ type: T.Type, from data: Data) 
 }
 
 private extension Data {
-    init?(hexEncoded text: String) {
-        guard text.count.isMultiple(of: 2) else { return nil }
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(text.count / 2)
-        var index = text.startIndex
-        while index < text.endIndex {
-            let next = text.index(index, offsetBy: 2)
-            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
-            bytes.append(byte)
-            index = next
-        }
-        self.init(bytes)
-    }
-
     mutating func appendInteger<T: FixedWidthInteger>(_ value: T) {
         var bigEndian = value.bigEndian
         Swift.withUnsafeBytes(of: &bigEndian) { append(contentsOf: $0) }

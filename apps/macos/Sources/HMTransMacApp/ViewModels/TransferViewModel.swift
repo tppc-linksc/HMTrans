@@ -47,6 +47,7 @@ final class TransferViewModel {
     let receiver = PersistentFileReceiver()
     let store = TransferStore()
     let screenCast = ScreenCastManager()
+    let progressUpdateThrottle = TransferProgressThrottle()
     var discovery: DiscoveryService?
     private var didBootstrap = false
     var lastFallbackScan = Date.distantPast
@@ -664,12 +665,10 @@ final class TransferViewModel {
         let requesterPort = localTCPPort
         let requesterIP = localIPv4Addresses().first ?? "0.0.0.0"
         let requesterSystemVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        // 一次配对只需由发起方输入六位码；随机密钥随后只保存在双方应用私有目录。
-        let pairingSecret = (UUID().uuidString + UUID().uuidString)
-            .replacingOccurrences(of: "-", with: "").lowercased()
+        let requesterFingerprint = identityFingerprint
         Task.detached { [weak self] in
             do {
-                let response = try requestPairing(
+                let outcome = try requestPairing(
                     host: device.ip,
                     port: device.port,
                     requesterDeviceId: requesterId,
@@ -679,16 +678,18 @@ final class TransferViewModel {
                     requesterIP: requesterIP,
                     requesterPort: requesterPort,
                     code: code,
-                    requesterFingerprint: self?.identityFingerprint,
-                    pairingSecret: pairingSecret
+                    requesterFingerprint: requesterFingerprint,
+                    targetDeviceId: device.deviceId,
+                    targetFingerprint: fingerprint
                 )
                 await MainActor.run {
                     guard let self else { return }
-                    if response.accepted {
+                    if outcome.response.accepted, let sharedSecret = outcome.sharedSecret {
                         TrustedDevicesStore.insert(
                             device.deviceId,
                             fingerprint: fingerprint,
-                            sharedSecret: pairingSecret
+                            sharedSecret: sharedSecret,
+                            securityVersion: hmTransSecurityVersion
                         )
                         self.persist(device: device)
                         self.useDevice(device)
@@ -787,7 +788,8 @@ final class TransferViewModel {
     func forgetDevice(_ device: DeviceInfo) {
         let requesterDeviceID = deviceId
         let requesterFingerprint = identityFingerprint
-        if !isLocalIPv4Address(device.ip) {
+        let sharedSecret = TrustedDevicesStore.sharedSecret(for: device.deviceId)
+        if !isLocalIPv4Address(device.ip), let sharedSecret {
             Task.detached { [weak self] in
                 var finalError: Error?
                 for attempt in 0..<2 {
@@ -797,7 +799,8 @@ final class TransferViewModel {
                             port: device.port,
                             requesterDeviceId: requesterDeviceID,
                             requesterFingerprint: requesterFingerprint,
-                            targetDeviceId: device.deviceId
+                            targetDeviceId: device.deviceId,
+                            sharedSecret: sharedSecret
                         )
                         if response.accepted { return }
                         await MainActor.run {
@@ -989,47 +992,63 @@ final class TransferViewModel {
     private func startReceiver() -> Bool {
         if receiverRunning { return true }
         receiver.stop()
+        let progressThrottle = progressUpdateThrottle
         do {
             try receiver.start(
                 port: localTCPPort,
                 outputDirectory: receiveDirectory,
-                onPairingRequest: { request in
-                    evaluateOnMain(timeout: 5, fallback: false) {
-                        let accepted = request.code.filter(\.isNumber) == self.pairingCode.filter(\.isNumber)
-                            && self.pairingSeconds > 0
-                            && request.requesterFingerprint?.isEmpty == false
-                        if accepted {
-                            let device = DeviceInfo(
-                                deviceName: request.requesterName,
-                                platform: request.requesterPlatform,
-                                ip: request.requesterIP,
-                                port: request.requesterPort,
-                                deviceId: request.requesterDeviceId,
-                                systemVersion: request.requesterSystemVersion,
-                                identityFingerprint: request.requesterFingerprint
-                            )
+                onPairingRequest: { [self] request in
+                    evaluateOnMain(timeout: 5, fallback: nil as PairingAuthorization?) {
+                        guard self.pairingSeconds > 0,
+                              request.targetDeviceId == self.deviceId,
+                              request.targetFingerprint == self.identityFingerprint,
+                              !request.requesterFingerprint.isEmpty
+                        else { return nil }
+                        let code = self.pairingCode
+                        let device = DeviceInfo(
+                            deviceName: request.requesterName,
+                            platform: request.requesterPlatform,
+                            ip: request.requesterIP,
+                            port: request.requesterPort,
+                            deviceId: request.requesterDeviceId,
+                            systemVersion: request.requesterSystemVersion,
+                            identityFingerprint: request.requesterFingerprint
+                        )
+                        return PairingAuthorization(code: code) { [weak self] sharedSecret in
                             TrustedDevicesStore.insert(
                                 request.requesterDeviceId,
                                 fingerprint: request.requesterFingerprint,
-                                sharedSecret: request.pairingSecret
+                                sharedSecret: sharedSecret,
+                                securityVersion: hmTransSecurityVersion
                             )
-                            self.deviceLastSeenAt[device.deviceId] = Date()
-                            self.mergeDiscoveredDevice(device)
-                            self.useDevice(device)
-                            self.discovery?.probe(address: device.ip)
-                            self.status = "已与 \(device.deviceName) 完成配对，正在确认连接"
+                            DispatchQueue.main.async {
+                                guard let self else { return }
+                                self.deviceLastSeenAt[device.deviceId] = Date()
+                                self.mergeDiscoveredDevice(device)
+                                self.useDevice(device)
+                                self.discovery?.probe(address: device.ip)
+                                self.status = "已与 \(device.deviceName) 完成安全配对，正在确认连接"
+                            }
                         }
-                        return accepted
                     }
                 },
                 onUnpairRequest: { request in
                     evaluateOnMain(timeout: 5, fallback: false) {
-                        let accepted = request.targetDeviceId == self.deviceId
-                            && TrustedDevicesStore.matches(
-                                request.requesterDeviceId,
-                                fingerprint: request.requesterFingerprint
-                            )
-                        guard accepted else { return false }
+                        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+                        guard request.targetDeviceId == self.deviceId,
+                              abs(now - request.issuedAt) <= 30_000,
+                              TrustedDevicesStore.matches(
+                                  request.requesterDeviceId,
+                                  fingerprint: request.requesterFingerprint
+                              ),
+                              let sharedSecret = TrustedDevicesStore.sharedSecret(for: request.requesterDeviceId),
+                              let expected = try? hmTransAuthenticationCode(
+                                  sharedSecret: sharedSecret,
+                                  purpose: "unpair-control-auth-v1",
+                                  canonicalText: request.canonicalAuthenticationText
+                              ),
+                              hmTransSecureHexEquals(request.signature, expected)
+                        else { return false }
                         let device = self.nearbyDevices.first {
                             $0.deviceId == request.requesterDeviceId
                         }
@@ -1059,6 +1078,11 @@ final class TransferViewModel {
                     }
                 },
                 onProgress: { [weak self] meta, current, total in
+                    guard progressThrottle.shouldPublish(
+                        id: meta.transferId,
+                        current: current,
+                        total: total
+                    ) == true else { return }
                     Task { @MainActor in
                         guard let self else { return }
                         let progress = total == 0 ? 1 : Double(current) / Double(total)

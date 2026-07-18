@@ -4,11 +4,10 @@ import {
   createDeviceInfo,
   createPairingRequest,
   createReceiveDecision,
-  createUnpairRequest,
   encodeJsonLine,
   wifiIpAddress,
 } from '../main/ets/common/Protocol'
-import { TransferListItem } from '../main/ets/models/TransferListItem'
+import { TransferDirection, TransferListItem, TransferState } from '../main/ets/models/TransferListItem'
 import { TransferStateService } from '../main/ets/services/TransferStateService'
 import { validateZipEntryName } from '../main/ets/services/ZipSafetyService'
 import { ControlLineInbox } from '../main/ets/services/ControlLineInbox'
@@ -23,15 +22,23 @@ import {
   parseCastHeader,
   ScreenCastCipher,
 } from '../main/ets/common/ScreenCastProtocol'
+import {
+  authenticationCode,
+  authenticateFileMeta,
+  authenticatedUnpairRequest,
+  verifyFileMetaAuthentication,
+  verifyUnpairRequest,
+} from '../main/ets/common/PairingSecurity'
 
 export default function protocolAndStateTest(): void {
   describe('HMTrans protocol and state', () => {
     it('normalizes pairing code and keeps identity fields', 0, () => {
       const request = createPairingRequest(
-        'pad-id', 'MatePad', 'HarmonyOS', '6.1.0', '192.168.1.10', 51888, '246 810', 'fingerprint',
+        'pad-id', 'MatePad', 'HarmonyOS', '6.1.0', '192.168.1.10', 51888, 'fingerprint',
+        'mac-id', 'mac-fingerprint', 'request-1', 'public-key', 1,
       )
-      expect(request.code).assertEqual('246810')
       expect(request.requesterFingerprint).assertEqual('fingerprint')
+      expect(request.targetDeviceId).assertEqual('mac-id')
       expect(request.version).assertEqual('0.2.0')
     })
 
@@ -45,11 +52,33 @@ export default function protocolAndStateTest(): void {
     })
 
     it('binds unpair request to both stable device identities', 0, () => {
-      const request = createUnpairRequest('pad-id', 'pad-fingerprint', 'mac-id')
+      const secret = '33'.repeat(32)
+      const request = authenticatedUnpairRequest('pad-id', 'pad-fingerprint', 'mac-id', secret)
       expect(request.type).assertEqual('unpair_request')
       expect(request.requesterDeviceId).assertEqual('pad-id')
       expect(request.requesterFingerprint).assertEqual('pad-fingerprint')
       expect(request.targetDeviceId).assertEqual('mac-id')
+      expect(verifyUnpairRequest(request, secret)).assertTrue()
+    })
+
+    it('matches the macOS purpose-key HMAC test vector', 0, () => {
+      const secret = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
+      const canonical = 'screen_cast_start_request|HMTrans|0.2.0|mac-id|mac-fingerprint|' +
+        'pad-id|request-1|1721217600000'
+      expect(authenticationCode(secret, 'screen-cast-control-auth-v1', canonical))
+        .assertEqual('b1829a62340f4e27c2ce5cc9b70b938e33280af12ad3621d8d3c00c2c2f40b78')
+    })
+
+    it('rejects tampered authenticated file metadata', 0, () => {
+      const secret = '44'.repeat(32)
+      const signed = authenticateFileMeta(
+        createFileMeta('report.pdf', 123, 'a'.repeat(64), 'mac-id', 'Mac', 'macOS', 'transfer-1',
+          'file', 'report.pdf', 123, 1, 'mac-fingerprint'),
+        secret,
+      )
+      expect(verifyFileMetaAuthentication(signed, secret)).assertTrue()
+      signed.senderName = '伪造名称'
+      expect(verifyFileMetaAuthentication(signed, secret)).assertFalse()
     })
 
     it('advertises and displays the Pad local IPv4 address', 0, () => {
@@ -65,8 +94,8 @@ export default function protocolAndStateTest(): void {
     it('moves a completed task into durable history', 0, () => {
       const state = new TransferStateService()
       const item = new TransferListItem({
-        id: 'transfer-1', fileName: 'photo.jpg', peerName: 'Mac', direction: '发送', progress: 50,
-        detail: '传输中', state: '传输中', timeText: '12:00', startedAt: Date.now(), fileSize: 100,
+        id: 'transfer-1', fileName: 'photo.jpg', peerName: 'Mac', direction: TransferDirection.Sending, progress: 50,
+        detail: '传输中', state: TransferState.Active, timeText: '12:00', startedAt: Date.now(), fileSize: 100,
         fileType: 'JPG', deviceId: 'mac-id',
       })
       const result = state.complete([item], item.id, true, '发送完成', undefined, 'mac-id')
@@ -116,7 +145,7 @@ export default function protocolAndStateTest(): void {
 
     it('encrypts cast frames and rejects modified authentication data', 0, async () => {
       const secret = '11'.repeat(32)
-      const cipher = new ScreenCastCipher(secret)
+      const cipher = new ScreenCastCipher(secret, 'session-1')
       const plain = stringToArrayBuffer('screen-frame')
       const header = buildCastHeader(CastMessageType.VIDEO_FRAME, CastPacketFlags.ENCRYPTED,
         plain.byteLength + 28, 1, 100)
@@ -126,6 +155,19 @@ export default function protocolAndStateTest(): void {
       const modifiedHeader = concatBuffers([header.slice(0, 31), new Uint8Array([1]).buffer])
       let rejected = false
       try { await cipher.decrypt(sealed, modifiedHeader) } catch (_) { rejected = true }
+      expect(rejected).assertTrue()
+    })
+
+    it('rejects media ciphertext replayed after a TCP reconnect', 0, async () => {
+      const secret = '22'.repeat(32)
+      const previous = new ScreenCastCipher(secret, 'session|connection-a')
+      const reconnected = new ScreenCastCipher(secret, 'session|connection-b')
+      const plain = stringToArrayBuffer('old-frame')
+      const header = buildCastHeader(CastMessageType.VIDEO_FRAME, CastPacketFlags.ENCRYPTED,
+        plain.byteLength + 28, 1, 100)
+      const sealed = await previous.encrypt(plain, header)
+      let rejected = false
+      try { await reconnected.decrypt(sealed, header) } catch (_) { rejected = true }
       expect(rejected).assertTrue()
     })
   })

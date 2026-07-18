@@ -44,7 +44,10 @@ func screenCastParserHandlesTCPFraming() throws {
 
 @Test("HMCS AES-GCM 会拒绝被篡改的帧头")
 func screenCastCipherAuthenticatesHeader() throws {
-    let cipher = try ScreenCastCipher(sharedSecret: String(repeating: "11", count: 32))
+    let cipher = try ScreenCastCipher(
+        sharedSecret: String(repeating: "11", count: 32),
+        sessionID: "session-1"
+    )
     let plain = Data("screen-frame".utf8)
     let header = try ScreenCastHeader(
         type: .videoFrame,
@@ -123,8 +126,27 @@ func screenCastStartRequestAuthenticationVector() throws {
         try screenCastControlSignature(
             sharedSecret: secret,
             canonicalText: request.canonicalAuthenticationText
-        ) == "763680f019fbaf3064db5b66bf2ad05811441bf589cc859154bd4bd6362f591b"
+        ) == "b1829a62340f4e27c2ce5cc9b70b938e33280af12ad3621d8d3c00c2c2f40b78"
     )
+}
+
+@Test("投屏媒体密钥按 TCP 连接隔离并拒绝重连重放")
+func screenCastMediaKeyIsConnectionScoped() throws {
+    let secret = String(repeating: "22", count: 32)
+    let first = try ScreenCastCipher(sharedSecret: secret, sessionID: "session|connection-a")
+    let second = try ScreenCastCipher(sharedSecret: secret, sessionID: "session|connection-b")
+    let payload = Data("frame".utf8)
+    let header = try ScreenCastHeader(
+        type: .videoFrame,
+        flags: [.encrypted],
+        payloadLength: payload.count + 28,
+        sequence: 1,
+        presentationTimeUs: 1
+    ).encoded()
+    let sealed = try first.encrypt(payload, authenticating: header)
+    #expect(throws: ScreenCastProtocolError.self) {
+        try second.decrypt(sealed, authenticating: header)
+    }
 }
 
 @Test("主动投屏控制请求拒绝缺失或畸形配对密钥")
@@ -205,6 +227,7 @@ private func testHello(
         deviceName: deviceID,
         identityFingerprint: "fingerprint-\(deviceID)",
         sessionId: sessionID,
+        connectionId: "connection-\(sessionID)",
         codec: "h264-annexb",
         width: width,
         height: height,

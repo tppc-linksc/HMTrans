@@ -10,14 +10,19 @@ export enum TransferState {
   Cancelled = '已取消',
 }
 
+export enum TransferDirection {
+  Sending = '发送',
+  Receiving = '接收',
+}
+
 export interface TransferListItemOptions {
   id: string
   fileName: string
   peerName: string
-  direction: string
+  direction: TransferDirection
   progress: number
   detail: string
-  state: TransferState | string
+  state: TransferState
   timeText: string
   startedAt: number
   fileSize: number
@@ -38,10 +43,10 @@ export class TransferListItem {
   @Trace id: string
   @Trace fileName: string
   @Trace peerName: string
-  @Trace direction: string
+  @Trace direction: TransferDirection
   @Trace progress: number
   @Trace detail: string
-  @Trace state: string
+  @Trace state: TransferState
   @Trace timeText: string
   @Trace startedAt: number
   @Trace fileSize: number
@@ -79,7 +84,7 @@ export class TransferListItem {
     this.sourceFileCount = options.sourceFileCount ?? 1
   }
 
-  copyWith(progress: number, detail: string, state: string, timeText: string): TransferListItem {
+  copyWith(progress: number, detail: string, state: TransferState, timeText: string): TransferListItem {
     return new TransferListItem({
       id: this.id,
       fileName: this.fileName,

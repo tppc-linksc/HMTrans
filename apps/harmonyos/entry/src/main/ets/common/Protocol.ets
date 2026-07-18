@@ -1,3 +1,5 @@
+import { stringToArrayBuffer } from './Bytes'
+
 export const APP_NAME: string = 'HMTrans'
 export const PROTOCOL_VERSION: string = '0.2.0'
 export const DEFAULT_PORT: number = 51888
@@ -25,6 +27,10 @@ export interface FileMeta {
   sourceSize?: number
   sourceFileCount?: number
   senderFingerprint?: string
+  authenticationVersion?: number
+  authenticationId?: string
+  issuedAt?: number
+  signature?: string
 }
 
 export interface ReceiveDecision {
@@ -44,16 +50,36 @@ export interface PairingRequest {
   requesterSystemVersion: string
   requesterIP: string
   requesterPort: number
-  code: string
-  requesterFingerprint?: string,
-  /** 配对成功后仅保存在双方应用私有配置中的 256 位投屏密钥。 */
-  pairingSecret?: string
+  requesterFingerprint: string
+  targetDeviceId: string
+  targetFingerprint: string
+  requestId: string
+  /** X.509 SubjectPublicKeyInfo DER 的 Base64，仅用于本次 X25519 临时协商。 */
+  requesterPublicKey: string
+  securityVersion: number
+}
+
+export interface PairingChallenge {
+  type: 'pairing_challenge'
+  accepted: boolean
+  requestId: string
+  responderPublicKey: string
+  proof: string
+  securityVersion: number
+  reason?: string | null
+}
+
+export interface PairingConfirmation {
+  type: 'pairing_confirmation'
+  requestId: string
+  proof: string
 }
 
 export interface PairingResponse {
   type: 'pairing_response'
   accepted: boolean
   reason?: string | null
+  securityVersion: number
 }
 
 /** 已配对设备主动通知对端撤销双方的本地信任关系。 */
@@ -64,6 +90,9 @@ export interface UnpairRequest {
   requesterDeviceId: string
   requesterFingerprint: string
   targetDeviceId: string
+  requestId: string
+  issuedAt: number
+  signature: string
 }
 
 export interface UnpairResponse {
@@ -136,9 +165,12 @@ export function createPairingRequest(
   requesterSystemVersion: string,
   requesterIP: string,
   requesterPort: number,
-  code: string,
-  requesterFingerprint?: string,
-  pairingSecret?: string
+  requesterFingerprint: string,
+  targetDeviceId: string,
+  targetFingerprint: string,
+  requestId: string,
+  requesterPublicKey: string,
+  securityVersion: number = 1
 ): PairingRequest {
   return {
     type: 'pairing_request',
@@ -150,22 +182,26 @@ export function createPairingRequest(
     requesterSystemVersion,
     requesterIP,
     requesterPort,
-    code: code.replace(/\D/g, ''),
     requesterFingerprint,
-    pairingSecret,
+    targetDeviceId,
+    targetFingerprint,
+    requestId,
+    requesterPublicKey,
+    securityVersion,
   }
 }
 
-export function createPairingResponse(accepted: boolean, reason?: string): PairingResponse {
+export function createPairingResponse(accepted: boolean, reason?: string, securityVersion: number = 1): PairingResponse {
   return {
     type: 'pairing_response',
     accepted,
     reason: reason ?? null,
+    securityVersion,
   }
 }
 
 export function createUnpairRequest(requesterDeviceId: string, requesterFingerprint: string,
-  targetDeviceId: string): UnpairRequest {
+  targetDeviceId: string, requestId: string, issuedAt: number, signature: string): UnpairRequest {
   return {
     type: 'unpair_request',
     app: APP_NAME,
@@ -173,7 +209,28 @@ export function createUnpairRequest(requesterDeviceId: string, requesterFingerpr
     requesterDeviceId,
     requesterFingerprint,
     targetDeviceId,
+    requestId,
+    issuedAt,
+    signature,
   }
+}
+
+export function fileMetaAuthenticationText(meta: FileMeta): string {
+  return canonicalFields([
+    meta.type, meta.app, meta.version, meta.transferId, meta.senderDeviceId ?? '', meta.senderFingerprint ?? '',
+    meta.senderName ?? '', meta.senderPlatform ?? '', meta.fileName, `${meta.fileSize}`, meta.sha256,
+    `${meta.chunkSize}`, `${meta.totalChunks}`, `${meta.resumeSupported ?? false}`,
+    meta.sourceKind ?? '', meta.payloadKind ?? '', meta.sourceName ?? '', `${meta.sourceSize ?? -1}`,
+    `${meta.sourceFileCount ?? -1}`, `${meta.authenticationVersion ?? 0}`,
+    meta.authenticationId ?? '', `${meta.issuedAt ?? 0}`,
+  ])
+}
+
+export function unpairAuthenticationText(request: UnpairRequest): string {
+  return canonicalFields([
+    request.type, request.app, request.version, request.requesterDeviceId, request.requesterFingerprint,
+    request.targetDeviceId, request.requestId, `${request.issuedAt}`,
+  ])
 }
 
 export function createUnpairResponse(accepted: boolean, reason?: string): UnpairResponse {
@@ -244,6 +301,10 @@ export function createTransferResult(transferId: string, sha256: string | null, 
     sha256,
     reason: reason ?? null,
   }
+}
+
+function canonicalFields(fields: Array<string>): string {
+  return fields.map((value: string) => `${new Uint8Array(stringToArrayBuffer(value)).length}:${value}`).join('|')
 }
 
 export function parseJsonLine<T>(line: string): T {
