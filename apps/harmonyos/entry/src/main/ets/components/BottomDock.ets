@@ -38,9 +38,9 @@ export struct BottomDock {
       barWidth: { smallWidth: 228, mediumWidth: 228, largeWidth: 228 },
       barSideMargin: 16,
       barBottomMargin: 24,
-      // 浮动模式需要保留有效遮罩高度才能绘制系统胶囊材质。遮罩颜色与页面背景保持
-      // 一致，可消除深色模式下的矩形色差，同时不破坏沉浸光感胶囊。
-      gradientMask: { maskColor: $r('app.color.app_background'), maskHeight: 88 },
+      // 系统沉浸胶囊需要有效的遮罩高度才能绘制材质；高度为 0 时只剩图标。
+      // 保留 88vp 绘制区域但使用透明遮罩，可恢复胶囊，同时避免浅色页面出现实体色矩形。
+      gradientMask: { maskColor: Color.Transparent, maskHeight: 88 },
       adaptToHandedness: false,
       systemMaterialEffect: {
         materialType: hdsMaterial.MaterialType.IMMERSIVE,

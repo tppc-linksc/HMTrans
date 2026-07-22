@@ -94,10 +94,13 @@ export class PadPreferencesService {
     }
   }
 
-  async savePorts(context: common.UIAbilityContext, tcp: string, udp: string): Promise<void> {
+  async savePorts(context: common.UIAbilityContext, tcp: string, udp: string, cast: string): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, NAME)
-      await store.put('localTcpPort', tcp); await store.put('discoveryPort', udp); await store.flush()
+      await store.put('localTcpPort', tcp)
+      await store.put('discoveryPort', udp)
+      await store.put('castPort', cast)
+      await store.flush()
     } catch (err) {
       throw new Error(`端口设置保存失败：${errorText(err)}`)
     }
@@ -127,11 +130,9 @@ export class PadPreferencesService {
     }
   }
 
-  async saveCastSettings(context: common.UIAbilityContext, port: string, resolution: string,
-    frameRate: number): Promise<void> {
+  async saveCastSettings(context: common.UIAbilityContext, resolution: string, frameRate: number): Promise<void> {
     try {
       const store = await preferences.getPreferences(context, NAME)
-      await store.put('castPort', port)
       await store.put('castResolution', resolution)
       await store.put('castFrameRate', frameRate)
       await store.flush()

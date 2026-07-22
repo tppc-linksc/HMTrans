@@ -16,8 +16,8 @@ export class PadDialogService {
         title,
         message,
         buttons: [
-          { text: '取消', color: '#64748B' },
-          { text: confirmText, color: '#C2413A' },
+          { text: '取消', color: $r('app.color.text_primary') },
+          { text: confirmText, color: '#2563EB' },
         ],
       })
       return result.index === 1
@@ -37,7 +37,7 @@ export class PadDialogService {
         title: `接收来自 ${sender} 的文件？`,
         message: `${fileName}\n大小：${sizeText}\n首次确认后会信任此设备。`,
         buttons: [
-          { text: '拒绝', color: '#64748B' },
+          { text: '拒绝', color: $r('app.color.text_primary') },
           { text: '信任并接收', color: '#2563EB' },
         ],
       })
@@ -54,7 +54,7 @@ export class PadDialogService {
         title,
         message,
         buttons: [
-          { text: '返回', color: '#64748B' },
+          { text: '返回', color: $r('app.color.text_primary') },
           { text: '取消并保留', color: '#2563EB' },
           { text: '取消并删除', color: '#C2413A' },
         ],

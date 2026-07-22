@@ -4,9 +4,7 @@ import {
   DeviceInfo,
   FileMeta,
   PairingRequest,
-  ScreenCastStartRequest,
   UnpairRequest,
-  screenCastStartAuthenticationText,
   wifiIpAddress,
 } from '../common/Protocol'
 import {
@@ -16,7 +14,6 @@ import {
   verifyFileMetaAuthentication,
   verifyUnpairRequest,
 } from '../common/PairingSecurity'
-import { screenCastControlSignature, secureHexEquals } from '../common/ScreenCastProtocol'
 import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 import { TransferDirection, TransferListItem, TransferState } from '../models/TransferListItem'
@@ -27,7 +24,6 @@ import { PadNetworkHost } from './PadNetworkHost'
 
 const DEVICE_TTL_MS: number = 12000
 const DEVICE_PRUNE_INTERVAL_MS: number = 4000
-const SCREEN_CAST_REQUEST_WINDOW_MS: number = 30000
 const FILE_AUTHENTICATION_WINDOW_MS: number = 5 * 60 * 1000
 const MAX_RECENT_FILE_AUTHENTICATIONS: number = 2048
 
@@ -35,7 +31,6 @@ const MAX_RECENT_FILE_AUTHENTICATIONS: number = 2048
 export class PadNetworkController {
   private host: PadNetworkHost
   private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
-  private recentScreenCastRequests: Map<string, number> = new Map()
   private recentFileAuthentications: Map<string, number> = new Map()
 
   constructor(host: PadNetworkHost) {
@@ -200,28 +195,6 @@ export class PadNetworkController {
             request.requesterDeviceId,
             `${device?.deviceName ?? '对方设备'} 已解除配对`,
           )
-          return true
-        },
-        onScreenCastStart: async (request: ScreenCastStartRequest) => {
-          const now = Date.now()
-          this.recentScreenCastRequests.forEach((seenAt: number, requestId: string) => {
-            if (now - seenAt > SCREEN_CAST_REQUEST_WINDOW_MS) this.recentScreenCastRequests.delete(requestId)
-          })
-          const device = this.host.connectedDevices.find((row: DeviceInfo) =>
-            row.deviceId === request.requesterDeviceId)
-          const secret = this.host.trustedSharedSecrets.get(request.requesterDeviceId) ?? ''
-          const fresh = Math.abs(now - request.issuedAt) <= SCREEN_CAST_REQUEST_WINDOW_MS
-          const notReplayed = !this.recentScreenCastRequests.has(request.requestId)
-          const identityValid = request.targetDeviceId === this.host.deviceId && device !== undefined &&
-            this.host.identityMatches(request.requesterDeviceId, request.requesterFingerprint) && secret.length === 64
-          if (!fresh || !notReplayed || !identityValid) return false
-          const expected = screenCastControlSignature(secret, screenCastStartAuthenticationText(request))
-          if (!secureHexEquals(expected, request.signature)) return false
-
-          this.recentScreenCastRequests.set(request.requestId, now)
-          // 先返回经过认证的接收结果，再在 UI 作用域中打开系统投屏授权界面，
-          // 避免控制连接被用户确认时间占满。
-          setTimeout(() => this.host.startScreenCastFromRemote(request.requesterDeviceId), 0)
           return true
         },
       }, this.host.receiveDirectory)

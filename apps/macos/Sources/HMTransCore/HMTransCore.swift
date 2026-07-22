@@ -96,57 +96,6 @@ public func requestUnpair(
     return try readJSONLine(connection: connection)
 }
 
-/// 使用配对时协商的 256 位密钥认证投屏请求。响应只表示 Pad 已接收请求；
-/// 真正的视频连接仍会再次走 v0.3 AES-GCM 握手。
-public func requestScreenCastStart(
-    host: String,
-    port: UInt16 = defaultPort,
-    requesterDeviceId: String,
-    requesterFingerprint: String,
-    targetDeviceId: String,
-    sharedSecret: String
-) throws -> ScreenCastStartResponse {
-    let requestID = UUID().uuidString.lowercased()
-    let issuedAt = Int64(Date().timeIntervalSince1970 * 1_000)
-    var request = ScreenCastStartRequest(
-        requesterDeviceId: requesterDeviceId,
-        requesterFingerprint: requesterFingerprint,
-        targetDeviceId: targetDeviceId,
-        requestId: requestID,
-        issuedAt: issuedAt,
-        signature: ""
-    )
-    let signature = try screenCastControlSignature(
-        sharedSecret: sharedSecret,
-        canonicalText: request.canonicalAuthenticationText
-    )
-    request = ScreenCastStartRequest(
-        requesterDeviceId: requesterDeviceId,
-        requesterFingerprint: requesterFingerprint,
-        targetDeviceId: targetDeviceId,
-        requestId: requestID,
-        issuedAt: issuedAt,
-        signature: signature
-    )
-
-    let connection = try BlockingNetworkConnection.connect(host: host, port: port)
-    defer { connection.cancel() }
-    try sendJSONLine(request, connection: connection)
-    let response: ScreenCastStartResponse = try readJSONLine(connection: connection)
-    guard response.type == "screen_cast_start_response", response.requestId == requestID else {
-        throw HMTransError.protocolError("MatePad 返回了无效投屏响应")
-    }
-    return response
-}
-
-func screenCastControlSignature(sharedSecret: String, canonicalText: String) throws -> String {
-    try hmTransAuthenticationCode(
-        sharedSecret: sharedSecret,
-        purpose: "screen-cast-control-auth-v1",
-        canonicalText: canonicalText
-    )
-}
-
 /// 通过兼容 HMTrans v0.2 的 TCP 线协议发送一个可续传文件载荷。
 public func sendFile(
     fileURL: URL,

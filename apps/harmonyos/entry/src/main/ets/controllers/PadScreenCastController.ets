@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit'
 import { DeviceInfo } from '../common/Protocol'
+import { CastNetworkTestResult } from '../common/ScreenCastProtocol'
 import { errorText } from '../common/ErrorText'
 import { PadPreferencesService } from '../services/PadPreferencesService'
 import {
@@ -16,12 +17,10 @@ import {
 
 /** 投屏控制器所需的响应式页面状态与系统能力。 */
 export interface PadScreenCastHost {
-  castPortText: string
   castResolution: string
   castFrameRate: number
   supportedCastModes: Array<string>
   showCastSettings: boolean
-  draftCastPort: string
   draftCastResolution: string
   draftCastFrameRate: number
   castState: CastSenderState
@@ -33,12 +32,18 @@ export interface PadScreenCastHost {
   castDroppedFrames: number
   networkTestState: CastNetworkTestState
   networkTestDetail: string
+  showNetworkTestResult: boolean
+  networkTestTargetName: string
+  networkTestThroughputMbps: number
+  networkTestAverageRttMs: number
+  networkTestJitterMs: number
+  networkTestRecommendation: string
+  networkTestGuidance: string
   selectedDeviceId: string
   deviceId: string
   identityFingerprint: string
   trustedSharedSecrets: Map<string, string>
   connectedDevices: Array<DeviceInfo>
-  castPort: number
 
   abilityContext(): common.UIAbilityContext
   localDeviceName(): string
@@ -64,7 +69,6 @@ export class PadScreenCastController {
   }
 
   async openSettings(): Promise<void> {
-    this.host.draftCastPort = this.host.castPortText
     try {
       this.host.supportedCastModes = await supportedCastModes()
     } catch (err) {
@@ -78,22 +82,16 @@ export class PadScreenCastController {
   }
 
   async saveSettings(): Promise<void> {
-    const port = Number(this.host.draftCastPort)
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-      this.host.showToast('投屏端口必须是 1 到 65535 之间的整数')
-      return
-    }
     const mode = castModeKey(this.host.draftCastResolution, this.host.draftCastFrameRate)
     if (this.host.supportedCastModes.indexOf(mode) < 0) {
       this.host.showToast('当前设备不支持所选分辨率与帧率组合')
       return
     }
     if (this.sender.isCasting()) await this.stop('投屏设置已更改')
-    this.host.castPortText = `${port}`
     this.host.castResolution = this.host.draftCastResolution
     this.host.castFrameRate = this.host.draftCastFrameRate
     await this.preferencesService.saveCastSettings(
-      this.host.abilityContext(), this.host.castPortText, this.host.castResolution, this.host.castFrameRate,
+      this.host.abilityContext(), this.host.castResolution, this.host.castFrameRate,
     )
     this.host.showCastSettings = false
     this.host.showToast('投屏设置已保存')
@@ -195,7 +193,8 @@ export class PadScreenCastController {
       return
     }
     if (this.host.castState !== 'idle' && this.host.castState !== 'failed') {
-      this.host.showToast('请先停止投屏再进行网络测试')
+      this.presentNetworkTestFailure('正在投屏时不能同时执行网络测试',
+        '• 请先停止当前投屏。\n• 返回设置页重新点击“投屏网络测试”。')
       return
     }
     const candidates = this.host.connectedDevices.filter((item: DeviceInfo) =>
@@ -205,15 +204,21 @@ export class PadScreenCastController {
     const device = candidates.find((item: DeviceInfo) => item.deviceId === this.host.selectedDeviceId) ??
       (candidates.length === 1 ? candidates[0] : undefined)
     if (!device || !device.screenCastPort) {
-      this.host.showToast(candidates.length > 1 ? '请先在连接页选择要测试的 Mac' : '暂无可测试的已连接 Mac')
+      const detail = candidates.length > 1 ? '尚未选择要测试的 Mac' : '暂无可测试的已连接 Mac'
+      this.presentNetworkTestFailure(detail,
+        '• 确认 Mac 已打开 HM互传并开启投屏接收服务。\n• 确认双端连接到同一个局域网。\n' +
+        '• 如果连接了多台 Mac，请先在连接页选择目标设备。')
       return
     }
     const secret = this.host.trustedSharedSecrets.get(device.deviceId) ?? ''
     if (secret.length !== 64) {
-      this.host.showToast('该设备缺少 v0.3 配对密钥，请重新配对')
+      this.presentNetworkTestFailure('该设备缺少 v0.3 配对密钥',
+        '• 长按设备并忘记当前配对。\n• 使用双端最新 v0.3 版本重新输入六位配对码。', device.deviceName)
       return
     }
     this.host.networkTestState = 'running'
+    this.host.showNetworkTestResult = true
+    this.host.networkTestTargetName = device.deviceName
     this.host.networkTestDetail = `正在测试到 ${device.deviceName} 的延迟与上行吞吐`
     try {
       const result = await this.networkTester.run({
@@ -223,18 +228,55 @@ export class PadScreenCastController {
       })
       this.host.runOnUi(() => {
         this.host.networkTestState = 'completed'
+        this.host.networkTestTargetName = device.deviceName
+        this.host.networkTestThroughputMbps = result.throughputMbps
+        this.host.networkTestAverageRttMs = result.averageRttMs
+        this.host.networkTestJitterMs = result.jitterMs
+        this.host.networkTestRecommendation = result.recommendation
+        this.host.networkTestGuidance = this.networkGuidance(result)
         this.host.networkTestDetail = `${result.throughputMbps.toFixed(1)} Mbps · ` +
           `延迟 ${result.averageRttMs.toFixed(1)} ms · 抖动 ${result.jitterMs.toFixed(1)} ms · ` +
           result.recommendation
+        this.host.showNetworkTestResult = true
       })
-      this.host.showToast('投屏网络测试完成')
     } catch (err) {
-      this.host.runOnUi(() => {
-        this.host.networkTestState = 'failed'
-        this.host.networkTestDetail = errorText(err)
-      })
-      this.host.showToast(errorText(err))
+      this.presentNetworkTestFailure(errorText(err),
+        '• 确认 Mac 的“投屏接收服务”与网络服务均已开启。\n• 检查双端投屏 TCP 端口是否一致。\n' +
+        '• 确认路由器未启用 AP 隔离，防火墙未阻止局域网连接。\n• 重新连接设备后再测试。', device.deviceName)
     }
+  }
+
+  private presentNetworkTestFailure(detail: string, guidance: string, targetName: string = 'Mac'): void {
+    this.host.runOnUi(() => {
+      this.host.networkTestState = 'failed'
+      this.host.networkTestTargetName = targetName
+      this.host.networkTestThroughputMbps = 0
+      this.host.networkTestAverageRttMs = 0
+      this.host.networkTestJitterMs = 0
+      this.host.networkTestRecommendation = ''
+      this.host.networkTestGuidance = guidance
+      this.host.networkTestDetail = detail
+      this.host.showNetworkTestResult = true
+    })
+  }
+
+  private networkGuidance(result: CastNetworkTestResult): string {
+    const notes: Array<string> = []
+    if (result.throughputMbps < 25) {
+      notes.push('• 当前带宽偏低，优先使用 720P / 30P，并靠近路由器或切换 5 GHz/6 GHz Wi-Fi。')
+    } else {
+      notes.push('• 当前带宽满足建议参数；多台 Pad 同时投屏时会共享这部分无线带宽。')
+    }
+    if (result.averageRttMs > 80) {
+      notes.push('• 延迟较高，操作画面可能明显滞后，请减少同网络中的下载或视频任务。')
+    }
+    if (result.jitterMs > 30) {
+      notes.push('• 抖动较高，可能出现帧率波动；建议改善 Wi-Fi 信号后重新测试。')
+    }
+    if (result.averageRttMs <= 80 && result.jitterMs <= 30) {
+      notes.push('• 延迟和抖动处于可用范围，结果会随距离、干扰和并发设备变化。')
+    }
+    return notes.join('\n')
   }
 
   private setBackgroundActive(active: boolean): void {

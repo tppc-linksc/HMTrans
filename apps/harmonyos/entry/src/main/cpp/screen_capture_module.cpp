@@ -458,11 +458,6 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
         ReleaseCaptureLocked();
         return CreateStartResult(env, false, "initialize", static_cast<int32_t>(initResult));
     }
-    OH_AVSCREEN_CAPTURE_ErrCode frameRateResult = OH_AVScreenCapture_SetMaxVideoFrameRate(gCapture, frameRate);
-    if (frameRateResult != AV_SCREEN_CAPTURE_ERR_OK) {
-        ReleaseCaptureLocked();
-        return CreateStartResult(env, false, "configureFrameRate", static_cast<int32_t>(frameRateResult));
-    }
     // 本产品不采集麦克风或系统声音，显式关闭麦克风可避免产生无关权限请求。
     OH_AVScreenCapture_SetMicrophoneEnabled(gCapture, false);
     // 允许系统在横竖屏切换后旋转编码画布，接收端再依据参数集更新窗口比例。
@@ -482,6 +477,19 @@ napi_value StartCapture(napi_env env, napi_callback_info info)
         return CreateStartResult(env, false, "startCaptureSurface", static_cast<int32_t>(startResult));
     }
     gCapturing.store(true);
+
+    // 启用系统 Picker 时，真正的本次录屏授权由上面的 StartScreenCaptureWithSurface 触发。
+    // 在启动前调用 SetMaxVideoFrameRate，部分 Phone/Tablet 系统会因尚未授权而返回
+    // OPERATE_NOT_PERMIT。编码器格式与 ScreenCaptureConfig 已经带有目标帧率，因此这里
+    // 在授权成功后尽力限制采集源帧率；系统不支持或仍拒绝该可选限制时继续投屏，最终输出
+    // 仍由 H.264 编码器按 frameRate 约束，不能让可选优化阻断整个录屏流程。
+    OH_AVSCREEN_CAPTURE_ErrCode frameRateResult =
+        OH_AVScreenCapture_SetMaxVideoFrameRate(gCapture, frameRate);
+    if (frameRateResult != AV_SCREEN_CAPTURE_ERR_OK) {
+        OH_LOG_Print(LOG_APP, LOG_WARN, CAST_LOG_DOMAIN, CAST_LOG_TAG,
+            "optional capture frame-rate cap rejected: %{public}d; encoder target remains %{public}d fps",
+            static_cast<int32_t>(frameRateResult), frameRate);
+    }
     return CreateStartResult(env, true, "started", AV_SCREEN_CAPTURE_ERR_OK);
 }
 

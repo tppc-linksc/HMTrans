@@ -1,7 +1,7 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit'
 import { arrayBufferToString, stringToArrayBuffer } from './Bytes'
 import { errorText } from './ErrorText'
-import { authenticationCode, derivePurposeKey, secureHexEquals } from './PairingSecurity'
+import { derivePurposeKey } from './PairingSecurity'
 
 export const CAST_HEADER_LENGTH: number = 32
 export const CAST_PROTOCOL_VERSION: string = '0.3.0'
@@ -153,17 +153,6 @@ export class ScreenCastCipher {
     }
   }
 }
-
-/** 控制端口的投屏启动请求使用同一配对密钥做 HMAC，不传输也不记录密钥。 */
-export function screenCastControlSignature(secretHex: string, canonicalText: string): string {
-  try {
-    return authenticationCode(secretHex, 'screen-cast-control-auth-v1', canonicalText)
-  } catch (err) {
-    throw new Error(`投屏控制请求认证失败：${errorText(err)}`)
-  }
-}
-
-export { secureHexEquals }
 
 /** Uint8Array 可能只是较大底层缓冲区的视图，协议层必须只发送当前视图范围。 */
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {

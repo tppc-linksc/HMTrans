@@ -22,7 +22,6 @@ private enum MacSection: String, CaseIterable, Identifiable {
 struct V02RootView: View {
     let model: TransferViewModel
     @State private var section: MacSection = .connection
-    @State private var showingScreenCastPicker = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -40,24 +39,6 @@ struct V02RootView: View {
             }
         }
         .background(MacAppTheme.windowBackground)
-        .overlay {
-            if showingScreenCastPicker {
-                ZStack {
-                    Color.black.opacity(0.32)
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture { showingScreenCastPicker = false }
-
-                    MacScreenCastDevicePicker(
-                        model: model,
-                        isPresented: $showingScreenCastPicker
-                    )
-                    .transition(.scale(scale: 0.96).combined(with: .opacity))
-                }
-                .zIndex(10)
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: showingScreenCastPicker)
     }
 
     private var sidebar: some View {
@@ -80,7 +61,6 @@ struct V02RootView: View {
             VStack(spacing: 6) {
                 ForEach(MacSection.allCases) { item in
                     Button {
-                        showingScreenCastPicker = false
                         section = item
                     } label: {
                         HStack(spacing: 11) {
@@ -103,239 +83,11 @@ struct V02RootView: View {
             }
 
             Spacer()
-
-            Button {
-                showingScreenCastPicker.toggle()
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: model.screenCast.isCasting ?
-                        "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(model.screenCast.isCasting ? Color.green : MacAppTheme.accent)
-                        .frame(width: 38, height: 38)
-                        .background(MacAppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 11))
-                    if model.screenCast.isCasting {
-                        Text("\(model.screenCast.activeSessionCount)")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 15, height: 15)
-                            .background(Color.green, in: Circle())
-                            .overlay(Circle().stroke(MacAppTheme.windowBackground, lineWidth: 1.5))
-                            .offset(x: 2, y: -2)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .help(model.screenCast.isCasting ? "管理正在进行的投屏" : "选择设备发起投屏")
-            .accessibilityLabel(model.screenCast.isCasting ? "管理投屏" : "发起投屏")
         }
         .padding(18)
         .frame(width: 184)
         .background(.ultraThinMaterial)
         .overlay(alignment: .trailing) { Rectangle().fill(MacAppTheme.subtleBorder).frame(width: 1) }
-    }
-}
-
-private struct MacScreenCastDevicePicker: View {
-    let model: TransferViewModel
-    @Binding var isPresented: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("投屏")
-                        .font(.system(size: 17, weight: .bold))
-                    Text("最多同时接收两台 MatePad；双路需使用 1080P 级 / 30P")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    isPresented = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .frame(width: 26, height: 26)
-                        .background(MacAppTheme.elevatedSurface, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭投屏设备选择")
-            }
-
-            Divider()
-
-            if model.screenCast.state == .failed {
-                serviceMessage(
-                    icon: "exclamationmark.triangle.fill",
-                    title: "投屏服务异常",
-                    detail: model.screenCast.detail,
-                    buttonTitle: "重新启动"
-                ) {
-                    model.screenCast.restart(port: model.localScreenCastPort)
-                }
-            } else if model.screenCast.state == .stopped {
-                serviceMessage(
-                    icon: "rectangle.slash",
-                    title: "投屏接收服务已关闭",
-                    detail: "请先在设置中开启投屏接收服务",
-                    buttonTitle: nil,
-                    action: nil
-                )
-            } else {
-                if !model.screenCast.sessions.isEmpty {
-                    activeCastControls
-                    Divider()
-                }
-                if model.screenCast.canAcceptNewSession {
-                    availableDeviceList
-                } else {
-                    Text("已达到两路投屏上限；可先停止其中一路再添加设备。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
-        .frame(maxHeight: 560)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(MacAppTheme.subtleBorder, lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.34), radius: 28, y: 14)
-    }
-
-    private var activeCastControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("正在投屏（\(model.screenCast.activeSessionCount)/\(ScreenCastManager.maximumConcurrentStreams)）")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            ForEach(model.screenCast.sessions) { session in
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack(spacing: 11) {
-                        Image(systemName: "ipad.landscape")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Color.green)
-                            .frame(width: 38, height: 38)
-                            .background(Color.green.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(session.deviceName).font(.system(size: 13, weight: .semibold))
-                            Text(session.state == .casting
-                                ? "\(session.sourceWidth)×\(session.sourceHeight) · \(session.frameRate) fps"
-                                : "正在建立画面")
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    HStack(spacing: 8) {
-                        Button("打开") {
-                            model.screenCast.showPlayer(sessionID: session.id)
-                            isPresented = false
-                        }
-                        Button("画中画") {
-                            model.screenCast.showPlayer(sessionID: session.id, pictureInPicture: true)
-                            isPresented = false
-                        }
-                        Spacer()
-                        Button("停止", role: .destructive) {
-                            model.screenCast.stopCasting(sessionID: session.id)
-                        }
-                    }
-                    .controlSize(.small)
-                }
-                .padding(10)
-                .background(MacAppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 12))
-            }
-            if model.screenCast.sessions.count > 1 {
-                Button("停止全部投屏", role: .destructive) { model.screenCast.stopAllCasting() }
-                    .controlSize(.small)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var availableDeviceList: some View {
-        let devices = model.availableScreenCastDevices.filter {
-            !model.screenCast.isCasting(deviceID: $0.deviceId)
-        }
-        if devices.isEmpty {
-            serviceMessage(
-                icon: "ipad.slash",
-                title: "暂无可投屏设备",
-                detail: "请先连接支持 v0.3 投屏的 MatePad",
-                buttonTitle: nil,
-                action: nil
-            )
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("选择已连接设备")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                ForEach(devices, id: \.deviceId) { device in
-                    Button {
-                        model.requestScreenCast(from: device)
-                        isPresented = false
-                    } label: {
-                        HStack(spacing: 11) {
-                            Image(systemName: "ipad.landscape")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(MacAppTheme.accent)
-                                .frame(width: 36, height: 36)
-                                .background(MacAppTheme.blueSurface, in: RoundedRectangle(cornerRadius: 9))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(device.deviceName)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                Text(model.screenCast.isCasting ? "已连接 · 添加第二路投屏" : "已连接 · 点击发起投屏")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if model.requestingScreenCastDeviceID == device.deviceId {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(10)
-                        .background(MacAppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: 12))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(model.requestingScreenCastDeviceID != nil)
-                }
-            }
-        }
-    }
-
-    private func serviceMessage(
-        icon: String,
-        title: String,
-        detail: String,
-        buttonTitle: String?,
-        action: (() -> Void)?
-    ) -> some View {
-        VStack(spacing: 9) {
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(title).font(.system(size: 12, weight: .semibold))
-            Text(detail)
-                .font(.system(size: 9))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if let buttonTitle, let action {
-                Button(buttonTitle, action: action).controlSize(.small)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
     }
 }
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HarmonyOS 连接问题说明 - HM互传</title>
-    <meta name="description" content="HM互传 HarmonyOS v0.1 应用市场版无法发现 Mac 的已知问题、临时处理办法和 v0.2 修复计划。">
+    <meta name="description" content="HM互传 HarmonyOS v0.1 应用市场版无法发现 Mac 的旧版问题、临时处理办法和 v0.2.1 及以后版本的修复说明。">
     <link rel="icon" href="site-assets/app-icon.png?v=20260710-1">
     <link rel="apple-touch-icon" href="site-assets/app-icon.png?v=20260710-1">
     <link rel="preload" as="image" href="site-assets/app-icon.png?v=20260710-1" fetchpriority="high">
@@ -27,9 +27,9 @@
 
     <main class="support-shell" id="main-content">
       <header class="support-hero">
-        <span class="issue-pill">v0.1 已知问题</span>
+        <span class="issue-pill">旧版 v0.1 已知问题</span>
         <h1>应用市场版首次打开后，可能无法发现 Mac</h1>
-        <p class="support-lead">如果 MatePad 和 Mac 已连接同一个 Wi-Fi，但两端一直显示未连接，这通常不是你的网络配置错误，而是当前 HarmonyOS v0.1 应用市场安装包的首次启动问题。</p>
+        <p class="support-lead">如果仍在使用 HarmonyOS v0.1 应用市场安装包，MatePad 和 Mac 即使连接同一个 Wi-Fi，也可能因首次启动问题一直显示未连接。该问题已在 v0.2.1 及以后版本修复。</p>
         <p class="support-meta">问题确认时间：2026 年 7 月 10 日 · 影响范围：HarmonyOS 应用市场版 v0.1</p>
       </header>
 
@@ -41,7 +41,7 @@
           <li>如果没有弹窗，可进入“设置 → 应用和元服务 → 应用管理 → HM互传 → 权限”，查看是否有下载目录或文件访问权限；如有，请允许后重新启动应用。</li>
           <li>确认 Mac 和 MatePad 使用同一个普通 Wi-Fi，而不是访客网络；同时在 Mac 的“隐私与安全性 → 本地网络”中允许 HMTrans。</li>
         </ol>
-        <p><strong>如果设置中没有相应权限，重新打开后也仍然搜不到：</strong>不需要反复卸载。当前 v0.1 市场版无法保证在这种状态下恢复，请等待下个版本更新。</p>
+        <p><strong>如果设置中没有相应权限，重新打开后也仍然搜不到：</strong>不需要反复卸载。请先确认应用市场是否已经提供较新版本；公开版本仍为 v0.1 时可暂时使用上述办法。</p>
       </section>
 
       <section class="support-section">
@@ -51,8 +51,8 @@
       </section>
 
       <section class="support-section">
-        <h2>v0.2 如何解决</h2>
-        <p>以下修复已经进入 <code>v0.2.1</code>；HarmonyOS v0.2.1 已提交应用市场审核，正式更新前，当前旧版本用户仍需使用上面的临时处理办法：</p>
+        <h2>v0.2.1 及以后版本如何解决</h2>
+        <p>以下修复已从 <code>v0.2.1</code> 开始纳入，并继续保留在 v0.3.0。应用市场尚未提供较新版本时，v0.1 用户仍可使用上面的临时处理办法：</p>
         <ul>
           <li>使用 HM互传自己的隐私确认流程，同意前不启动局域网服务，同意后按顺序初始化本地能力。</li>
           <li>设备发现与下载目录、TCP 接收服务解耦；目录异常不再导致两端互相搜不到。</li>
@@ -71,7 +71,7 @@
     <footer class="site-footer">
       <div>
         <strong>HM互传</strong>
-        <span>Mac 与 HarmonyOS 局域网原文件互传。</span>
+        <span>Mac 与 HarmonyOS 局域网原文件互传与本地投屏。</span>
       </div>
       <nav aria-label="页脚导航">
         <a href="./">首页</a>

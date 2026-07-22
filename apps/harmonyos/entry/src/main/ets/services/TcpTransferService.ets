@@ -15,14 +15,11 @@ import {
   PairingResponse,
   UnpairRequest,
   UnpairResponse,
-  ScreenCastStartRequest,
-  ScreenCastStartResponse,
   ReceiveDecision,
   TransferResult,
   createFileMeta,
   createPairingResponse,
   createUnpairResponse,
-  createScreenCastStartResponse,
   createReceiveDecision,
   createTransferResult,
   encodeJsonLine,
@@ -55,7 +52,6 @@ export interface TransferCallbacks {
   onPairingCode: (request: PairingRequest) => Promise<string | undefined>
   onPairingEstablished: (request: PairingRequest, sharedSecret: string) => Promise<void>
   onUnpair?: (request: UnpairRequest) => Promise<boolean>
-  onScreenCastStart?: (request: ScreenCastStartRequest) => Promise<boolean>
   onReceived?: (meta: FileMeta, path: string) => void
   onFailed?: (meta: FileMeta, reason: string) => void
   onInterrupted?: (meta: FileMeta, reason: string) => void
@@ -591,23 +587,6 @@ export class TcpTransferService {
               const accepted = compatible && (callbacks.onUnpair ? await callbacks.onUnpair(request) : false)
               const reason = accepted ? undefined : compatible ? 'identity_mismatch' : 'protocol_incompatible'
               await connection.send({ data: encodeJsonLine(createUnpairResponse(accepted, reason)) })
-              await finishConnection()
-              return
-            }
-
-            if (envelope.type === 'screen_cast_start_request') {
-              const request = parseJsonLine<ScreenCastStartRequest>(lines[0])
-              const compatible = request.app === APP_NAME && request.version === PROTOCOL_VERSION &&
-                request.requesterDeviceId.length > 0 && request.requesterFingerprint.length > 0 &&
-                request.targetDeviceId.length > 0 && request.requestId.length > 0 &&
-                Number.isSafeInteger(request.issuedAt) && request.signature.length === 64
-              const accepted = compatible &&
-                (callbacks.onScreenCastStart ? await callbacks.onScreenCastStart(request) : false)
-              const response: ScreenCastStartResponse = createScreenCastStartResponse(
-                request.requestId, accepted,
-                accepted ? undefined : compatible ? 'request_not_authorized' : 'protocol_incompatible',
-              )
-              await connection.send({ data: encodeJsonLine(response) })
               await finishConnection()
               return
             }

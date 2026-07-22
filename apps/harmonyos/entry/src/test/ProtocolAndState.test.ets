@@ -23,7 +23,6 @@ import {
   ScreenCastCipher,
 } from '../main/ets/common/ScreenCastProtocol'
 import {
-  authenticationCode,
   authenticateFileMeta,
   authenticatedUnpairRequest,
   verifyFileMetaAuthentication,
@@ -59,14 +58,6 @@ export default function protocolAndStateTest(): void {
       expect(request.requesterFingerprint).assertEqual('pad-fingerprint')
       expect(request.targetDeviceId).assertEqual('mac-id')
       expect(verifyUnpairRequest(request, secret)).assertTrue()
-    })
-
-    it('matches the macOS purpose-key HMAC test vector', 0, () => {
-      const secret = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
-      const canonical = 'screen_cast_start_request|HMTrans|0.2.0|mac-id|mac-fingerprint|' +
-        'pad-id|request-1|1721217600000'
-      expect(authenticationCode(secret, 'screen-cast-control-auth-v1', canonical))
-        .assertEqual('b1829a62340f4e27c2ce5cc9b70b938e33280af12ad3621d8d3c00c2c2f40b78')
     })
 
     it('rejects tampered authenticated file metadata', 0, () => {

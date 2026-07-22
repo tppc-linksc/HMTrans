@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HM互传 - Mac 与 HarmonyOS 局域网原文件互传</title>
-    <meta name="description" content="HM互传是一个面向 macOS 和 HarmonyOS MatePad 的局域网原文件互传工具。同一 Wi-Fi 下直接发送原始文件，不经过云端。">
+    <title>HM互传 - Mac 与 HarmonyOS 局域网互传与投屏</title>
+    <meta name="description" content="HM互传面向 macOS 和 HarmonyOS MatePad，提供同一 Wi-Fi 下的原文件互传与 MatePad 到 Mac 的本地加密投屏，不经过云端。">
     <link rel="icon" href="site-assets/app-icon.png?v=20260710-1">
     <link rel="apple-touch-icon" href="site-assets/app-icon.png?v=20260710-1">
     <link rel="preload" as="image" href="site-assets/app-icon.png?v=20260710-1" fetchpriority="high">
@@ -29,20 +29,20 @@
       </nav>
     </header>
 
-    <aside class="site-notice" aria-label="HarmonyOS 版本提示">
+    <aside class="site-notice" aria-label="HarmonyOS 发布状态">
       <div>
-        <strong>HarmonyOS v0.1 应用市场版连接提示</strong>
-        <span>首次打开后可能无法发现 Mac；该问题已在 v0.2.1 修复，v0.2.1 已提交应用市场审核，更新上架前仍请参考临时处理办法。</span>
+        <strong>HarmonyOS v0.3.0 待应用市场发布</strong>
+        <span>目标设备测试已经通过，仍需使用审核通过的正式 Profile 与证书重新签名、上传和审核；当前公开版本以应用市场显示为准。</span>
       </div>
-      <a href="connection-help.html">查看现象与临时处理办法</a>
+      <a href="connection-help.html">查看旧版连接问题说明</a>
     </aside>
 
     <main id="main-content">
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">macOS 与 HarmonyOS 的原文件互传工具</p>
+          <p class="eyebrow">macOS 与 HarmonyOS 的原文件互传和本地投屏工具</p>
           <h1>HM互传</h1>
-          <p class="lead">同一 Wi-Fi 下，Mac 和 MatePad 直接发现、直接发送文件。不压缩画质，不上传云端，不依赖跨生态账号。</p>
+          <p class="lead">同一 Wi-Fi 下，Mac 和 MatePad 直接发现、直接发送原文件；MatePad 还可把系统授权的实时画面加密投放到 Mac。不上传云端，不依赖跨生态账号。</p>
           <div class="hero-actions">
             <a class="button primary" href="https://github.com/tppc-linksc/HMTrans/releases/latest/download/HMTrans.dmg">下载 Mac 版</a>
             <a class="button secondary" href="https://github.com/tppc-linksc/HMTrans/releases">GitHub 下载页</a>
@@ -73,11 +73,11 @@
       <section class="status-band" aria-label="版本状态">
         <div>
           <strong>当前状态</strong>
-          <span>macOS v0.2.1 已发布；HarmonyOS v0.2.1 已提交应用市场审核</span>
+          <span>macOS v0.3.0 已发布；HarmonyOS v0.3.0 待正式签名、上传和审核</span>
         </div>
         <div>
           <strong>传输方式</strong>
-          <span>局域网 UDP 发现 + TCP 文件流</span>
+          <span>局域网 UDP 发现 + TCP 文件流 + HMCS 加密投屏</span>
         </div>
         <div>
           <strong>完整性</strong>
@@ -88,7 +88,7 @@
       <section id="features" class="section">
         <div class="section-heading">
           <p class="eyebrow">为什么做它</p>
-          <h2>只解决一件事：Mac 和 MatePad 稳定互传原文件</h2>
+          <h2>让 Mac 和 MatePad 稳定互传原文件，也能本地投屏</h2>
         </div>
         <div class="feature-grid">
           <article class="feature-card">
@@ -121,6 +121,11 @@
             <h3>本地隐私</h3>
             <p>无账号、无云端；应用自己的隐私确认完成后才启动局域网服务，发送内容只来自用户主动选择。</p>
           </article>
+          <article class="feature-card">
+            <div class="feature-icon">07</div>
+            <h3>本地加密投屏</h3>
+            <p>MatePad 每次经系统录屏授权后发送 H.264 画面，Mac 使用 VideoToolbox 解码；画面不写入文件或历史。</p>
+          </article>
         </div>
       </section>
 
@@ -128,21 +133,21 @@
         <div class="platform-copy">
           <p class="eyebrow">支持平台</p>
           <h2>为桌面和 MatePad 工作流设计</h2>
-          <p>HM互传优先服务个人设备之间的高频文件流转：Mac 上拖拽或选择文件，MatePad 上接收、查看保存位置，再继续编辑或归档。</p>
+          <p>HM互传优先服务个人设备之间的高频文件流转与本地演示：Mac 上拖拽或选择文件，MatePad 上接收后继续编辑；需要展示时，由 MatePad 主动把实时画面投放到 Mac。</p>
         </div>
         <div class="platform-list" aria-label="平台能力">
           <div class="platform-row">
             <img src="site-assets/device-macbook.png" alt="" width="96" height="96" loading="lazy" decoding="async">
             <div>
               <h3>macOS</h3>
-              <p>菜单栏常驻、主窗口传输列表、Dock 拖拽接收入口。</p>
+              <p>菜单栏常驻、主窗口传输列表、Dock 拖拽入口，以及投屏独立观看窗口、画中画和全屏。</p>
             </div>
           </div>
           <div class="platform-row">
             <img src="site-assets/device-matepad.png" alt="" width="96" height="96" loading="lazy" decoding="async">
             <div>
               <h3>HarmonyOS</h3>
-              <p>ArkUI 界面、系统文件选择、下载目录保存、平板横屏和窗口化优先。</p>
+              <p>ArkUI 界面、系统文件选择、下载目录保存、系统录屏授权、画质选择和投屏网络测试。</p>
             </div>
           </div>
         </div>
@@ -172,12 +177,12 @@
               <img src="site-assets/device-matepad.png" alt="" width="96" height="96" loading="lazy" decoding="async">
               <div>
                 <h3>HarmonyOS</h3>
-                <p>请在应用市场搜索“HM互传”下载安装。当前公开版本以应用市场显示为准；v0.2.1 已提交审核。</p>
+                <p>请在应用市场搜索“HM互传”下载安装。v0.3.0 已完成目标设备测试，仍需正式 Profile/证书签名并上传审核；当前公开版本以应用市场显示为准。</p>
               </div>
             </div>
             <div class="download-note">
-              <span>v0.2.1 已提交应用市场审核。</span>
-              <a href="connection-help.html">连接问题说明</a>
+              <span>v0.3.0 待正式签名、上传和审核。</span>
+              <a href="connection-help.html">旧版连接问题说明</a>
             </div>
           </article>
         </div>
@@ -186,7 +191,7 @@
       <section class="section roadmap">
         <div class="section-heading">
           <p class="eyebrow">版本规划</p>
-          <h2>macOS v0.2.1 已发布，HarmonyOS v0.2.1 已提交审核</h2>
+          <h2>macOS v0.3.0 已发布，HarmonyOS v0.3.0 待应用市场上传</h2>
         </div>
         <div class="roadmap-grid">
           <article class="roadmap-item active">
@@ -197,7 +202,17 @@
           <article class="roadmap-item active">
             <span>v0.2</span>
             <h3>后台可靠、可控制、可恢复</h3>
-            <p>已完成断点恢复、活动传输后台保护、六位码配对、多设备、任务控制和文件夹还原；Mac 版可从 GitHub Release 下载，HarmonyOS 版通过应用市场审核后发布。</p>
+            <p>已完成断点恢复、活动传输后台保护、六位码配对、多设备、任务控制和文件夹还原。</p>
+          </article>
+          <article class="roadmap-item active">
+            <span>v0.3</span>
+            <h3>MatePad 单向投屏到 Mac</h3>
+            <p>新增系统授权录屏、H.264 硬件编码、加密媒体链路、Mac 硬件解码、双路接收和投屏网络测试。</p>
+          </article>
+          <article class="roadmap-item">
+            <span>v0.3.1</span>
+            <h3>远程请求与反向操作</h3>
+            <p>计划增加 Mac 主动请求投屏，以及经 Pad 单独授权的触控、键盘和鼠标反向操作；当前 v0.3.0 不包含这些能力。</p>
           </article>
         </div>
       </section>
@@ -206,7 +221,7 @@
     <footer class="site-footer">
       <div>
         <strong>HM互传</strong>
-        <span>Mac 与 HarmonyOS 局域网原文件互传。</span>
+        <span>Mac 与 HarmonyOS 局域网原文件互传与本地投屏。</span>
       </div>
       <nav aria-label="页脚导航">
         <a href="https://github.com/tppc-linksc/HMTrans/releases">下载页</a>

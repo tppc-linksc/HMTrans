@@ -170,16 +170,6 @@ final class ScreenCastManager {
         )
     }
 
-    func noteStartRequested(deviceName: String) {
-        guard state != .stopped, state != .failed, canAcceptNewSession else { return }
-        detail = "已请求 \(deviceName) 投屏，等待 Pad 系统确认"
-    }
-
-    func noteStartRequestFailed(_ reason: String) {
-        guard state != .stopped else { return }
-        detail = reason
-    }
-
     private func makeCallbacks() -> ScreenCastReceiverService.Callbacks {
         ScreenCastReceiverService.Callbacks(
             onListening: { [weak self] port in

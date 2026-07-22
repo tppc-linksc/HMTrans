@@ -107,29 +107,6 @@ func screenCastHeaderRejectsOversizedPayload() throws {
     }
 }
 
-@Test("Mac 主动投屏请求使用稳定规范文本和配对密钥 HMAC")
-func screenCastStartRequestAuthenticationVector() throws {
-    let request = ScreenCastStartRequest(
-        requesterDeviceId: "mac-id",
-        requesterFingerprint: "mac-fingerprint",
-        targetDeviceId: "pad-id",
-        requestId: "request-1",
-        issuedAt: 1_721_217_600_000,
-        signature: ""
-    )
-    #expect(
-        request.canonicalAuthenticationText ==
-            "screen_cast_start_request|HMTrans|0.2.0|mac-id|mac-fingerprint|pad-id|request-1|1721217600000"
-    )
-    let secret = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
-    #expect(
-        try screenCastControlSignature(
-            sharedSecret: secret,
-            canonicalText: request.canonicalAuthenticationText
-        ) == "b1829a62340f4e27c2ce5cc9b70b938e33280af12ad3621d8d3c00c2c2f40b78"
-    )
-}
-
 @Test("投屏媒体密钥按 TCP 连接隔离并拒绝重连重放")
 func screenCastMediaKeyIsConnectionScoped() throws {
     let secret = String(repeating: "22", count: 32)
@@ -146,13 +123,6 @@ func screenCastMediaKeyIsConnectionScoped() throws {
     let sealed = try first.encrypt(payload, authenticating: header)
     #expect(throws: ScreenCastProtocolError.self) {
         try second.decrypt(sealed, authenticating: header)
-    }
-}
-
-@Test("主动投屏控制请求拒绝缺失或畸形配对密钥")
-func screenCastStartRequestRejectsInvalidSecret() {
-    #expect(throws: HMTransError.self) {
-        try screenCastControlSignature(sharedSecret: "1234", canonicalText: "request")
     }
 }
 

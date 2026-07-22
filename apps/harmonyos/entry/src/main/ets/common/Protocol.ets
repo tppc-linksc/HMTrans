@@ -101,26 +101,6 @@ export interface UnpairResponse {
   reason?: string | null
 }
 
-/** 已配对 Mac 主动请求 MatePad 开始投屏；signature 为 HMAC-SHA256 十六进制。 */
-export interface ScreenCastStartRequest {
-  type: 'screen_cast_start_request'
-  app: string
-  version: string
-  requesterDeviceId: string
-  requesterFingerprint: string
-  targetDeviceId: string
-  requestId: string
-  issuedAt: number
-  signature: string
-}
-
-export interface ScreenCastStartResponse {
-  type: 'screen_cast_start_response'
-  accepted: boolean
-  requestId: string
-  reason?: string | null
-}
-
 export interface TransferResult {
   type: 'transfer_success' | 'transfer_failed'
   transferId: string
@@ -237,21 +217,6 @@ export function createUnpairResponse(accepted: boolean, reason?: string): Unpair
   return {
     type: 'unpair_response',
     accepted,
-    reason: reason ?? null,
-  }
-}
-
-export function screenCastStartAuthenticationText(request: ScreenCastStartRequest): string {
-  return [request.type, request.app, request.version, request.requesterDeviceId, request.requesterFingerprint,
-    request.targetDeviceId, request.requestId, `${request.issuedAt}`].join('|')
-}
-
-export function createScreenCastStartResponse(requestId: string, accepted: boolean,
-  reason?: string): ScreenCastStartResponse {
-  return {
-    type: 'screen_cast_start_response',
-    accepted,
-    requestId,
     reason: reason ?? null,
   }
 }

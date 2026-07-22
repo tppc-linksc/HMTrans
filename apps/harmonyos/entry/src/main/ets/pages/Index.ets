@@ -17,6 +17,7 @@ import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
 import {
   CastSettingsOverlay,
   InitializationOverlay,
+  NetworkTestResultOverlay,
   PairingOverlay,
   PortEditorOverlay,
   PrivacyConsentOverlay,
@@ -110,6 +111,13 @@ struct Index {
   @Local castDroppedFrames: number = 0
   @Local networkTestState: CastNetworkTestState = 'idle'
   @Local networkTestDetail: string = '测试 Pad 到 Mac 的实际投屏链路'
+  @Local showNetworkTestResult: boolean = false
+  @Local networkTestTargetName: string = 'Mac'
+  @Local networkTestThroughputMbps: number = 0
+  @Local networkTestAverageRttMs: number = 0
+  @Local networkTestJitterMs: number = 0
+  @Local networkTestRecommendation: string = ''
+  @Local networkTestGuidance: string = ''
   @Local compactLayout: boolean = false
   @Local showPrivacyConsentDialog: boolean = false
   @Local contentUnlocked: boolean = false
@@ -266,28 +274,37 @@ struct Index {
         PortEditorOverlay({
           udpPort: this.draftUdpPort,
           tcpPort: this.draftTcpPort,
+          castPort: this.draftCastPort,
           onUdpChanged: (value: string) => { this.draftUdpPort = value },
           onTcpChanged: (value: string) => { this.draftTcpPort = value },
+          onCastChanged: (value: string) => { this.draftCastPort = value },
           onCancel: () => { this.showPortEditor = false },
-          onSave: () => {
-            this.localTcpPortText = this.draftTcpPort
-            this.discoveryPortText = this.draftUdpPort
-            this.showPortEditor = false
-            this.applyNetworkPorts()
-          },
+          onSave: () => { this.applyNetworkPorts() },
         })
       }
       if (this.showCastSettings) {
         CastSettingsOverlay({
-          port: this.draftCastPort,
           resolution: this.draftCastResolution,
           frameRate: this.draftCastFrameRate,
           supportedModes: this.supportedCastModes,
-          onPortChanged: (value: string) => { this.draftCastPort = value },
           onResolutionChanged: (value: string) => { this.draftCastResolution = value },
           onFrameRateChanged: (value: number) => { this.draftCastFrameRate = value },
           onCancel: () => { this.showCastSettings = false },
           onSave: () => this.screenCastController.saveSettings(),
+        })
+      }
+      if (this.showNetworkTestResult) {
+        NetworkTestResultOverlay({
+          state: this.networkTestState,
+          targetName: this.networkTestTargetName,
+          throughputMbps: this.networkTestThroughputMbps,
+          averageRttMs: this.networkTestAverageRttMs,
+          jitterMs: this.networkTestJitterMs,
+          recommendation: this.networkTestRecommendation,
+          detail: this.networkTestDetail,
+          guidance: this.networkTestGuidance,
+          onClose: () => { this.showNetworkTestResult = false },
+          onRetry: () => { this.screenCastController.runNetworkTest() },
         })
       }
     }
@@ -393,8 +410,6 @@ struct Index {
       castPort: this.castPort,
       castResolution: this.castResolution,
       castFrameRate: this.castFrameRate,
-      networkTestState: this.networkTestState,
-      networkTestDetail: this.networkTestDetail,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
       onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
       onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
@@ -404,7 +419,7 @@ struct Index {
       onClearStaging: () => this.confirmClearHistory(),
       onEditPorts: () => this.openPortEditor(),
       onEditCast: () => this.screenCastController.openSettings(),
-      onTestCastNetwork: () => this.screenCastController.runNetworkTest(),
+      onOpenCastNetworkTest: () => this.openNetworkTestDialog(),
       onOpenPrivacy: () => this.openPrivacyPolicy(),
       onCopyDiagnostics: () => this.diagnosticController.copy(),
     })
@@ -780,21 +795,34 @@ struct Index {
   }
 
   private async applyNetworkPorts(): Promise<void> {
-    const tcp = Number(this.localTcpPortText)
-    const udp = Number(this.discoveryPortText)
-    if (!Number.isInteger(tcp) || tcp <= 0 || tcp > 65535 || !Number.isInteger(udp) || udp <= 0 || udp > 65535) {
+    const tcp = Number(this.draftTcpPort)
+    const udp = Number(this.draftUdpPort)
+    const cast = Number(this.draftCastPort)
+    if (!Number.isInteger(tcp) || tcp <= 0 || tcp > 65535 ||
+      !Number.isInteger(udp) || udp <= 0 || udp > 65535 ||
+      !Number.isInteger(cast) || cast <= 0 || cast > 65535) {
       this.statusText = '端口必须是 1 到 65535 之间的整数'
+      this.showToast(this.statusText)
+      return
+    }
+    if (tcp === udp || tcp === cast || udp === cast) {
+      this.statusText = '发现、传输和投屏端口不能重复'
+      this.showToast(this.statusText)
       return
     }
     this.localTcpPortText = `${tcp}`
     this.discoveryPortText = `${udp}`
+    this.castPortText = `${cast}`
     try {
-      await this.padPreferencesService.savePorts(this.abilityContext(), this.localTcpPortText, this.discoveryPortText)
+      await this.padPreferencesService.savePorts(
+        this.abilityContext(), this.localTcpPortText, this.discoveryPortText, this.castPortText,
+      )
       this.receiverReady = false
       await this.transferService.stopReceive()
       await this.network().stopDiscovery()
       await this.network().ensureReceiverAndDiscovery()
-      this.statusText = `已应用 UDP ${udp} · TCP ${tcp}`
+      this.statusText = `已应用 UDP ${udp} · 传输 TCP ${tcp} · 投屏 TCP ${cast}`
+      this.showPortEditor = false
       this.showToast('网络端口已保存，服务已重新启动')
     } catch (err) {
       this.statusText = `端口保存失败：${errorText(err)}`
@@ -805,7 +833,17 @@ struct Index {
   private openPortEditor(): void {
     this.draftUdpPort = this.discoveryPortText
     this.draftTcpPort = this.localTcpPortText
+    this.draftCastPort = this.castPortText
     this.showPortEditor = true
+  }
+
+  private openNetworkTestDialog(): void {
+    if (this.networkTestState !== 'running') {
+      this.networkTestState = 'idle'
+      this.networkTestDetail = '测试 Pad 到 Mac 的实际投屏链路'
+      this.networkTestGuidance = ''
+    }
+    this.showNetworkTestResult = true
   }
 
   async saveTarget(): Promise<void> {
@@ -918,20 +956,6 @@ struct Index {
   private enqueueUiTask(operation: () => void, enqueuedAt: number = Date.now(), attempts: number = 0): void {
     if (this.pendingUiTasks.length >= MAX_PENDING_UI_TASKS) this.pendingUiTasks.shift()
     this.pendingUiTasks.push({ operation, enqueuedAt, attempts })
-  }
-
-  startScreenCastFromRemote(deviceId: string): void {
-    const device = this.connectedDevices.find((row: DeviceInfo) => row.deviceId === deviceId)
-    if (!device) {
-      this.statusText = 'Mac 投屏请求已失效，请确认双端仍在同一局域网'
-      return
-    }
-    this.runOnUi(() => {
-      this.statusText = `${device.deviceName} 请求投屏，请在系统界面确认共享范围`
-      this.screenCastController.start(device).catch((err: Error) => {
-        this.statusText = `Mac 发起投屏失败：${errorText(err)}`
-      })
-    })
   }
 
   updateBackgroundTransferActivity(active: boolean): void {
