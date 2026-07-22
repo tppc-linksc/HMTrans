@@ -43,7 +43,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 - 重做 Mac 状态栏图标和快捷任务面板，Finder、Dock、窗口入口复用同一发送任务链路。
 - 治理空闲广播、定时器和 UI 刷新造成的能耗。
 
-完整定义见 [HMTrans 文档索引](docs/README.md)。
+对外基础说明与官网目录见 [HMTrans 文档索引](docs/README.md)。个人研发方案、评审、验收和发布过程资料保存在本地 `work/`，不随仓库发布；公开开发基线以源码、测试和 `docs/` 中的基础说明为准。
 
 ## v0.3 投屏
 
@@ -53,9 +53,8 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 - 首版支持画面、横竖屏、全屏、停止、有限重连和诊断。
 - 首版不包含声音、触控、键盘、鼠标、内置录制、云端或公网中继。
 - 文件传输与投屏使用独立协议和端口；投屏不生成文件历史或临时视频。
-- `v0.3.1` 计划增加重新设计的 Mac 主动请求入口，以及经 Pad 单独授权的触控、键盘和鼠标反向操作。
 
-版本历史和后续路线见 [版本演进](docs/01-版本演进.md)。
+已完成版本见 [版本历史](docs/版本历史.md)。
 
 ## 系统适配基线
 
@@ -85,16 +84,14 @@ HMTrans/
   README.md
   docs/
     README.md
-    00-项目说明.md
-    01-版本演进.md
-    02-v0.3产品与交互方案.md
-    03-v0.3技术方案.md
-    04-v0.3投屏协议.md
-    05-v0.3开发计划.md
-    06-v0.3验收清单.md
-    07-v0.3发布前检查报告.md
-    08-v0.3多Pad同时投屏架构评估.md
-    09-v0.3.1远程启动与反向控制规划.md
+    项目说明.md
+    版本历史.md
+    ACL权限说明.md
+    index.html
+    connection-help.html
+    privacy.html
+    CNAME
+    site-assets/
   apps/
     macos/
       Package.swift
@@ -104,8 +101,6 @@ HMTrans/
         HMTransMacApp/
     harmonyos/
       build-profile.example.json5
-      docs/
-        v0.3-投屏实现说明.md
       entry/src/main/ets/
         common/
         components/

@@ -36,8 +36,8 @@ apps/harmonyos/build-profile.json5
 *.bak
 *.tmp
 *.log
-docs/98-发版流程.md
-docs/99-视频脚本.md
+# Local product, technical, acceptance, and release working documents
+work/
 *.p12
 *.p7b
 *.cer
