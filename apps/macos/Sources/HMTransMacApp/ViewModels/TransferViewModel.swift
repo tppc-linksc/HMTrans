@@ -60,6 +60,10 @@ final class TransferViewModel {
     let sharedPreparedSources = SharedPreparedSourceStore()
     let sendConcurrencyGate = AsyncConcurrencyGate(limit: 3)
     var transferGeneration = 0
+    /// 网络关联变化时递增，驱动连接页重新读取当前 SSID 和本机地址。
+    var networkChangeRevision = 0
+    /// 切换期间不得继续显示旧 SSID/IP，也不在旧网卡状态上重建服务。
+    var networkTransitioning = false
     private var workspaceSleepObserver: NSObjectProtocol?
     private var workspaceWakeObserver: NSObjectProtocol?
     private var openFilesObserver: NSObjectProtocol?
@@ -217,8 +221,8 @@ final class TransferViewModel {
         if screenCastReceiverEnabled {
             screenCast.start(port: localScreenCastPort)
         }
-        networkChangeMonitor.start { [weak self] in
-            Task { @MainActor in self?.handleNetworkPathChanged() }
+        networkChangeMonitor.start { [weak self] event in
+            Task { @MainActor in self?.handleNetworkChange(event) }
         }
         startDevicePruning()
         startPairingCountdown()
@@ -242,12 +246,31 @@ final class TransferViewModel {
         }
     }
 
-    /// 网络切换后重建发现和接收监听，避免继续绑定旧网卡地址。
-    private func handleNetworkPathChanged() {
+    private func handleNetworkChange(_ event: MacNetworkChangeEvent) {
+        switch event {
+        case .transitioning:
+            handleNetworkTransitionStarted()
+        case .ready:
+            handleNetworkBecameReady()
+        }
+    }
+
+    /// 收到链路变化就立即清空旧状态；不等待系统完成 SSID 和回程质量检测。
+    private func handleNetworkTransitionStarted() {
         guard didBootstrap else { return }
+        networkTransitioning = true
+        networkChangeRevision &+= 1
+        status = "正在切换网络，请稍候"
         receiver.stop()
         receiverRunning = false
         stopDiscovery()
+    }
+
+    /// 新 IPv4/默认路径收敛后重建服务，避免在旧地址尚未释放时反复绑定端口。
+    private func handleNetworkBecameReady() {
+        guard didBootstrap else { return }
+        networkTransitioning = false
+        networkChangeRevision &+= 1
         if receiverEnabled {
             scheduleReceiverRecovery(reason: "网络已变化，接收服务已恢复")
         }
@@ -255,7 +278,7 @@ final class TransferViewModel {
             startDiscovery()
             startFallbackNetworkScan(force: true)
         }
-        status = "网络已变化，正在恢复连接服务"
+        status = "网络已切换，正在恢复连接服务"
     }
 
     /// NWListener 取消后端口释放是异步的。延迟重启可避免旧监听尚未退出时立刻绑定同一端口。

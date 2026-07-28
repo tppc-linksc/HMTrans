@@ -145,7 +145,17 @@ private struct MacConnectionPage: View {
         return result
     }
     private var networkDisplayName: String {
-        wifiNameProvider.name ?? model.nearbyDevices.compactMap(\.networkName).first ?? "当前局域网"
+        if model.networkTransitioning {
+            return "正在切换网络…"
+        }
+        return wifiNameProvider.name
+            ?? model.nearbyDevices.compactMap(\.networkName).first
+            ?? "当前局域网"
+    }
+    private var networkAddressDetail: String {
+        model.networkTransitioning
+            ? "等待系统完成网络连接"
+            : (localIPv4Addresses().first ?? "正在获取本机地址")
     }
 
     var body: some View {
@@ -157,7 +167,7 @@ private struct MacConnectionPage: View {
                     infoCard(
                         title: "当前网络",
                         value: networkDisplayName,
-                        detail: localIPv4Addresses().first ?? "正在获取本机地址",
+                        detail: networkAddressDetail,
                         systemImage: "wifi"
                     )
                     pairingCard
@@ -168,6 +178,13 @@ private struct MacConnectionPage: View {
             }
         }
         .onAppear { wifiNameProvider.start() }
+        .onChange(of: model.networkChangeRevision) {
+            if model.networkTransitioning {
+                wifiNameProvider.beginTransition()
+            } else {
+                wifiNameProvider.refresh()
+            }
+        }
     }
 
     private func infoCard(title: String, value: String, detail: String, systemImage: String? = nil) -> some View {
@@ -315,6 +332,7 @@ private struct MacConnectionPage: View {
 private final class WiFiNameProvider: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     @Published private(set) var name: String?
     private let locationManager = CLLocationManager()
+    private var refreshTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -332,9 +350,24 @@ private final class WiFiNameProvider: NSObject, ObservableObject, @preconcurrenc
         refresh()
     }
 
-    private func refresh() {
-        let value = CWWiFiClient.shared().interface()?.ssid()?.trimmingCharacters(in: .whitespacesAndNewlines)
-        name = value?.isEmpty == false ? value : nil
+    func beginTransition() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        name = nil
+    }
+
+    func refresh() {
+        // Wi-Fi 正在切换时，CoreWLAN 的同步 SSID 查询可能等待系统完成关联。
+        // 不能在 MainActor 上直接调用，否则整个 SwiftUI 页面会在这段时间内失去响应。
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            let value = await Task.detached(priority: .utility) {
+                CWWiFiClient.shared().interface()?.ssid()?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }.value
+            guard !Task.isCancelled else { return }
+            self?.name = value?.isEmpty == false ? value : nil
+        }
     }
 }
 

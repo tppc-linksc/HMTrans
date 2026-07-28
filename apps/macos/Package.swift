@@ -36,6 +36,7 @@ let package = Package(
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("Network"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("SystemConfiguration"),
                 .linkedFramework("VideoToolbox")
             ]
         ),

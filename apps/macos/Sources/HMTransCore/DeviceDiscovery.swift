@@ -71,7 +71,8 @@ public final class DiscoveryService: @unchecked Sendable {
     private let shouldAcknowledge: @Sendable (DeviceInfo) -> Bool
 
     public init(
-        deviceName: String = Host.current().localizedName ?? "Mac",
+        // Core 层不能在网络恢复路径中同步解析本机名称；调用方应传入已缓存的展示名称。
+        deviceName: String = "Mac",
         platform: String = "macOS",
         transferPort: UInt16 = defaultPort,
         screenCastPort: UInt16 = defaultScreenCastPort,

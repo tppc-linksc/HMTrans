@@ -12,6 +12,9 @@ extension TransferViewModel {
         }
         discovery?.stop()
         let service = DiscoveryService(
+            // 设备名已在 ViewModel 初始化时读取并缓存。网络切换期间再次调用
+            // Host.current().localizedName 可能等待系统完成主机名/网络配置，阻塞 MainActor。
+            deviceName: deviceName,
             transferPort: localTCPPort,
             screenCastPort: localScreenCastPort,
             discoveryPort: localDiscoveryPort,
