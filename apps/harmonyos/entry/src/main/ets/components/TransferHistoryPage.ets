@@ -83,6 +83,13 @@ export struct TransferHistoryPage {
           .key((item: TransferListItem) => item.id)
       }
       .width('100%').height(this.itemsForGroup(deviceKey).length * 68)
+      // 分组 List 与内容等高，只负责 ListItem 的左滑删除，不应抢占外层页面的纵向滚动。
+      // 两个方向都让父 Scroll 优先消费手势，避免手指落在历史条目上时内层 List 原地回弹。
+      .nestedScroll({
+        scrollForward: NestedScrollMode.PARENT_FIRST,
+        scrollBackward: NestedScrollMode.PARENT_FIRST,
+      })
+      .edgeEffect(EdgeEffect.None, { alwaysEnabled: false })
       .scrollBar(BarState.Off).backgroundColor($r('app.color.surface_primary'))
       .borderRadius(14).border({ width: 1, color: $r('app.color.border_subtle') }).clip(true)
     }
