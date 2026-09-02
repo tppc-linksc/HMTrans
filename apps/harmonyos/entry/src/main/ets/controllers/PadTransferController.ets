@@ -331,8 +331,9 @@ export class PadTransferController {
         this.transferStore.recordDiagnostic('TRN-SEND-001', detail, id).catch(() => {})
         this.completeTransfer(id, false, `发送失败：${detail}`)
       },
-      onWaiting: (id: string, _detail: string) => {
+      onWaiting: (id: string, detail: string) => {
         this.host.activeTransferDeviceIds.delete(id)
+        this.transferStore.recordDiagnostic('TRN-SEND-INT', detail, id).catch(() => {})
         this.markCurrentTransferState(id, TransferState.Waiting, '连接中断，已保存断点')
         this.scheduleAutomaticResume(id)
       },

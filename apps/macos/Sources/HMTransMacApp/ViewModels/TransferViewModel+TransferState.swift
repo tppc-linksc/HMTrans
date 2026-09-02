@@ -69,6 +69,13 @@ extension TransferViewModel {
 
     func updateCurrentTransfer(id: UUID, progress: Double, current: Int64, total: Int64) {
         guard let index = currentTransfers.firstIndex(where: { $0.id == id }) else { return }
+        // 新连接已经产生真实字节进度时，恢复中的任务必须回到“传输中”。
+        // 用户主动暂停后可能仍收到一个在途回调，因此只修正准备/等待状态。
+        if currentTransfers[index].state == .queued
+            || currentTransfers[index].state == .preparing
+            || currentTransfers[index].state == .waiting {
+            currentTransfers[index].state = .active
+        }
         currentTransfers[index].progress = progress
         currentTransfers[index].detail = transferProgressDetail(
             current: current,

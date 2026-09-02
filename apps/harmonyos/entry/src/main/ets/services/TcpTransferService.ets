@@ -44,6 +44,16 @@ const CONTROL_RESPONSE_TIMEOUT_MS: number = 30 * 1000
 const VERIFY_RESULT_TIMEOUT_MS: number = 10 * 60 * 1000
 const RECEIVE_IDLE_TIMEOUT_MS: number = 60 * 1000
 const STORAGE_SAFETY_MARGIN_BYTES: number = 64 * 1024 * 1024
+// HarmonyOS TCPSocket 的默认缓冲在高延迟 Wi-Fi 下容易让逐块 await send 退化为停等发送。
+// 4 MiB 足以覆盖常见局域网带宽时延积，同时仍受系统套接字上限约束。
+const FILE_TRANSFER_SOCKET_BUFFER_BYTES: number = 4 * 1024 * 1024
+const FILE_TRANSFER_SOCKET_OPTIONS: socket.TCPExtraOptions = {
+  keepAlive: true,
+  TCPNoDelay: true,
+  sendBufferSize: FILE_TRANSFER_SOCKET_BUFFER_BYTES,
+  receiveBufferSize: FILE_TRANSFER_SOCKET_BUFFER_BYTES,
+  socketTimeout: VERIFY_RESULT_TIMEOUT_MS,
+}
 
 export interface TransferCallbacks {
   onStatus: (value: string) => void
@@ -314,6 +324,9 @@ export class TcpTransferService {
         },
         timeout: 10000,
       })
+      // 连接建立后再设置 TCP 属性，和系统 TCPSocket 的推荐调用顺序保持一致。
+      // 调优失败不应把一次本可工作的传输变成永久重连，继续使用系统默认值即可。
+      try { await client.setExtraOptions(FILE_TRANSFER_SOCKET_OPTIONS) } catch (_) {}
 
       callbacks.onStatus(`已连接 ${host}:${port}`)
       await control.checkpoint()
@@ -715,6 +728,8 @@ export class TcpTransferService {
     })
 
     try {
+      // Server 端不允许对 TCPSocketConnection 单独设置属性；监听前设置，让接收连接使用服务器配置。
+      try { await server.setExtraOptions(FILE_TRANSFER_SOCKET_OPTIONS) } catch (_) {}
       await server.listen({
         address: '0.0.0.0',
         port: port || DEFAULT_PORT,

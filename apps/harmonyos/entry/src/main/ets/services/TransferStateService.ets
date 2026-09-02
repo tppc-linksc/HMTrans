@@ -17,6 +17,11 @@ export class TransferStateService {
   updateProgress(current: Array<TransferListItem>, id: string, progress: number, detail: string): void {
     const item = current.find((row: TransferListItem) => row.id === id)
     if (!item) return
+    // 收到真实字节进度即表示连接已经恢复；不能继续向用户显示“准备中/等待重连”。
+    // 暂停态可能还有一个在途进度回调，不在这里覆盖用户主动暂停的状态。
+    if (item.state === TransferState.Preparing || item.state === TransferState.Waiting) {
+      item.state = TransferState.Active
+    }
     item.progress = progress; item.detail = detail
     item.confirmedOffset = Math.floor(item.fileSize * progress / 100); item.updatedAt = Date.now()
   }

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum HMTransError: Error, CustomStringConvertible {
+public enum HMTransError: Error, CustomStringConvertible, LocalizedError {
     case usage(String)
     case system(String)
     case protocolError(String)
@@ -15,6 +15,8 @@ public enum HMTransError: Error, CustomStringConvertible {
             return "传输已取消"
         }
     }
+
+    public var errorDescription: String? { description }
 }
 
 /// 界面命令与文件传输循环共享的线程安全用户控制器。
@@ -291,7 +293,7 @@ public struct ReceivedFile: Sendable {
 }
 
 /// 将接收连接错误绑定到线上任务 ID，避免并发接收时把错误归到另一台设备的任务。
-public struct ReceiveConnectionError: LocalizedError, Sendable {
+public struct ReceiveConnectionError: LocalizedError, CustomStringConvertible, Sendable {
     public let transferID: String
     public let underlyingDescription: String
 
@@ -301,6 +303,7 @@ public struct ReceiveConnectionError: LocalizedError, Sendable {
     }
 
     public var errorDescription: String? { underlyingDescription }
+    public var description: String { underlyingDescription }
 }
 
 public typealias ProgressHandler = @Sendable (_ current: Int64, _ total: Int64) -> Void

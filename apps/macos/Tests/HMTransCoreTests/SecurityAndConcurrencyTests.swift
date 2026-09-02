@@ -50,6 +50,18 @@ private final class ReceiveErrorBox: @unchecked Sendable {
     func load() -> Error? { lock.withLock { value } }
 }
 
+@Test("传输错误保留可读的底层原因")
+func transferErrorKeepsLocalizedDescription() {
+    let error = HMTransError.protocolError("连接已关闭")
+    #expect(error.localizedDescription == "连接已关闭")
+    let wrapped = ReceiveConnectionError(
+        transferID: "transfer-1",
+        underlyingDescription: error.localizedDescription
+    )
+    #expect(wrapped.localizedDescription == "连接已关闭")
+    #expect(String(describing: wrapped) == "连接已关闭")
+}
+
 @Test("诊断信息会脱敏所有本地磁盘路径并保留网页地址")
 func diagnosticRedactionCoversMacVolumes() {
     let source = "来源 /Volumes/Work/private.mov，缓存 /System/Volumes/Data/tmp/a.bin，主页 ~/Downloads/a.zip，帮助 https://hmt.tppc.top/privacy.html，设备 192.168.3.204"

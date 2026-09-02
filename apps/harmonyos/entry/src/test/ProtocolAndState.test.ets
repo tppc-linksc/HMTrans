@@ -95,6 +95,18 @@ export default function protocolAndStateTest(): void {
       expect(result.historyItem?.progress).assertEqual(100)
     })
 
+    it('returns a reconnecting task to active when byte progress resumes', 0, () => {
+      const state = new TransferStateService()
+      const item = new TransferListItem({
+        id: 'transfer-resumed', fileName: 'video.mp4', peerName: 'Mac', direction: TransferDirection.Sending,
+        progress: 25, detail: '连接中断，已保存断点', state: TransferState.Waiting, timeText: '12:00',
+        startedAt: Date.now(), fileSize: 400, fileType: 'MP4', deviceId: 'mac-id',
+      })
+      state.updateProgress([item], item.id, 50, '200 B / 400 B')
+      expect(item.state).assertEqual(TransferState.Active)
+      expect(item.progress).assertEqual(50)
+    })
+
     it('rejects zip traversal and absolute entry names', 0, () => {
       expect(() => validateZipEntryName('../escape.txt')).assertThrowError('文件夹归档包含不安全路径')
       expect(() => validateZipEntryName('safe/../../escape.txt')).assertThrowError('文件夹归档包含不安全路径')
