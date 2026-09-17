@@ -1,5 +1,6 @@
 import { socket } from '@kit.NetworkKit'
 import { util } from '@kit.ArkTS'
+import { display } from '@kit.ArkUI'
 import { errorText } from '../common/ErrorText'
 import { withTimeout } from '../common/AsyncTimeout'
 import {
@@ -531,14 +532,13 @@ export class ScreenCastSenderService {
 
 interface CastResolutionSpec {
   value: CastResolution
-  width: number
-  height: number
+  longEdge: number
 }
 
 const CAST_RESOLUTION_SPECS: Array<CastResolutionSpec> = [
-  { value: '720p', width: 1280, height: 840 },
-  { value: '1080p', width: 1920, height: 1260 },
-  { value: '2k', width: 2560, height: 1680 },
+  { value: '720p', longEdge: 1280 },
+  { value: '1080p', longEdge: 1920 },
+  { value: '2k', longEdge: 2560 },
 ]
 const CAST_FRAME_RATES: Array<number> = [30, 60]
 
@@ -548,8 +548,8 @@ export function castModeKey(resolution: string, frameRate: number): string {
 }
 
 /**
- * 只公开当前真机 H.264 硬件编码器能够处理的组合。档位尺寸保持 MatePad 屏幕比例，
- * 因此“720P/1080P”是清晰度级别，不会为了标准 16:9 尺寸把平板画面拉伸。
+ * 只公开当前真机 H.264 硬件编码器能够处理的组合。档位尺寸保持当前设备屏幕比例，
+ * 因此“720P/1080P”是清晰度级别，不会把平板或阔折叠设备强制拉伸到固定比例。
  */
 export async function supportedCastModes(): Promise<Array<string>> {
   const module = await loadNativeScreenCaptureModule()
@@ -568,13 +568,36 @@ export async function supportedCastModes(): Promise<Array<string>> {
 
 function captureOptions(resolution: CastResolution, requestedFrameRate: number): CaptureOptions {
   const frameRate = requestedFrameRate === 30 ? 30 : 60
-  if (resolution === '720p') {
-    return { width: 1280, height: 840, frameRate, bitrate: (frameRate === 60 ? 7 : 5) * 1024 * 1024 }
-  }
-  if (resolution === '2k') {
-    return { width: 2560, height: 1680, frameRate, bitrate: (frameRate === 60 ? 24 : 16) * 1024 * 1024 }
-  }
-  return { width: 1920, height: 1260, frameRate, bitrate: (frameRate === 60 ? 14 : 9) * 1024 * 1024 }
+  const spec = CAST_RESOLUTION_SPECS.find((candidate: CastResolutionSpec) => candidate.value === resolution) ??
+    CAST_RESOLUTION_SPECS[1]
+  const width = spec.longEdge
+  const height = evenDimension(Math.round(width / currentScreenAspectRatio()))
+  const bitrate = resolution === '720p' ? (frameRate === 60 ? 7 : 5) :
+    resolution === '2k' ? (frameRate === 60 ? 24 : 16) : (frameRate === 60 ? 14 : 9)
+  return { width, height, frameRate, bitrate: bitrate * 1024 * 1024 }
+}
+
+/**
+ * 编码画布始终以横向的长边 × 短边描述；系统的画布旋转能力负责处理运行中的横竖屏切换。
+ * 读取失败时回退到原 MatePad 比例，确保投屏不会影响文件互传主流程。
+ */
+function currentScreenAspectRatio(): number {
+  try {
+    const currentDisplay = display.getDefaultDisplaySync()
+    const longEdge = Math.max(currentDisplay.width, currentDisplay.height)
+    const shortEdge = Math.min(currentDisplay.width, currentDisplay.height)
+    if (shortEdge > 0) {
+      const ratio = longEdge / shortEdge
+      // 排除外接显示器或系统临时上报的异常尺寸，避免生成编码器不接受的画布。
+      if (ratio >= 1.2 && ratio <= 2.5) return ratio
+    }
+  } catch (_) {}
+  return 1920 / 1260
+}
+
+function evenDimension(value: number): number {
+  const clamped = Math.max(360, Math.min(value, 2160))
+  return clamped % 2 === 0 ? clamped : clamped - 1
 }
 
 function captureStartError(result: NativeCaptureStartResult): string {

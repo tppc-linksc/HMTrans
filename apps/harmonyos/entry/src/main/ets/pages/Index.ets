@@ -110,7 +110,7 @@ struct Index {
   @Local castBitrate: number = 0
   @Local castDroppedFrames: number = 0
   @Local networkTestState: CastNetworkTestState = 'idle'
-  @Local networkTestDetail: string = '测试 Pad 到 Mac 的实际投屏链路'
+  @Local networkTestDetail: string = '测试本机到 Mac 的实际投屏链路'
   @Local showNetworkTestResult: boolean = false
   @Local networkTestTargetName: string = 'Mac'
   @Local networkTestThroughputMbps: number = 0
@@ -840,7 +840,7 @@ struct Index {
   private openNetworkTestDialog(): void {
     if (this.networkTestState !== 'running') {
       this.networkTestState = 'idle'
-      this.networkTestDetail = '测试 Pad 到 Mac 的实际投屏链路'
+      this.networkTestDetail = '测试本机到 Mac 的实际投屏链路'
       this.networkTestGuidance = ''
     }
     this.showNetworkTestResult = true

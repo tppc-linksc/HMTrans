@@ -51,10 +51,10 @@ export struct PadSettingsPage {
           this.onEditPorts)
         Divider().color($r('app.color.divider'))
         this.NavigationRow('投屏设置',
-          `${this.resolutionLabel()} · ${this.castFrameRate}P · 仅 MatePad 投屏到 Mac`,
+          `${this.resolutionLabel()} · ${this.castFrameRate}P · HarmonyOS 设备投屏到 Mac`,
           this.onEditCast)
         Divider().color($r('app.color.divider'))
-        this.NavigationRow('投屏网络测试', '测试 Pad 到 Mac 的延迟、抖动和上行吞吐',
+        this.NavigationRow('投屏网络测试', '测试本机到 Mac 的延迟、抖动和上行吞吐',
           this.onOpenCastNetworkTest)
       }.width('100%').padding({ left: 18, right: 18 }).backgroundColor($r('app.color.surface_translucent'))
         .borderRadius(22).border({ width: 1, color: $r('app.color.border_subtle') })
@@ -82,7 +82,7 @@ export struct PadSettingsPage {
       Column({ space: 4 }) {
         Text(title).fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         Text(subtitle).fontSize(11).fontColor($r('app.color.text_secondary'))
-      }.alignItems(HorizontalAlign.Start)
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Blank()
       Toggle({ type: ToggleType.Switch, isOn: enabled }).width(46).height(24)
         .selectedColor($r('app.color.accent')).onChange(onChange)
@@ -97,7 +97,7 @@ export struct PadSettingsPage {
       Column({ space: 4 }) {
         Text(title).fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         Text(subtitle).fontSize(11).fontColor($r('app.color.text_secondary'))
-      }.alignItems(HorizontalAlign.Start)
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Blank()
       Button(action).fontSize(12).fontColor(action === '清除' ? $r('app.color.danger') : $r('app.color.accent'))
         .backgroundColor(action === '清除' ? $r('app.color.danger_surface') : $r('app.color.accent_surface'))
@@ -112,7 +112,7 @@ export struct PadSettingsPage {
       Column({ space: 4 }) {
         Text(title).fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         Text(subtitle).fontSize(11).fontColor($r('app.color.text_secondary'))
-      }.alignItems(HorizontalAlign.Start)
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
       Blank()
       Text('›').fontSize(24).fontColor($r('app.color.text_secondary'))
     }.width('100%').height(72).onClick(onClick)

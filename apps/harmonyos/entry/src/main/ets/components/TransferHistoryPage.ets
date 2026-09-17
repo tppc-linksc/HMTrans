@@ -157,7 +157,8 @@ export struct TransferHistoryPage {
 
   @Builder
   private FilterButton(label: string, value: string) {
-    Button(label).width(this.compactLayout ? 58 : 98).height(36).fontSize(this.compactLayout ? 10 : 12)
+    Button(label).width(this.compactLayout ? 58 : 98).height(36).padding(0)
+      .fontSize(this.compactLayout ? 10 : 12)
       .fontWeight(this.historyFilter === value ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(this.historyFilter === value ? '#FFFFFF' : $r('app.color.text_secondary'))
       .backgroundColor(this.historyFilter === value ? $r('app.color.accent') : Color.Transparent).borderRadius(9)

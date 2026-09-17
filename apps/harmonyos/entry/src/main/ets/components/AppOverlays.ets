@@ -57,7 +57,7 @@ export struct PrivacyConsentOverlay {
     Column() {
       Column({ space: 14 }) {
         Text('隐私政策提示').fontSize(22).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).width('100%')
-        Text('欢迎使用 HM互传。HM互传用于在同一局域网内发现设备、传输文件，并可由你主动把 MatePad 屏幕投放到已配对的 Mac。为实现这些功能，应用会在本地使用设备名称、局域网地址、文件名、文件大小、传输结果、保存位置和投屏运行状态等信息。')
+        Text('欢迎使用 HM互传。HM互传用于在同一局域网内发现设备、传输文件，并可由你主动把 HarmonyOS 设备屏幕投放到已配对的 Mac。为实现这些功能，应用会在本地使用设备名称、局域网地址、文件名、文件大小、传输结果、保存位置和投屏运行状态等信息。')
           .fontSize(14).lineHeight(22).fontColor($r('app.color.text_secondary')).width('100%')
         Text('投屏每次都需要你主动发起并确认系统屏幕采集授权，画面只在局域网内加密传给已配对 Mac，并仅在内存中显示。我们不会将文件、画面或上述信息上传到云端服务器。请阅读并同意隐私政策后继续使用。')
           .fontSize(14).lineHeight(22).fontColor($r('app.color.text_secondary')).width('100%')
@@ -181,7 +181,7 @@ export struct CastSettingsOverlay {
             this.FrameRateButton('60P', 60)
           }.width('100%')
         }.alignItems(HorizontalAlign.Start).width('100%')
-        Text('可选组合来自当前真机 H.264 硬件编码能力。为保持 Pad 屏幕比例，实际尺寸依次为 1280×840、1920×1260、2560×1680。当前稳定实现最高为 2K 级 / 60P，暂不开放 4K、90P、120P。')
+        Text('可选组合来自当前真机 H.264 硬件编码能力。实际编码尺寸会保持当前设备屏幕比例，避免平板或阔折叠设备的画面被拉伸。当前稳定实现最高为 2K 级 / 60P，暂不开放 4K、90P、120P。')
           .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary')).width('100%')
         Row({ space: 12 }) {
           DialogActionButton({ title: '取消', action: this.onCancel }).layoutWeight(1)
@@ -255,7 +255,7 @@ export struct NetworkTestResultOverlay {
         if (this.state === 'idle') {
           Column({ space: 7 }) {
             Text('测试内容').fontSize(12).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
-            Text('• 平均延迟与网络抖动\n• Pad 到 Mac 的实际上行吞吐\n• 可用性结论和推荐投屏参数')
+            Text('• 平均延迟与网络抖动\n• 本机到 Mac 的实际上行吞吐\n• 可用性结论和推荐投屏参数')
               .fontSize(12).lineHeight(19).fontColor($r('app.color.text_secondary'))
             Text('测试只发送约 32 MB 内存数据，不访问公网，也不会保存文件。')
               .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary'))
@@ -319,7 +319,7 @@ export struct NetworkTestResultOverlay {
 
   private resultSubtitle(): string {
     if (this.state === 'idle') return '将测试当前选中的已连接 Mac；未选择时会自动使用唯一连接设备。'
-    if (this.state === 'completed') return `Pad → ${this.targetName} 的实际投屏链路`
+    if (this.state === 'completed') return `本机 → ${this.targetName} 的实际投屏链路`
     return this.detail
   }
 

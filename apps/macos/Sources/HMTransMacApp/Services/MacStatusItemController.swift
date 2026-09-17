@@ -162,29 +162,28 @@ private final class StatusBarDropView: NSView {
         let background = highlighted ? NSColor.controlAccentColor.withAlphaComponent(0.24) : .clear
         background.setFill()
         NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
-        StatusItemIconFactory.image(highlighted: highlighted)
-            .draw(in: NSRect(x: bounds.midX - 10, y: bounds.midY - 9, width: 20, height: 18))
+        if let logo = StatusItemIconFactory.logo {
+            let scale = min(22 / logo.size.width, 18 / logo.size.height)
+            let width = logo.size.width * scale
+            let height = logo.size.height * scale
+            logo.draw(in: NSRect(
+                x: bounds.midX - width / 2,
+                y: bounds.midY - height / 2,
+                width: width,
+                height: height
+            ))
+        }
     }
 }
 
 private enum StatusItemIconFactory {
-    static func image(highlighted: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 20, height: 18), flipped: false) { _ in
-            let color = highlighted ? NSColor.controlAccentColor : NSColor.labelColor
-            color.setStroke()
-            let laptop = NSBezierPath(roundedRect: NSRect(x: 1.5, y: 6, width: 8, height: 7), xRadius: 1.2, yRadius: 1.2)
-            laptop.lineWidth = 1.5; laptop.stroke()
-            let base = NSBezierPath(); base.move(to: NSPoint(x: 0.7, y: 4.5)); base.line(to: NSPoint(x: 10.3, y: 4.5)); base.lineWidth = 1.5; base.stroke()
-            let tablet = NSBezierPath(roundedRect: NSRect(x: 13, y: 3, width: 5.5, height: 11), xRadius: 1.4, yRadius: 1.4)
-            tablet.lineWidth = 1.5; tablet.stroke()
-            let channel = NSBezierPath(); channel.move(to: NSPoint(x: 10.4, y: 10.2)); channel.line(to: NSPoint(x: 13, y: 10.2)); channel.move(to: NSPoint(x: 12, y: 11.2)); channel.line(to: NSPoint(x: 13, y: 10.2)); channel.line(to: NSPoint(x: 12, y: 9.2)); channel.lineWidth = 1.2; channel.stroke()
-            channel.move(to: NSPoint(x: 13, y: 7)); channel.line(to: NSPoint(x: 10.4, y: 7)); channel.move(to: NSPoint(x: 11.4, y: 8)); channel.line(to: NSPoint(x: 10.4, y: 7)); channel.line(to: NSPoint(x: 11.4, y: 6)); channel.stroke()
-            return true
-        }
-        image.isTemplate = true
+    static let logo: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "MenuBarLogo", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = false
         image.accessibilityDescription = "HM互传"
         return image
-    }
+    }()
 }
 
 private struct StatusTransferPanel: View {

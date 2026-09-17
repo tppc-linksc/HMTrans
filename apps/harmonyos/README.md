@@ -1,6 +1,6 @@
 # HarmonyOS 端
 
-HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 MatePad 和 Mac 的原文件互传。
+HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 HarmonyOS 平板、手机、阔折叠设备和 Mac 的原文件互传。
 
 当前代码版本为 `v0.3.0`（`versionCode=6`），已完成自有隐私门禁、持久任务、断点恢复、文件夹还原、多设备发送、任务控制和活动传输后台保护，并接入从 MatePad 发起到 Mac 的投屏、最多双路独立接收和投屏网络测试。HAP 构建与当前目标设备真机流程已经通过；应用市场版本仍需使用审核通过后的正式 Profile/证书重新签名并上传，公开状态以应用市场显示为准。
 
@@ -9,7 +9,7 @@ HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 
 
 - 目标系统为 HarmonyOS 6.1.0 / API 23 及以上。
 - 优先使用 ArkTS / ArkUI / HarmonyOS 原生能力，不再按 HarmonyOS 5.0 的最低能力做设计。
-- UI 需要适配平板全屏、分屏、小窗、拖拽、沉浸式界面和新系统视觉特性。
+- UI 需要适配平板、手机与阔折叠设备的全屏、分屏、小窗、拖拽、沉浸式界面和新系统视觉特性。
 
 ## 当前能力
 
@@ -95,7 +95,7 @@ entry/build/default/outputs/default/entry-default-signed.hap
 entry/build/development/outputs/default/entry-default-signed.hap
 ```
 
-真机安装建议直接用 DevEco Studio Run 到 MatePad。
+真机安装建议选择 `development` Product，并在 DevEco Studio 中为目标设备生成包含其 UDID 的调试签名 Profile，再 Run 到设备。Pura X View 在系统中属于 `phone`；仅有 `tablet` 的 HAP 不能安装。`default` 的应用市场签名包不能通过 HDC 侧载。
 
 ## 安装失败处理
 
@@ -106,7 +106,7 @@ Install Failed: error: failed to install bundle.
 error: install sign info inconsistent.
 ```
 
-说明 MatePad 上已经安装过同 bundleName `com.HMTrans.app` 但签名证书不同的版本。应用市场版不能由调试证书直接覆盖，发行证书生成的 `app_gallery` 包也不能通过 HDC 侧载。
+说明设备上已经安装过同 bundleName `com.HMTrans.app` 但签名证书不同的版本。应用市场版不能由调试证书直接覆盖，发行证书生成的 `app_gallery` 包也不能通过 HDC 侧载。
 
 - 保留应用市场版：通过 AppGallery Connect 邀请测试、公开测试或正式发布更新。
 - 切换到本地调试版：先选择 `development` Product；首次切换需要卸载市场版。`-k` 会请求系统保留用户数据，但切换签名之前仍应备份重要文件。
@@ -123,7 +123,7 @@ hdc shell bm uninstall -n com.HMTrans.app -k
 hdc shell bm uninstall -n com.linksc.puresend
 ```
 
-如果 DevEco 仍然复用旧状态，直接在平板上长按 HM互传 图标卸载一次，然后再用 DevEco Studio Run。
+如果 DevEco 仍然复用旧状态，可在设备上长按 HM互传 图标卸载一次，然后再用 DevEco Studio Run；卸载前先备份应用内的配对关系和未完成传输数据。
 
 ## 稳定版实现
 

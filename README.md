@@ -6,7 +6,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 这个工具来自我在做其他项目时遇到的传输困境：Mac 和 MatePad 之间临时传文件、截图、项目素材时，常见方案要么依赖云同步，要么步骤太多，要么不能稳定保留原文件。HMTrans 是一个 vibecoding 产品，目标很明确：把我自己每天常用的 Mac <-> MatePad 统一局域网下互传原始文件链路做顺手。
 
-当前稳定版为 `v0.3.0`：macOS 版通过 GitHub Release 分发，HarmonyOS 版已在华为应用市场上架；本版本新增 MatePad 到 Mac 的单向投屏，并继续维护双端文件互传。项目始终坚持局域网直连，不增加云端和账号系统。
+当前 Mac 发布版为 `v0.3.1`，通过 GitHub Release 分发；HarmonyOS 应用市场公开版仍为 `v0.3.0`。`v0.3.1` 更新 Mac 应用与菜单栏图标，并纳入 Wi-Fi 切换和传输重连等修复；仓库中的 HarmonyOS 手机与阔折叠适配尚未通过应用市场发布。项目始终坚持局域网直连，不增加云端和账号系统。
 
 ## 功能概览
 
@@ -30,7 +30,7 @@ HMTrans（中文名：HM互传）是一个面向 macOS 和华为 MatePad / Harmo
 
 ## 版本状态
 
-当前 macOS Release 与 HarmonyOS 应用市场版本均为 `v0.3.0`。Mac 用户可从 GitHub Release 下载，MatePad 用户可在华为应用市场搜索“HM互传”安装。`v0.3.0` 在继续维护稳定文件互传的同时，正式加入从 MatePad 发起到 Mac 的单向画面投放。
+当前 macOS Release 为 `v0.3.1`，HarmonyOS 应用市场版本为 `v0.3.0`。Mac 用户可从 GitHub Release 下载，MatePad 用户可在华为应用市场搜索“HM互传”安装。`v0.3.0` 已加入从 MatePad 发起到 Mac 的单向画面投放；本次 Mac 更新以图标与稳定性修复为主。
 
 稳定版文件互传包括：
 
