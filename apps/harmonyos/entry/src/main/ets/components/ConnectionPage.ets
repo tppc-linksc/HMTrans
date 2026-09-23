@@ -1,6 +1,10 @@
 import { uniformTypeDescriptor } from '@kit.ArkData'
 import { DeviceInfo } from '../common/Protocol'
 
+// 超过这个数量就不再逐台画满宽卡片：十几台设备排下去会把附近设备区撑得很长，
+// 把下方发送区挤出屏幕。改为图标网格后单台设备只占约 66vp，一屏能放两三倍数量。
+const DEVICE_ICON_GRID_THRESHOLD: number = 2
+
 /** 连接页面只负责展示，发现与配对仍由控制器管理。 */
 @ComponentV2
 export struct PadConnectionPage {
@@ -30,14 +34,25 @@ export struct PadConnectionPage {
   @Param onSelectFile: () => void = () => {}
   @Param onFilesDropped: (event: DragEvent) => void = (_event: DragEvent) => {}
 
+  // 设备数量超过阈值时改用图标网格，点击图标才展开的详情弹层状态，纯本地 UI 状态，
+  // 不需要上溯给 Index 页面管理。
+  @Local showDeviceDetail: boolean = false
+  @Local detailDevice: DeviceInfo | undefined = undefined
+  @Local detailDeviceState: string = 'alive'
+
   build() {
-    Column({ space: 18 }) {
-      Flex({ direction: this.compactLayout ? FlexDirection.Column : FlexDirection.Row,
-        justifyContent: FlexAlign.SpaceBetween }) {
-        this.NetworkCard()
-        this.PairingCard()
+    Column({ space: this.compactLayout ? 14 : 18 }) {
+      if (this.compactLayout) {
+        // 手机宽度下网络名和配对码各占一整行会把附近设备、发送区挤到屏幕以外；
+        // 合并为一张卡片保持视觉重心居中，同时把总高度降到接近桌面双卡片的一半。
+        this.CompactStatusCard()
+      } else {
+        Flex({ direction: FlexDirection.Row, justifyContent: FlexAlign.SpaceBetween }) {
+          this.NetworkCard()
+          this.PairingCard()
+        }
+        .width('100%')
       }
-      .width('100%')
       this.NearbyDevicesCard()
       if (this.castState !== 'idle') {
         this.CastStatusCard()
@@ -45,6 +60,43 @@ export struct PadConnectionPage {
       this.FileSendSection()
     }
     .width('100%')
+    .bindContentCover(this.showDeviceDetail, this.DeviceDetailContent(), {
+      modalTransition: ModalTransition.DEFAULT,
+      onDisappear: () => { this.showDeviceDetail = false },
+    })
+  }
+
+  @Builder
+  private CompactStatusCard() {
+    Column({ space: 12 }) {
+      Row({ space: 8 }) {
+        Image($r('app.media.icon_wifi_discovery')).width(18).height(18)
+          .accessibilityText('Wi-Fi')
+        Text(this.networkName).fontSize(15).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+          .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.localIp.length > 0 ? this.localIp : '获取地址中')
+          .fontSize(11).fontColor($r('app.color.text_secondary')).maxLines(1)
+      }.width('100%')
+      Divider().strokeWidth(1).color($r('app.color.border_subtle'))
+      Row({ space: 14 }) {
+        Column({ space: 4 }) {
+          Text('本机配对码').fontSize(11).fontColor($r('app.color.text_secondary'))
+          Text(this.pairingCode).fontSize(22).fontWeight(FontWeight.Bold).fontColor($r('app.color.accent'))
+            .letterSpacing(2)
+        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+        Stack() {
+          Progress({ value: this.pairingSeconds, total: 180, type: ProgressType.Ring })
+            .width(46).height(46).color($r('app.color.accent'))
+          Text(`${this.pairingSeconds}`).fontSize(12).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        }.width(46).height(46).onClick(this.onRegenerateCode)
+          .accessibilityText(`配对码剩余 ${this.pairingSeconds} 秒`)
+          .accessibilityDescription('点按立即生成新的六位配对码')
+      }.width('100%')
+      Text('在对方 Mac 输入六位码完成首次配对').fontSize(10).fontColor($r('app.color.text_secondary')).width('100%')
+    }
+    .width('100%').padding(16).backgroundColor($r('app.color.surface_translucent'))
+    .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR).borderRadius(20)
+    .border({ width: 1, color: $r('app.color.border_subtle') })
   }
 
   @Builder
@@ -77,9 +129,9 @@ export struct PadConnectionPage {
       Text(this.localIp.length > 0 ? this.localIp : '正在获取本机地址')
         .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%')
     }
-    .width(this.compactLayout ? '100%' : '49%').height(124).padding(18)
+    .width('49%').height(124).padding(18)
     .justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Start)
-    .margin({ bottom: this.compactLayout ? 12 : 0 }).backgroundColor($r('app.color.surface_translucent'))
+    .backgroundColor($r('app.color.surface_translucent'))
     .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR).borderRadius(20)
     .border({ width: 1, color: $r('app.color.border_subtle') })
   }
@@ -127,7 +179,7 @@ export struct PadConnectionPage {
         .accessibilityText(`配对码剩余 ${this.pairingSeconds} 秒`)
         .accessibilityDescription('点按立即生成新的六位配对码')
     }
-    .width(this.compactLayout ? '100%' : '49%').height(124).padding(18)
+    .width('49%').height(124).padding(18)
     .backgroundColor($r('app.color.surface_translucent')).backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
     .borderRadius(20).border({ width: 1, color: $r('app.color.border_subtle') })
   }
@@ -138,12 +190,14 @@ export struct PadConnectionPage {
       Row() {
         Text('附近设备').fontSize(17).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         Blank()
-        Text(`${this.connectedDevices.length + this.offlineDevices.length + this.unpairedDevices.length} 台`)
+        Text(`${this.totalDeviceCount()} 台`)
           .fontSize(12).fontColor($r('app.color.text_secondary'))
       }.width('100%')
-      if (this.connectedDevices.length + this.offlineDevices.length + this.unpairedDevices.length === 0) {
+      if (this.totalDeviceCount() === 0) {
         Text('暂无设备，正在通过局域网自动发现')
           .fontSize(12).fontColor($r('app.color.text_secondary')).width('100%').height(54).textAlign(TextAlign.Center)
+      } else if (this.totalDeviceCount() > DEVICE_ICON_GRID_THRESHOLD) {
+        this.DeviceIconGrid()
       } else {
         Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
           Repeat<DeviceInfo>(this.connectedDevices)
@@ -161,6 +215,146 @@ export struct PadConnectionPage {
     }
     .width('100%').padding(14).backgroundColor($r('app.color.surface_translucent')).borderRadius(20)
     .border({ width: 1, color: $r('app.color.border_subtle') })
+  }
+
+  /**
+   * 设备很多时改成图标网格：单台设备只占约 66vp（52 图标 + 间距），比满宽卡片省
+   * 下大半空间；状态用外框颜色区分，点击图标才展开详情，而不是把每台设备的名称、
+   * 系统版本、连接状态都摊在首页上。
+   */
+  @Builder
+  private DeviceIconGrid() {
+    Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+      Repeat<DeviceInfo>(this.connectedDevices)
+        .each((item) => { this.DeviceIcon(item.item, 'alive') })
+        .key((device: DeviceInfo) => `alive-${device.deviceId}`)
+      Repeat<DeviceInfo>(this.offlineDevices)
+        .each((item) => { this.DeviceIcon(item.item, 'paired') })
+        .key((device: DeviceInfo) => `paired-${device.deviceId}`)
+      Repeat<DeviceInfo>(this.unpairedDevices)
+        .each((item) => { this.DeviceIcon(item.item, 'new') })
+        .key((device: DeviceInfo) => `new-${device.deviceId}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private DeviceIcon(device: DeviceInfo, state: string) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Stack() {
+        Image(device.platform === 'macOS' ? $r('app.media.device_macbook') : $r('app.media.device_matepad'))
+          .width(28).height(28)
+      }
+      .width(52).height(52).borderRadius(26)
+      .backgroundColor(state === 'alive' ? $r('app.color.state_connected_surface') :
+        state === 'paired' ? $r('app.color.surface_primary') : $r('app.color.accent_surface'))
+      .border({ width: 2.5, color: this.statusColor(state) })
+      if (state === 'alive' && this.selectedDeviceIds.indexOf(device.deviceId) >= 0) {
+        Stack() {
+          Text('✓').fontSize(9).fontWeight(FontWeight.Bold).fontColor('#FFFFFF')
+        }
+        .width(16).height(16).borderRadius(8).backgroundColor($r('app.color.accent_strong'))
+        .border({ width: 1.5, color: $r('app.color.surface_primary') })
+      }
+    }
+    .margin({ right: 14, bottom: 6 })
+    .onClick(() => {
+      this.detailDevice = device
+      this.detailDeviceState = state
+      this.showDeviceDetail = true
+    })
+    .accessibilityText(`${device.deviceName}，${state === 'alive' ? '已连接' : state === 'paired' ? '已配对未连接' : '未配对'}`)
+    .accessibilityDescription('点按查看设备详情')
+  }
+
+  /** 蓝色＝识别到但未连接，绿色＝已连接，灰色＝配对过但当前未检测到。 */
+  private statusColor(state: string): ResourceColor {
+    if (state === 'alive') return $r('app.color.success')
+    if (state === 'paired') return $r('app.color.text_secondary')
+    return $r('app.color.accent')
+  }
+
+  @Builder
+  private DeviceDetailContent() {
+    Column() {
+      if (this.detailDevice) {
+        this.DeviceDetailCard(this.detailDevice, this.detailDeviceState)
+      }
+    }
+    .width('100%').height('100%').justifyContent(FlexAlign.Center)
+    .backgroundColor($r('app.color.scrim'))
+    .onClick(() => { this.showDeviceDetail = false })
+  }
+
+  @Builder
+  private DeviceDetailCard(device: DeviceInfo, state: string) {
+    Column({ space: 16 }) {
+      Stack() {
+        Image(device.platform === 'macOS' ? $r('app.media.device_macbook') : $r('app.media.device_matepad'))
+          .width(38).height(38)
+      }
+      .width(72).height(72).borderRadius(36)
+      .backgroundColor(state === 'alive' ? $r('app.color.state_connected_surface') :
+        state === 'paired' ? $r('app.color.surface_primary') : $r('app.color.accent_surface'))
+      .border({ width: 3, color: this.statusColor(state) })
+      Column({ space: 4 }) {
+        Text(device.deviceName).fontSize(19).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary')).textAlign(TextAlign.Center).maxLines(2)
+        Text(this.systemVersionLabel(device)).fontSize(12).fontColor($r('app.color.text_secondary'))
+          .textAlign(TextAlign.Center)
+        Text(state === 'alive' ? `已连接 · ${device.ip}` : state === 'paired' ? '已配对 · 当前未检测到' : '新设备 · 尚未配对')
+          .fontSize(13).fontWeight(FontWeight.Medium).fontColor(this.statusColor(state)).textAlign(TextAlign.Center)
+      }.width('100%')
+      Column({ space: 10 }) {
+        if (state === 'new') {
+          this.DetailActionButton('输入配对码', true, false,
+            () => { this.onPairDevice(device); this.showDeviceDetail = false })
+        }
+        if (state === 'paired') {
+          this.DetailActionButton('重新连接', true, false,
+            () => { this.onReconnectDevice(device); this.showDeviceDetail = false })
+          this.DetailActionButton('忘记设备', false, true,
+            () => { this.onForgetDevice(device); this.showDeviceDetail = false })
+        }
+        if (state === 'alive') {
+          this.DetailActionButton(
+            this.selectedDeviceIds.indexOf(device.deviceId) >= 0 ? '取消选为发送目标' : '选为发送目标',
+            true, false, () => { this.onToggleTarget(device); this.showDeviceDetail = false })
+          if (this.canStartScreenCast(device)) {
+            this.DetailActionButton(this.isCasting(device) ? '停止投屏' : '开始投屏', false, this.isCasting(device),
+              () => {
+                if (this.isCasting(device)) this.onStopCast(); else this.onStartCast(device)
+                this.showDeviceDetail = false
+              })
+          }
+          this.DetailActionButton('忘记设备', false, true,
+            () => { this.onForgetDevice(device); this.showDeviceDetail = false })
+        }
+      }.width('100%')
+      Text('关闭').fontSize(14).fontColor($r('app.color.text_secondary'))
+        .onClick(() => { this.showDeviceDetail = false })
+    }
+    .width('86%').constraintSize({ maxWidth: 380 }).padding(24)
+    .backgroundColor($r('app.color.surface_primary')).borderRadius(22)
+    .shadow({ radius: 20, color: '#0000001A', offsetY: 8 })
+    .onClick(() => {})
+  }
+
+  @Builder
+  private DetailActionButton(title: string, primary: boolean, danger: boolean, action: () => void) {
+    Button(title).width('100%').height(44).fontSize(15).fontWeight(FontWeight.Medium)
+      .fontColor(primary ? '#FFFFFF' : danger ? $r('app.color.danger') : $r('app.color.text_primary'))
+      .backgroundColor(primary ? $r('app.color.accent_strong') :
+        danger ? $r('app.color.danger_surface') : $r('app.color.control_track'))
+      .borderRadius(12).onClick(action)
+  }
+
+  private totalDeviceCount(): number {
+    return this.connectedDevices.length + this.offlineDevices.length + this.unpairedDevices.length
+  }
+
+  private isCasting(device: DeviceInfo): boolean {
+    return this.castDeviceId === device.deviceId && this.castState !== 'idle'
   }
 
   @Builder

@@ -58,6 +58,6 @@ struct PrivacyGateView: View {
 
     private func startLocalServices() {
         model.bootstrap()
-        MacStatusItemController.shared.install(model: model)
+        MacStatusItemController.shared.install()
     }
 }

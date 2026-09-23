@@ -25,6 +25,9 @@ const MAX_QUEUED_FRAMES: number = 4
 const MAX_QUEUED_BYTES: number = 32 * 1024 * 1024
 const ACK_TIMEOUT_MS: number = 10000
 const RECONNECT_WINDOW_MS: number = 10000
+// 系统录屏被用户从状态栏／控制中心直接终止时，原生状态回调不一定能覆盖所有终止码；
+// 用编码帧是否持续到达兜底判断，避免手机侧卡在"投屏中"而 Mac 只是画面冻结变黑。
+const FRAME_STALL_TIMEOUT_MS: number = 8000
 // 与 OH_AVCodecBufferFlags 保持一致，显式命名可以避免后续 SDK 升级时误读魔法数字。
 const NATIVE_SYNC_FRAME_FLAG: number = 1 << 1
 const NATIVE_CODEC_DATA_FLAG: number = 1 << 3
@@ -143,6 +146,7 @@ export class ScreenCastSenderService {
   private stopped: boolean = true
   private heartbeatTimer?: number
   private lastMacActivityAt: number = 0
+  private lastFrameAt: number = 0
   private droppedFrames: number = 0
   private sentFrames: number = 0
   private sentBytes: number = 0
@@ -200,6 +204,7 @@ export class ScreenCastSenderService {
       this.latestCodecConfig = undefined
       this.lastMacSequence = -1
       this.lastMacActivityAt = Date.now()
+      this.lastFrameAt = Date.now()
       await this.connectAndHandshake(false)
       this.publishState('authorizing', '请在系统弹窗中允许屏幕录制')
       const captureResult = nativeModule.startCapture(this.captureOptions)
@@ -362,6 +367,7 @@ export class ScreenCastSenderService {
 
   private enqueueFrame(frame: NativeFrame): void {
     if (this.stopped || frame.data.byteLength === 0) return
+    this.lastFrameAt = Date.now()
     const queued: QueuedFrame = { data: frame.data, ptsUs: frame.ptsUs, flags: frame.flags }
     const isKeyFrame = (frame.flags & NATIVE_SYNC_FRAME_FLAG) !== 0
     const isCodecConfig = (frame.flags & NATIVE_CODEC_DATA_FLAG) !== 0
@@ -457,6 +463,11 @@ export class ScreenCastSenderService {
     this.heartbeatTimer = setInterval(() => {
       const heartbeat: CastHeartbeatPayload = { at: Date.now() }
       if (this.stopped) return
+      if (this.mediaReady && !this.waitingForKeyFrame &&
+        Date.now() - this.lastFrameAt > FRAME_STALL_TIMEOUT_MS) {
+        this.fail('系统录屏已停止，投屏已结束')
+        return
+      }
       if (Date.now() - this.lastMacActivityAt > CAST_HEARTBEAT_TIMEOUT_MS) {
         this.reconnect().catch((err: Error) => this.fail(err.message))
         return
@@ -507,9 +518,14 @@ export class ScreenCastSenderService {
     this.queuedBytes = 0
     this.mediaReady = false
     this.stopped = true
-    const client = this.client
-    this.client = undefined
-    if (client) client.close().catch(() => {})
+    // 和 stop() 一样先把结束原因告知 Mac，再断开连接；否则 Mac 只会看到连接静默中断，
+    // 画面停在最后一帧（往往是系统结束录屏前推送的黑屏帧）却不会退出全屏播放。
+    const endPayload: CastEndPayload = { reason: detail }
+    this.sendControl(CastMessageType.END, encodeCastJson(endPayload)).catch(() => {}).finally(() => {
+      const client = this.client
+      this.client = undefined
+      if (client) client.close().catch(() => {})
+    })
   }
 
   private publishStatistics(): void {

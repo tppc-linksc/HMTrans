@@ -25,6 +25,7 @@ export interface PadPreferencesSnapshot {
   autoReceiveTrustedEnabled: boolean
   receiverEnabled: boolean
   discoveryEnabled: boolean
+  receiveDirectoryUri: string
 }
 
 /** 用户设置与安装身份的强类型持久化边界。 */
@@ -79,9 +80,21 @@ export class PadPreferencesService {
         autoReceiveTrustedEnabled: await store.get('autoReceiveTrustedEnabled', true) as boolean,
         receiverEnabled: await store.get('receiverEnabled', true) as boolean,
         discoveryEnabled: await store.get('discoveryEnabled', true) as boolean,
+        receiveDirectoryUri: await store.get('receiveDirectoryUri', '') as string,
       }
     } catch (err) {
       throw new Error(`偏好读取失败：${errorText(err)}`)
+    }
+  }
+
+  /** 记住用户授权过的接收目录 URI；授权本身由 fileshare 持久化，这里只存地址。 */
+  async saveReceiveDirectoryUri(context: common.UIAbilityContext, uri: string): Promise<void> {
+    try {
+      const store = await preferences.getPreferences(context, NAME)
+      await store.put('receiveDirectoryUri', uri)
+      await store.flush()
+    } catch (err) {
+      throw new Error(`接收目录保存失败：${errorText(err)}`)
     }
   }
 

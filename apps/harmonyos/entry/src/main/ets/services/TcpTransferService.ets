@@ -40,6 +40,11 @@ import {
 
 const MAX_CONTROL_LINE_CHARS: number = 64 * 1024
 const MAX_ACTIVE_CONNECTIONS: number = 16
+// 对端发完最后一帧就会立刻断开：Mac 侧配对、解绑和校验回执都是 send 完即 return，
+// 由 defer 关闭连接，因此 close 常和最后一条 message 前后脚到达。若立即判定中断，
+// 正常结束会被误伤成失败（配对必现失败）。延后一拍让在途数据先被消费，真正的断线
+// 仍能在数百毫秒内快速失败，而不是干等到校验超时。
+const CLOSE_GRACE_MS: number = 300
 const CONTROL_RESPONSE_TIMEOUT_MS: number = 30 * 1000
 const VERIFY_RESULT_TIMEOUT_MS: number = 10 * 60 * 1000
 const RECEIVE_IDLE_TIMEOUT_MS: number = 60 * 1000
@@ -230,6 +235,9 @@ export class TcpTransferService {
     const inbox = new ControlLineInbox()
     client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
     client.on('error', (err) => inbox.fail(new Error(errorText(err))))
+    client.on('close', () => {
+      setTimeout(() => inbox.fail(new Error('connection_closed')), CLOSE_GRACE_MS)
+    })
     try {
       await client.connect({ address: { address: host, port }, timeout: 10000 })
       await client.send({ data: encodeJsonLine(session.request) })
@@ -261,6 +269,9 @@ export class TcpTransferService {
     const inbox = new ControlLineInbox()
     client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
     client.on('error', (err) => inbox.fail(new Error(errorText(err))))
+    client.on('close', () => {
+      setTimeout(() => inbox.fail(new Error('connection_closed')), CLOSE_GRACE_MS)
+    })
     try {
       await client.connect({ address: { address: host, port }, timeout: 10000 })
       await client.send({ data: encodeJsonLine(request) })
@@ -309,6 +320,9 @@ export class TcpTransferService {
     const inbox = new ControlLineInbox()
     client.on('message', (info: socket.SocketMessageInfo) => inbox.append(info.message))
     client.on('error', (err) => inbox.fail(new Error(errorText(err))))
+    client.on('close', () => {
+      setTimeout(() => inbox.fail(new Error('connection_closed')), CLOSE_GRACE_MS)
+    })
     const control = new TransferSessionControl()
     this.outgoingSessions.set(meta.transferId, control)
     control.setCancelHandler(() => {

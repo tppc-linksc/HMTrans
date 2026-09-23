@@ -12,6 +12,8 @@ export struct PadSettingsPage {
   @Param castResolution: string = '1080p'
   @Param castFrameRate: number = 60
   @Param downloadDirectoryReady: boolean = false
+  /** 手机没有公共下载目录能力，落在应用目录时必须如实说明，不能谎称保存到 Download。 */
+  @Param downloadDirectoryPublic: boolean = false
   @Param onReceiverChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onDiscoveryChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
   @Param onBackgroundChanged: (enabled: boolean) => void = (_enabled: boolean) => {}
@@ -39,9 +41,7 @@ export struct PadSettingsPage {
         Divider().color($r('app.color.divider'))
         this.ActionRow('诊断信息', '不包含文件内容、完整路径或局域网地址', '复制', this.onCopyDiagnostics)
         Divider().color($r('app.color.divider'))
-        this.ActionRow('下载目录',
-          `Download/HMTrans · ${this.downloadDirectoryReady ? '已授权且只显示成功文件' : '需要授权后才能接收文件'}`,
-          '检查', this.onCheckDownload)
+        this.ActionRow('接收目录', this.receiveDirectoryLabel(), '检查', this.onCheckDownload)
         Divider().color($r('app.color.divider'))
         this.ActionRow('临时传输空间', '应用私有 · 未完成任务可恢复', '清除', this.onClearStaging)
         Divider().color($r('app.color.divider'))
@@ -104,6 +104,12 @@ export struct PadSettingsPage {
         .borderRadius(15).onClick(onClick)
         .accessibilityText(`${action}${title}`)
     }.width('100%').height(72)
+  }
+
+  private receiveDirectoryLabel(): string {
+    if (!this.downloadDirectoryReady) return '尚未就绪 · 点击检查'
+    return this.downloadDirectoryPublic ? 'Download/HMTrans · 文件管理器中可见' :
+      '应用内接收目录 · 本机不支持写入公共下载目录'
   }
 
   @Builder

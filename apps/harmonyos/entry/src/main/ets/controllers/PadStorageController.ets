@@ -60,23 +60,23 @@ export class PadStorageController {
     this.host.showToast('临时传输空间已清除')
   }
 
-  /** 再次申请下载目录授权，并用无残留的探测验证目录可写。 */
+  /** 重新选取接收目录，并用无残留的探测验证目录可写。 */
   async checkReceiveDirectory(): Promise<void> {
     try {
       if (this.host.receiveDirectory.length === 0) {
         await this.host.prepareReceiveDirectory(this.host.abilityContext())
         if (this.host.receiveDirectory.length === 0) {
-          this.host.showToast('下载目录未授权，接收服务无法启动')
+          this.host.showToast('接收目录不可用，请查看状态说明')
           return
         }
       }
       this.directoryService.verify(this.host.receiveDirectory)
-      this.host.statusText = '下载目录可用：Download/HMTrans'
+      this.host.statusText = `接收目录可用：${this.host.receiveDirectory}`
       this.host.showToast(this.host.statusText)
     } catch (err) {
       this.transferStore.recordDiagnostic('STO-DIR-001', errorText(err)).catch(() => {})
-      this.host.statusText = `下载目录不可写：${errorText(err)}`
-      this.host.showToast('下载目录不可写，请在系统设置中允许访问下载目录')
+      this.host.statusText = `接收目录不可写：${errorText(err)}`
+      this.host.showToast('接收目录不可写')
     }
   }
 }

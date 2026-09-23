@@ -17,8 +17,8 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目说明.md](项目说明.md) | 产品原则、当前状态、功能边界和平台基线 |
-| [版本历史.md](版本历史.md) | v0.1 至 v0.3.1 已完成能力与平台发布状态 |
-| [release-notes/v0.3.1.md](release-notes/v0.3.1.md) | Mac v0.3.1 GitHub Release 更新说明 |
+| [版本历史.md](版本历史.md) | v0.1 至 v0.3.2 已完成能力与平台发布状态 |
+| [release-notes/v0.3.2.md](release-notes/v0.3.2.md) | Mac v0.3.2 GitHub Release 更新说明 |
 | [ACL权限说明.md](ACL权限说明.md) | HarmonyOS 受限权限、Profile 和应用市场签名说明 |
 
 研发过程中产生的产品方案、技术方案、协议草案、开发计划、验收清单和发布检查统一放在本地 `work/`。该目录被 Git 忽略，不属于官网或公开仓库；对外长期信息必须归并到本目录的基础文档。

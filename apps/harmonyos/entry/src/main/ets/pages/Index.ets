@@ -10,7 +10,7 @@ import {
   TransferState,
 } from '../models/TransferListItem'
 import { PadConnectionPage } from '../components/ConnectionPage'
-import { TransferHistoryPage } from '../components/TransferHistoryPage'
+import { HistorySelectionBar, TransferHistoryPage } from '../components/TransferHistoryPage'
 import { PadSettingsPage } from '../components/SettingsPage'
 import { BottomDock } from '../components/BottomDock'
 import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
@@ -119,6 +119,8 @@ struct Index {
   @Local networkTestRecommendation: string = ''
   @Local networkTestGuidance: string = ''
   @Local compactLayout: boolean = false
+  @Local historySelectionMode: boolean = false
+  @Local historySelectedIds: Array<string> = []
   @Local showPrivacyConsentDialog: boolean = false
   @Local contentUnlocked: boolean = false
   @Local initializationComplete: boolean = false
@@ -130,6 +132,7 @@ struct Index {
   private stagingStorageService: StagingStorageService = new StagingStorageService()
   private dropUriService: DropUriService = new DropUriService()
   private receiveDirectoryService: ReceiveDirectoryService = new ReceiveDirectoryService()
+  private savedReceiveDirectoryUri: string = ''
   private padPreferencesService: PadPreferencesService = new PadPreferencesService()
   private transferStateService: TransferStateService = new TransferStateService()
   private outgoingCoordinator: OutgoingTransferCoordinator =
@@ -260,7 +263,18 @@ struct Index {
         this.compactLayout = Number.isFinite(width) && width < 760
       })
 
-      BottomDock({ activePage: this.activePage, onPageChanged: (page: string) => { this.activePage = page } })
+      // 多选期间用底部操作栏顶掉悬浮 Dock：退出多选唯一的出口是顶部“取消”，
+      // 这样删除范围和删除动作始终在同一屏内闭环。
+      if (this.historySelectionMode) {
+        HistorySelectionBar({
+          selectedCount: this.historySelectedIds.length,
+          allSelected: this.isAllHistorySelected(),
+          onToggleSelectAll: () => this.toggleSelectAllHistory(),
+          onDelete: () => this.confirmDeleteSelectedHistory(),
+        })
+      } else {
+        BottomDock({ activePage: this.activePage, onPageChanged: (page: string) => { this.activePage = page } })
+      }
       if (this.pairingTarget) {
         PairingOverlay({
           deviceName: this.pairingTarget.deviceName,
@@ -394,6 +408,12 @@ struct Index {
       onRetryHistory: (item: TransferListItem) => this.retryHistoryItem(item),
       onClearPeer: (deviceKey: string, peerName: string) => this.confirmClearHistoryPeer(deviceKey, peerName),
       onClearAll: () => this.confirmClearAllHistory(),
+      selectionMode: this.historySelectionMode,
+      selectedIds: this.historySelectedIds,
+      onEnterSelection: (id: string) => this.enterHistorySelection(id),
+      onToggleSelection: (id: string) => this.toggleHistorySelection(id),
+      onToggleGroupSelection: (ids: Array<string>) => this.toggleHistoryGroupSelection(ids),
+      onExitSelection: () => this.exitHistorySelection(),
     })
   }
 
@@ -411,6 +431,7 @@ struct Index {
       castResolution: this.castResolution,
       castFrameRate: this.castFrameRate,
       downloadDirectoryReady: this.receiveDirectory.length > 0,
+      downloadDirectoryPublic: this.receiveDirectoryService.usesPublicDownloadDirectory(),
       onReceiverChanged: (enabled: boolean) => this.settingsController.setReceiverEnabled(enabled),
       onDiscoveryChanged: (enabled: boolean) => this.settingsController.setDiscoveryEnabled(enabled),
       onBackgroundChanged: (enabled: boolean) => this.settingsController.setBackgroundProtectionEnabled(enabled),
@@ -493,6 +514,68 @@ struct Index {
     this.confirmHistoryMutation('清空全部历史？', '已完成文件不会被删除。', () => {
       this.historyTransfers = []
       this.persistTransferState(true)
+    })
+  }
+
+  private enterHistorySelection(id: string): void {
+    this.historySelectionMode = true
+    this.historySelectedIds = [id]
+  }
+
+  private exitHistorySelection(): void {
+    this.historySelectionMode = false
+    this.historySelectedIds = []
+  }
+
+  private toggleHistorySelection(id: string): void {
+    this.historySelectedIds = this.historySelectedIds.indexOf(id) >= 0 ?
+      this.historySelectedIds.filter((row: string) => row !== id) : this.historySelectedIds.concat([id])
+  }
+
+  /** 分组全选：组内还有未选中的就补齐，已经全选则整组取消。 */
+  private toggleHistoryGroupSelection(ids: Array<string>): void {
+    const fullySelected = ids.every((id: string) => this.historySelectedIds.indexOf(id) >= 0)
+    if (fullySelected) {
+      this.historySelectedIds = this.historySelectedIds.filter((row: string) => ids.indexOf(row) < 0)
+      return
+    }
+    const added = ids.filter((id: string) => this.historySelectedIds.indexOf(id) < 0)
+    this.historySelectedIds = this.historySelectedIds.concat(added)
+  }
+
+  /**
+   * 可批量删除的记录只包含当前筛选下的历史条目；进行中的任务只能暂停或取消，
+   * 不进入删除范围。
+   */
+  private selectableHistoryIds(): Array<string> {
+    if (this.historyFilter === 'current') return []
+    let rows = this.historyTransfers
+    if (this.historyFilter === 'done') {
+      rows = rows.filter((row: TransferListItem) => row.state === TransferState.Done)
+    } else if (this.historyFilter === 'failed') {
+      rows = rows.filter((row: TransferListItem) => row.state === TransferState.Failed)
+    } else if (this.historyFilter === 'cancelled') {
+      rows = rows.filter((row: TransferListItem) => row.state === TransferState.Cancelled)
+    }
+    return rows.map((row: TransferListItem) => row.id)
+  }
+
+  private isAllHistorySelected(): boolean {
+    const ids = this.selectableHistoryIds()
+    return ids.length > 0 && ids.every((id: string) => this.historySelectedIds.indexOf(id) >= 0)
+  }
+
+  private toggleSelectAllHistory(): void {
+    this.historySelectedIds = this.isAllHistorySelected() ? [] : this.selectableHistoryIds()
+  }
+
+  private confirmDeleteSelectedHistory(): void {
+    const ids = this.historySelectedIds
+    if (ids.length === 0) return
+    this.confirmHistoryMutation(`删除选中的 ${ids.length} 条记录？`, '已完成的文件不会被删除。', () => {
+      this.historyTransfers = this.historyTransfers.filter((row: TransferListItem) => ids.indexOf(row.id) < 0)
+      this.persistTransferState(true)
+      this.exitHistorySelection()
     })
   }
 
@@ -680,7 +763,7 @@ struct Index {
 
   async prepareReceiveDirectory(context: common.UIAbilityContext): Promise<void> {
     try {
-      this.receiveDirectory = await this.receiveDirectoryService.prepare(context)
+      this.receiveDirectory = await this.receiveDirectoryService.prepare(context, this.savedReceiveDirectoryUri)
       this.statusText = `接收目录：${this.receiveDirectory}`
       if (this.receiverEnabled && !this.receiverReady) {
         await this.network().startReceiver(context)
@@ -706,6 +789,7 @@ struct Index {
       this.backgroundProtectionEnabled = saved.backgroundProtectionEnabled
       this.autoReceiveTrustedEnabled = saved.autoReceiveTrustedEnabled
       this.receiverEnabled = saved.receiverEnabled; this.discoveryEnabled = saved.discoveryEnabled
+      this.savedReceiveDirectoryUri = saved.receiveDirectoryUri
       await this.backgroundTransferService.setEnabled(saved.backgroundProtectionEnabled, context)
     } catch (err) {
       this.statusText = `偏好读取失败：${errorText(err)}`
