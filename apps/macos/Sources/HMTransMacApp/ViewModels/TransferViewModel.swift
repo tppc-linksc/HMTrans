@@ -40,6 +40,8 @@ final class TransferViewModel {
     var historyTransfers: [TransferListItem] = []
     var selectedTargetDeviceIDs: Set<String> = []
     var connectedDeviceIDs: Set<String> = []
+    /// 正在主动回连的已配对设备。只影响卡片文案，不影响配对关系。
+    var reconnectingDeviceIDs: Set<String> = []
     var autoReceiveTrustedDevices: Bool = UserDefaults.standard.object(forKey: "autoReceiveTrustedDevices") as? Bool ?? true
     var backgroundTransferProtection: Bool = UserDefaults.standard.object(forKey: "backgroundTransferProtection") as? Bool ?? true
 
@@ -74,7 +76,8 @@ final class TransferViewModel {
     let deviceId: String
     let deviceName: String
     let identityFingerprint: String
-    let discoveredDeviceTTL: TimeInterval = 12
+    /// 24 秒 = 4 个心跳周期。5 秒心跳配 12 秒 TTL 只要连丢两个包就会掉设备，弱网下会反复闪烁。
+    let discoveredDeviceTTL: TimeInterval = 24
 
     private static func initialReceiveDirectory() -> String {
         guard let saved = UserDefaults.standard.string(forKey: receiveDirectoryKey),
@@ -277,6 +280,8 @@ final class TransferViewModel {
         if discoveryEnabled {
             startDiscovery()
             startFallbackNetworkScan(force: true)
+            // 主动找回已配对设备，不等下一次广播周期自然撞上。
+            probeTrustedDevices()
         }
         status = "网络已切换，正在恢复连接服务"
     }
@@ -809,6 +814,10 @@ final class TransferViewModel {
         status = "已删除设备：\(deviceName)"
     }
 
+    /// 重新连接只负责把设备找回来：探测已知地址，然后等待对端带身份的确认。
+    ///
+    /// 配对信任不会因网络不可达或对端暂时没有回应而被删除。它只有两个清除入口：
+    /// 用户主动移除设备，以及对端发来的带签名解除配对请求。
     func reconnectPersistedDevice(_ device: PersistedDevice) {
         guard TrustedDevicesStore.contains(device.id) else {
             status = "设备信任已失效，需要重新配对"
@@ -817,50 +826,26 @@ final class TransferViewModel {
         if !receiverRunning {
             scheduleReceiverRecovery(after: .milliseconds(100))
         }
-        if let fresh = nearbyDevices.first(where: { device.id == $0.deviceId || device.address == $0.ip }),
-           !isBidirectionallyConnected(fresh) {
-            forgetDeviceLocally(deviceID: device.id, deviceName: device.name, address: device.address)
-            status = "双方配对状态不一致，请重新输入 \(fresh.deviceName) 的配对码"
-            selectDevice(fresh)
-            return
-        }
-        host = device.address
-        portText = String(device.port)
-        rememberTarget()
+        reconnectingDeviceIDs.insert(device.id)
+        let addresses = candidateAddresses(for: device)
         status = "正在重新连接：\(device.name)"
-        refreshDevices()
-        discovery?.probe(address: device.address)
-        Task.detached { [weak self] in
-            let reachable = tcpPortIsOpen(host: device.address, port: device.port, timeout: 0.9)
-            await MainActor.run {
-                guard let self else { return }
-                guard reachable else {
-                    self.status = "设备未连接：\(device.name)"
-                    return
-                }
-                // 仅探测到 TCP 端口无法获得设备指纹；定向发现响应确认身份前，卡片保持离线。
-                self.discovery?.probe(address: device.address)
-                if let fresh = self.nearbyDevices.first(where: { $0.deviceId == device.id }),
-                   self.isBidirectionallyConnected(fresh) {
-                    self.status = "已连接：\(fresh.deviceName)"
-                    return
-                }
-                self.status = "设备可达，正在确认身份：\(device.name)"
-            }
-        }
+        probe(addresses: addresses)
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            guard let self,
-                  TrustedDevicesStore.contains(device.id) else { return }
-            guard let fresh = self.nearbyDevices.first(where: { $0.deviceId == device.id }) else {
-                self.status = "设备未连接：\(device.name)"
+            try? await Task.sleep(for: .seconds(6))
+            guard let self else { return }
+            self.reconnectingDeviceIDs.remove(device.id)
+            guard TrustedDevicesStore.contains(device.id) else { return }
+            if let fresh = self.nearbyDevices.first(where: { $0.deviceId == device.id }),
+               self.isBidirectionallyConnected(fresh) {
+                self.host = fresh.ip
+                self.portText = String(fresh.port)
+                self.rememberTarget()
+                self.status = "已连接：\(fresh.deviceName)"
                 return
             }
-            guard !self.isBidirectionallyConnected(fresh) else { return }
-            // 对端仍在广播但始终不回送受信任确认，说明双方保存的配对关系已经分叉。
-            // 清理本机旧信任后把它恢复成可点击的新设备，避免“重新连接”永远无响应。
-            self.forgetDeviceLocally(deviceID: device.id, deviceName: device.name, address: device.address)
-            self.status = "对端已解除原配对，请点击 \(fresh.deviceName) 重新输入配对码"
+            self.status = addresses.isEmpty
+                ? "尚未保存 \(device.name) 的地址，等待它出现在附近设备"
+                : "暂未收到 \(device.name) 的回应，配对关系保持不变，可稍后重试"
         }
     }
 
@@ -872,7 +857,7 @@ final class TransferViewModel {
     }
 
     func markDeviceUnreachable(_ device: DeviceInfo, reason: String) {
-        nearbyDevices.removeAll { $0.deviceId == device.deviceId || $0.ip == device.ip }
+        nearbyDevices.removeAll { $0.deviceId == device.deviceId }
         deviceLastSeenAt.removeValue(forKey: device.deviceId)
         if host == device.ip {
             host = ""

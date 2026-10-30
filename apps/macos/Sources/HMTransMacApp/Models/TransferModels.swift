@@ -108,6 +108,9 @@ struct PersistedDevice: Identifiable, Equatable, Codable, Sendable {
     var port: UInt16
     var isPaired: Bool
     var lastSeenAt: Date
+    /// 已知地址列表，只用于网络切换后逐个探测以找回设备。
+    /// 它是可选项以便旧版本落盘数据仍能解码，且绝不参与身份判断或去重。
+    var addressHistory: [String]?
 }
 
 struct PreparedSendFile {

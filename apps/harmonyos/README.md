@@ -2,7 +2,7 @@
 
 HarmonyOS 端是 HM互传 的 DevEco / hvigor 工程，用 ArkTS + ArkUI 实现 HarmonyOS 平板、手机、阔折叠设备和 Mac 的原文件互传。
 
-当前代码版本为 `v0.3.0`（`versionCode=6`），已完成自有隐私门禁、持久任务、断点恢复、文件夹还原、多设备发送、任务控制和活动传输后台保护，并接入从 MatePad 发起到 Mac 的投屏、最多双路独立接收和投屏网络测试。HAP 构建与当前目标设备真机流程已经通过；应用市场版本仍需使用审核通过后的正式 Profile/证书重新签名并上传，公开状态以应用市场显示为准。
+当前 HarmonyOS 代码候选版本为 `v0.3.3`（`versionCode=7`），应用市场公开版仍为 `v0.3.0`。候选版在原有文件互传与 MatePad 到 Mac 投屏基础上，加入手机/阔折叠适配、新图标、接收目录选择、历史批量管理及传输稳定性修复。发布前仍需使用正式 Profile/证书生成 APP 包，完成市场安装与覆盖升级验证；公开状态以应用市场显示为准。
 
 
 ## 系统适配基线
@@ -64,7 +64,7 @@ cp build-profile.example.json5 build-profile.json5
 
 `build-profile.json5` 可能包含本机签名证书路径和密码，已加入 `.gitignore`，不要提交。
 
-市场发行包（用于上传 AppGallery Connect，不用于 HDC 侧载）：
+市场发行 APP 包（用于上传 AppGallery Connect，不用于 HDC 侧载）：
 
 ```sh
 cd apps/harmonyos
@@ -73,7 +73,7 @@ PATH=/Applications/DevEco-Studio.app/Contents/jbr/Contents/Home/bin:$PATH \
 DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
   /Applications/DevEco-Studio.app/Contents/tools/node/bin/node \
   /Applications/DevEco-Studio.app/Contents/tools/hvigor/hvigor/bin/hvigor.js \
-  --no-daemon --mode module -p module=entry@default -p product=default assembleHap
+  --no-daemon -p product=default -p buildMode=release assembleApp
 ```
 
 绑定测试设备的调试包（DevEco Studio 运行前选择 `development` Product）：
@@ -90,10 +90,14 @@ DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk \
 产物：
 
 ```text
+build/outputs/default/harmonyos-default-signed.app
 entry/build/default/outputs/default/entry-default-unsigned.hap
 entry/build/default/outputs/default/entry-default-signed.hap
 entry/build/development/outputs/default/entry-default-signed.hap
 ```
+
+上传前运行 `python3 scripts/check-release-acl.py`，核对市场 APP 包与 `marketRelease` 发布 Profile 的 ACL 一致性。新增受限权限后，应先在 AGC 申请并重新生成发布 Profile，再重新打包。
+更新已上架应用时，新 Profile 应继续绑定原发布证书；重新生成 `.p12` 或选择新发布证书可能导致旧版无法覆盖升级。更换签名文件后，在 DevEco Studio 的 `Project Structure > Signing Configs` 中重新选择文件、填写原密钥别名和密码，并点击 `Sync Now`，不要手动复制已加密的密码字段。
 
 真机安装建议选择 `development` Product，并在 DevEco Studio 中为目标设备生成包含其 UDID 的调试签名 Profile，再 Run 到设备。Pura X View 在系统中属于 `phone`；仅有 `tablet` 的 HAP 不能安装。`default` 的应用市场签名包不能通过 HDC 侧载。
 

@@ -8,6 +8,19 @@ export interface DiscoveryCallbacks {
   onStatus: (value: string) => void
 }
 
+/**
+ * 发现链路的收发计数。
+ * 只用于本地体检：「已发出但一条都没收到」是区分「对端没发」和「本机收不到」的关键证据。
+ */
+export interface DiscoveryStats {
+  sentBeacons: number
+  failedBeacons: number
+  receivedPackets: number
+  lastSentAt: number
+  lastReceivedAt: number
+  lastError: string
+}
+
 export class DiscoveryService {
   private udp?: socket.UDPSocket
   private timer?: number
@@ -16,6 +29,18 @@ export class DiscoveryService {
   private identityFingerprint: string
   private directedReplyAt: Map<string, number> = new Map()
   private shouldAcknowledge: (device: DeviceInfo) => boolean
+  private beaconDeviceName: string = ''
+  private beaconTransferPort: number = 0
+  private beaconScreenCastPort: number = 0
+  private beaconLocalIp: string = ''
+  private beaconNetworkName: string = ''
+  private beaconSystemVersion: string = ''
+  private sentBeacons: number = 0
+  private failedBeacons: number = 0
+  private receivedPackets: number = 0
+  private lastSentAt: number = 0
+  private lastReceivedAt: number = 0
+  private lastErrorText: string = ''
 
   constructor(deviceId: string, identityFingerprint: string,
     shouldAcknowledge: (device: DeviceInfo) => boolean = (_device: DeviceInfo): boolean => true) {
@@ -40,6 +65,13 @@ export class DiscoveryService {
     }
     this.discoveryPort = discoveryPort
 
+    this.beaconDeviceName = deviceName
+    this.beaconTransferPort = transferPort
+    this.beaconScreenCastPort = screenCastPort
+    this.beaconLocalIp = localIp
+    this.beaconNetworkName = networkName
+    this.beaconSystemVersion = systemVersion
+
     const udp = socket.constructUDPSocketInstance()
     this.udp = udp
 
@@ -49,6 +81,8 @@ export class DiscoveryService {
         if (device.app !== 'HMTrans' || device.deviceId === this.deviceId) {
           return
         }
+        this.receivedPackets += 1
+        this.lastReceivedAt = Date.now()
         const advertisedAddress = device.ip
         device.ip = this.resolvePeerAddress(advertisedAddress, info.remoteInfo.address)
         callbacks.onDevice(device)
@@ -100,7 +134,12 @@ export class DiscoveryService {
               port: this.discoveryPort,
             },
           })
-        } catch (_) {
+          this.sentBeacons += 1
+          this.lastSentAt = Date.now()
+        } catch (err) {
+          // 广播失败过去被静默吞掉，导致「发不出去」和「对方没发」在界面上无法区分。
+          this.failedBeacons += 1
+          this.lastErrorText = errorText(err as Error)
         }
       }
     }
@@ -121,6 +160,41 @@ export class DiscoveryService {
     if (udp) {
       await udp.close().catch(() => {
       })
+    }
+  }
+
+  /**
+   * 向一个已知地址发一次定向发现报文。
+   * 设备换了 Wi-Fi 后地址会变，靠它主动把已配对设备找回来，
+   * 而不必等下一个广播周期自然撞上。它不改动任何配对状态。
+   */
+  probe(address: string): void {
+    const udp = this.udp
+    if (!udp || !this.isUsableAddress(address)) {
+      return
+    }
+    const info = createDeviceInfo(
+      this.beaconDeviceName, this.beaconTransferPort, this.deviceId, this.beaconLocalIp,
+      this.beaconNetworkName, this.beaconSystemVersion, this.identityFingerprint,
+      undefined, this.beaconScreenCastPort, '0.3.0', ['send-h264']
+    )
+    udp.send({
+      data: JSON.stringify(info),
+      address: { address: address, port: this.discoveryPort },
+    }).catch((err: Error) => {
+      console.error(`[HMTrans.Discovery] probe failed address=${address}: ${errorText(err)}`)
+    })
+  }
+
+  /** 供本地体检读取的收发计数；不参与任何身份判断或配对决策。 */
+  stats(): DiscoveryStats {
+    return {
+      sentBeacons: this.sentBeacons,
+      failedBeacons: this.failedBeacons,
+      receivedPackets: this.receivedPackets,
+      lastSentAt: this.lastSentAt,
+      lastReceivedAt: this.lastReceivedAt,
+      lastError: this.lastErrorText,
     }
   }
 

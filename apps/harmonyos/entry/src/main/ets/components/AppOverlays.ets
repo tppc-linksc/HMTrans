@@ -335,3 +335,66 @@ export struct NetworkTestResultOverlay {
     return '重新测试'
   }
 }
+
+/** 局域网体检：把「为什么看不到对方」拆成频段、信号、报文收发三件可验证的事实。 */
+@ComponentV2
+export struct NetworkDiagnosisOverlay {
+  @Param running: boolean = false
+  @Param level: string = 'idle'
+  @Param title: string = '正在检查局域网链路'
+  @Param lines: Array<string> = []
+  @Param advice: string = ''
+  @Param onClose: () => void = () => {}
+  @Param onRetry: () => void = () => {}
+
+  build() {
+    Column() {
+      Column({ space: 16 }) {
+        Text('局域网体检').fontSize(20).fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+        Column({ space: 5 }) {
+          Text(this.title).fontSize(16).fontWeight(FontWeight.Bold)
+            .fontColor(this.titleColor()).textAlign(TextAlign.Center)
+          Text('检查本机 Wi-Fi 频段、发现报文收发和到对端的握手耗时')
+            .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.Center)
+        }.width('100%')
+        if (this.running) {
+          Column({ space: 10 }) {
+            LoadingProgress().width(36).height(36).color($r('app.color.accent_strong'))
+            Text('正在读取 Wi-Fi 状态并测试对端连通性…')
+              .fontSize(11).lineHeight(17).fontColor($r('app.color.text_secondary')).textAlign(TextAlign.Center)
+          }.width('100%').padding({ top: 6, bottom: 6 })
+        } else {
+          Column({ space: 7 }) {
+            ForEach(this.lines, (line: string) => {
+              Text(line).fontSize(12).lineHeight(19).width('100%')
+                .fontColor($r('app.color.text_primary')).textAlign(TextAlign.Start)
+            }, (line: string) => line)
+          }.alignItems(HorizontalAlign.Start).width('100%').padding(14)
+            .backgroundColor($r('app.color.control_track')).borderRadius(12)
+          Column({ space: 6 }) {
+            Text('结论与处理建议').fontSize(12).fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+            Text(this.advice).fontSize(12).lineHeight(19).fontColor($r('app.color.text_secondary'))
+          }.alignItems(HorizontalAlign.Start).width('100%').padding(14)
+            .backgroundColor($r('app.color.accent_surface')).borderRadius(12)
+        }
+        Row({ space: 12 }) {
+          DialogActionButton({ title: '关闭', available: !this.running, action: this.onClose }).layoutWeight(1)
+          DialogActionButton({ title: this.running ? '检查中' : '重新检查', primary: true,
+            available: !this.running, action: this.onRetry }).layoutWeight(1)
+        }.width('100%')
+      }.width('84%').constraintSize({ maxWidth: 560 }).padding(24)
+        .backgroundColor($r('app.color.surface_primary')).borderRadius(24)
+        .shadow({ radius: 18, color: '#18283B29', offsetY: 8 })
+    }.width('100%').height('100%').justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.scrim')).zIndex(34)
+  }
+
+  private titleColor(): ResourceColor {
+    if (this.level === 'good') return $r('app.color.success')
+    if (this.level === 'bad') return $r('app.color.danger')
+    if (this.level === 'warn') return $r('app.color.accent_strong')
+    return $r('app.color.text_primary')
+  }
+}

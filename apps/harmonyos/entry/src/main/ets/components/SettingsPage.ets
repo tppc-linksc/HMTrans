@@ -25,6 +25,7 @@ export struct PadSettingsPage {
   @Param onOpenCastNetworkTest: () => void = () => {}
   @Param onOpenPrivacy: () => void = () => {}
   @Param onCopyDiagnostics: () => void = () => {}
+  @Param onOpenNetworkDiagnosis: () => void = () => {}
 
   build() {
     Column({ space: 14 }) {
@@ -40,6 +41,8 @@ export struct PadSettingsPage {
           this.backgroundProtectionEnabled, this.onBackgroundChanged)
         Divider().color($r('app.color.divider'))
         this.ActionRow('诊断信息', '不包含文件内容、完整路径或局域网地址', '复制', this.onCopyDiagnostics)
+        Divider().color($r('app.color.divider'))
+        this.NavigationRow('局域网体检', '检查 Wi-Fi 频段、信号与发现报文收发', this.onOpenNetworkDiagnosis)
         Divider().color($r('app.color.divider'))
         this.ActionRow('接收目录', this.receiveDirectoryLabel(), '检查', this.onCheckDownload)
         Divider().color($r('app.color.divider'))

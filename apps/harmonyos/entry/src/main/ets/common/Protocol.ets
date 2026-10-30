@@ -123,6 +123,11 @@ export interface DeviceInfo {
   screenCastPort?: number
   screenCastProtocolVersion?: string
   screenCastCapabilities?: Array<string>
+  /**
+   * 已知地址列表，只用于网络切换后逐个探测以找回设备。
+   * 它是可选项以便旧版本落盘数据仍能解析，且不参与任何身份判断。
+   */
+  addressHistory?: Array<string>
 }
 
 export function encodeJsonLine(value: object): string {

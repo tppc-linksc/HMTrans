@@ -42,6 +42,8 @@ export interface PadNetworkStateHost {
   selectedDeviceId: string
   selectedDeviceIds: Array<string>
   trustedDeviceIds: Array<string>
+  /** 正在主动回连的已配对设备。只影响卡片文案，不影响配对关系。 */
+  reconnectingDeviceIds: Array<string>
   currentTransfers: Array<TransferListItem>
   pairingCode: string
   pairingSeconds: number
@@ -64,6 +66,8 @@ export interface PadNetworkActionHost {
   forgetTrustedDevice(deviceId: string, statusMessage: string): Promise<void>
   rememberDevice(device: DeviceInfo): Promise<void>
   isTrusted(deviceId?: string): boolean
+  /** 取本机记录的已配对设备信息，用于换网后按已知地址回连。 */
+  persistedDevice(deviceId: string): DeviceInfo | undefined
   identityMatches(deviceId?: string, fingerprint?: string): boolean
   saveTarget(): Promise<void>
   sendPreparedSource(source: SendableSource, device: DeviceInfo, reuseTransferId?: string,

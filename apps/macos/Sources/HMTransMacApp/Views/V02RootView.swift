@@ -308,7 +308,8 @@ private struct MacConnectionPage: View {
                 Text(device.name).font(.system(size: 13, weight: .bold))
                 Text(deviceSystemDescription(platform: device.platform, version: device.systemVersion))
                     .font(.system(size: 9)).foregroundStyle(.secondary)
-                Text("已配对 · 点击重新连接").font(.system(size: 10, weight: .semibold)).foregroundStyle(MacAppTheme.accent)
+                Text(model.reconnectingDeviceIDs.contains(device.id) ? "正在重新连接…" : "已配对 · 点击重新连接")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(MacAppTheme.accent)
             }
             Spacer()
         }
@@ -371,19 +372,20 @@ private final class WiFiNameProvider: NSObject, ObservableObject, @preconcurrenc
     }
 }
 
+/// 设备身份只由稳定设备 ID 决定。
+///
+/// IP 属于网络地址：换 Wi-Fi 后会变，也会被 DHCP 分配给另一台设备。用它判断
+/// “同一台设备”会把两台不同硬件误合并，也会让已配对设备在新网段里被当成陌生设备。
 private func devicesRepresentSameHardware(_ lhs: DeviceInfo, _ rhs: DeviceInfo) -> Bool {
     lhs.deviceId == rhs.deviceId
-        || lhs.ip == rhs.ip
 }
 
 private func persistedDevice(_ lhs: PersistedDevice, represents rhs: DeviceInfo) -> Bool {
     lhs.id == rhs.deviceId
-        || lhs.address == rhs.ip
 }
 
 private func persistedDevicesRepresentSameHardware(_ lhs: PersistedDevice, _ rhs: PersistedDevice) -> Bool {
     lhs.id == rhs.id
-        || lhs.address == rhs.address
 }
 
 private func deviceDisplayOrder(_ lhs: DeviceInfo, _ rhs: DeviceInfo) -> Bool {

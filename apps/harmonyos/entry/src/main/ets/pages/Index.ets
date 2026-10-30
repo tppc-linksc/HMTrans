@@ -17,6 +17,7 @@ import { PadPrivacyBlankPage } from '../components/PrivacyBlankPage'
 import {
   CastSettingsOverlay,
   InitializationOverlay,
+  NetworkDiagnosisOverlay,
   NetworkTestResultOverlay,
   PairingOverlay,
   PortEditorOverlay,
@@ -33,6 +34,7 @@ import { PadPreferencesService } from '../services/PadPreferencesService'
 import { TransferStateService } from '../services/TransferStateService'
 import { OutgoingTransferCoordinator } from '../services/OutgoingTransferCoordinator'
 import { NetworkChangeService } from '../services/NetworkChangeService'
+import { NetworkDiagnosisReport, NetworkDiagnosisService } from '../services/NetworkDiagnosisService'
 import { PadDialogService } from '../services/PadDialogService'
 import { DeviceIdentityService } from '../services/DeviceIdentityService'
 import { TransferNotificationActionService } from '../services/TransferNotificationActionService'
@@ -74,6 +76,7 @@ struct Index {
   @Local nearbyDevices: Array<DeviceInfo> = []
   @Local selectedDeviceId: string = ''
   @Local selectedDeviceIds: Array<string> = []
+  @Local reconnectingDeviceIds: Array<string> = []
   @Local trustedDeviceIds: Array<string> = []
   @Local persistedDevices: Array<DeviceInfo> = []
   @Local currentTransfers: Array<TransferListItem> = []
@@ -118,6 +121,12 @@ struct Index {
   @Local networkTestJitterMs: number = 0
   @Local networkTestRecommendation: string = ''
   @Local networkTestGuidance: string = ''
+  @Local showNetworkDiagnosis: boolean = false
+  @Local diagnosisRunning: boolean = false
+  @Local diagnosisLevel: string = 'idle'
+  @Local diagnosisTitle: string = '正在检查局域网链路'
+  @Local diagnosisLines: Array<string> = []
+  @Local diagnosisAdvice: string = ''
   @Local compactLayout: boolean = false
   @Local historySelectionMode: boolean = false
   @Local historySelectedIds: Array<string> = []
@@ -140,6 +149,7 @@ struct Index {
   private networkChangeService: NetworkChangeService = new NetworkChangeService()
   private dialogService: PadDialogService = new PadDialogService()
   private deviceIdentityService: DeviceIdentityService = new DeviceIdentityService()
+  private networkDiagnosisService: NetworkDiagnosisService = new NetworkDiagnosisService()
   private notificationActionService: TransferNotificationActionService =
     new TransferNotificationActionService(this)
   private settingsController: PadSettingsController =
@@ -321,6 +331,17 @@ struct Index {
           onRetry: () => { this.screenCastController.runNetworkTest() },
         })
       }
+      if (this.showNetworkDiagnosis) {
+        NetworkDiagnosisOverlay({
+          running: this.diagnosisRunning,
+          level: this.diagnosisLevel,
+          title: this.diagnosisTitle,
+          lines: this.diagnosisLines,
+          advice: this.diagnosisAdvice,
+          onClose: () => { this.showNetworkDiagnosis = false },
+          onRetry: () => { this.runNetworkDiagnosis() },
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -374,6 +395,7 @@ struct Index {
       connectedDevices: this.connectedDevices,
       offlineDevices: this.offlineDevices,
       unpairedDevices: this.unpairedDevices,
+      reconnectingDeviceIds: this.reconnectingDeviceIds,
       selectedDeviceIds: this.selectedDeviceIds,
       onRegenerateCode: () => this.regeneratePairingCode(),
       onPairDevice: (device: DeviceInfo) => this.network().beginPairing(device),
@@ -443,6 +465,7 @@ struct Index {
       onOpenCastNetworkTest: () => this.openNetworkTestDialog(),
       onOpenPrivacy: () => this.openPrivacyPolicy(),
       onCopyDiagnostics: () => this.diagnosticController.copy(),
+      onOpenNetworkDiagnosis: () => this.openNetworkDiagnosis(),
     })
   }
 
@@ -631,7 +654,7 @@ struct Index {
     return devices
   }
 
-  private persistedDevice(deviceId: string): DeviceInfo | undefined {
+  persistedDevice(deviceId: string): DeviceInfo | undefined {
     const matches = this.persistedDevices.filter((device: DeviceInfo) => device.deviceId === deviceId)
     return matches.length > 0 ? matches[0] : undefined
   }
@@ -930,6 +953,59 @@ struct Index {
     this.showNetworkTestResult = true
   }
 
+  /** 局域网体检：与投屏测试独立，未配对、未选设备时也能运行，用来解释「为什么看不到对方」。 */
+  openNetworkDiagnosis(): void {
+    this.showNetworkDiagnosis = true
+    this.runNetworkDiagnosis()
+  }
+
+  async runNetworkDiagnosis(): Promise<void> {
+    if (this.diagnosisRunning) {
+      return
+    }
+    this.diagnosisRunning = true
+    this.diagnosisLevel = 'idle'
+    this.diagnosisTitle = '正在检查局域网链路'
+    this.diagnosisLines = []
+    this.diagnosisAdvice = ''
+    try {
+      const targetIp = this.diagnosisTargetIp()
+      const port = Number(this.portText)
+      const report: NetworkDiagnosisReport = await this.networkDiagnosisService.run({
+        localIp: this.localIp,
+        discoveryPort: this.discoveryPort,
+        targetIp: targetIp,
+        targetPort: Number.isInteger(port) && port > 0 && port <= 65535 ? port : this.localTcpPort,
+        stats: this.network().discoveryStats(),
+      })
+      this.diagnosisLevel = report.level
+      this.diagnosisTitle = report.title
+      this.diagnosisLines = report.lines
+      this.diagnosisAdvice = report.advice
+    } catch (err) {
+      this.diagnosisLevel = 'bad'
+      this.diagnosisTitle = '体检未完成'
+      this.diagnosisLines = []
+      this.diagnosisAdvice = `读取网络状态失败：${errorText(err as Error)}`
+    } finally {
+      this.diagnosisRunning = false
+    }
+  }
+
+  /** 优先用当前发送目标；没有目标时退回最近一次见过的设备地址。 */
+  private diagnosisTargetIp(): string {
+    if (this.targetIp.length > 0) {
+      return this.targetIp
+    }
+    if (this.nearbyDevices.length > 0) {
+      return this.nearbyDevices[0].ip
+    }
+    if (this.persistedDevices.length > 0) {
+      return this.persistedDevices[0].ip
+    }
+    return ''
+  }
+
   async saveTarget(): Promise<void> {
     try {
       await this.padPreferencesService.saveTarget(this.abilityContext(), this.targetIp, this.portText)
@@ -982,10 +1058,28 @@ struct Index {
   }
 
   async rememberDevice(device: DeviceInfo): Promise<void> {
+    const previous = this.persistedDevices.find((item: DeviceInfo) => item.deviceId === device.deviceId)
+    // 已知地址只用于换网后回连探测，永远不会参与身份判断。
+    device.addressHistory = this.mergeAddressHistory(previous?.addressHistory, device.ip)
     this.persistedDevices = this.persistedDevices
       .filter((item: DeviceInfo) => item.deviceId !== device.deviceId)
       .concat([device])
     await this.transferStore.upsertDevice(device)
+  }
+
+  /** 保留最近若干个已知地址供回连探测，当前地址始终排在最前。 */
+  private mergeAddressHistory(history: Array<string> | undefined, current: string): Array<string> {
+    if (!current || current.length === 0 || current === '0.0.0.0') {
+      return history ?? []
+    }
+    const result: Array<string> = [current]
+    const previous = history ?? []
+    for (let index = 0; index < previous.length && result.length < 6; index++) {
+      if (previous[index] !== current && previous[index].length > 0) {
+        result.push(previous[index])
+      }
+    }
+    return result
   }
 
   isTrusted(deviceId?: string): boolean {

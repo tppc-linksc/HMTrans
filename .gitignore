@@ -32,6 +32,9 @@ apps/harmonyos/local.properties
 !.vscode/settings.json
 # Local signing material / generated project backups
 apps/harmonyos/build-profile.json5
+apps/harmonyos/Users/
+# CodeGenie 本地索引（内嵌独立 .git，不并入本仓库）
+apps/harmonyos/.codegenie/
 *.orig
 *.bak
 *.tmp

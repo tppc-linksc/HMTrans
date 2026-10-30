@@ -18,6 +18,7 @@ export struct PadConnectionPage {
   @Param connectedDevices: Array<DeviceInfo> = []
   @Param offlineDevices: Array<DeviceInfo> = []
   @Param unpairedDevices: Array<DeviceInfo> = []
+  @Param reconnectingDeviceIds: Array<string> = []
   @Param selectedDeviceIds: Array<string> = []
   @Param onRegenerateCode: () => void = () => {}
   @Param onPairDevice: (device: DeviceInfo) => void = (_device: DeviceInfo) => {}
@@ -267,6 +268,14 @@ export struct PadConnectionPage {
     .accessibilityDescription('点按查看设备详情')
   }
 
+  private isReconnecting(device: DeviceInfo): boolean {
+    return this.reconnectingDeviceIds.indexOf(device.deviceId) >= 0
+  }
+
+  private pairedStatusText(device: DeviceInfo): string {
+    return this.isReconnecting(device) ? '正在重新连接…' : '已配对 · 点击重新连接'
+  }
+
   /** 蓝色＝识别到但未连接，绿色＝已连接，灰色＝配对过但当前未检测到。 */
   private statusColor(state: string): ResourceColor {
     if (state === 'alive') return $r('app.color.success')
@@ -302,7 +311,8 @@ export struct PadConnectionPage {
           .fontColor($r('app.color.text_primary')).textAlign(TextAlign.Center).maxLines(2)
         Text(this.systemVersionLabel(device)).fontSize(12).fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
-        Text(state === 'alive' ? `已连接 · ${device.ip}` : state === 'paired' ? '已配对 · 当前未检测到' : '新设备 · 尚未配对')
+        Text(state === 'alive' ? `已连接 · ${device.ip}` :
+          state === 'paired' ? this.pairedStatusText(device) : '新设备 · 尚未配对')
           .fontSize(13).fontWeight(FontWeight.Medium).fontColor(this.statusColor(state)).textAlign(TextAlign.Center)
       }.width('100%')
       Column({ space: 10 }) {
@@ -311,7 +321,7 @@ export struct PadConnectionPage {
             () => { this.onPairDevice(device); this.showDeviceDetail = false })
         }
         if (state === 'paired') {
-          this.DetailActionButton('重新连接', true, false,
+          this.DetailActionButton(this.isReconnecting(device) ? '正在重新连接…' : '重新连接', true, false,
             () => { this.onReconnectDevice(device); this.showDeviceDetail = false })
           this.DetailActionButton('忘记设备', false, true,
             () => { this.onForgetDevice(device); this.showDeviceDetail = false })
@@ -365,7 +375,8 @@ export struct PadConnectionPage {
       Column({ space: 3 }) {
         Text(device.deviceName).fontSize(13).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary')).maxLines(1)
         Text(this.systemVersionLabel(device)).fontSize(9).fontColor($r('app.color.text_secondary')).maxLines(1)
-        Text(state === 'alive' ? `已连接 · ${device.ip}` : state === 'paired' ? '已配对 · 点击重新连接' : '新设备 · 点击输入配对码')
+        Text(state === 'alive' ? `已连接 · ${device.ip}` :
+          state === 'paired' ? this.pairedStatusText(device) : '新设备 · 点击输入配对码')
           .fontSize(10).fontColor(state === 'alive' ? $r('app.color.success') :
             state === 'paired' ? $r('app.color.accent') : $r('app.color.text_secondary')).maxLines(1)
       }.alignItems(HorizontalAlign.Start).layoutWeight(1)

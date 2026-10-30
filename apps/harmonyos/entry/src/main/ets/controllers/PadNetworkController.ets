@@ -18,11 +18,12 @@ import { fileTypeLabel, formatBytes, nowText } from '../common/Formatters'
 import { errorText } from '../common/ErrorText'
 import { TransferDirection, TransferListItem, TransferState } from '../models/TransferListItem'
 import { SendableSource } from '../services/ArchiveService'
-import { DiscoveryService } from '../services/DiscoveryService'
+import { DiscoveryService, DiscoveryStats } from '../services/DiscoveryService'
 import { DeviceIdentityService } from '../services/DeviceIdentityService'
 import { PadNetworkHost } from './PadNetworkHost'
 
-const DEVICE_TTL_MS: number = 12000
+/** 24 秒 = 4 个心跳周期。5 秒心跳配 12 秒 TTL 只要连丢两个包就会掉设备，弱网下会反复闪烁。 */
+const DEVICE_TTL_MS: number = 24000
 const DEVICE_PRUNE_INTERVAL_MS: number = 4000
 const FILE_AUTHENTICATION_WINDOW_MS: number = 5 * 60 * 1000
 const MAX_RECENT_FILE_AUTHENTICATIONS: number = 2048
@@ -354,17 +355,49 @@ export class PadNetworkController {
     await this.startDiscovery()
   }
 
-  /** 网络切换后重新绑定发现与接收服务，避免继续使用旧网卡地址。 */
+  /**
+   * 网络属性回调在信号波动、链路速率变化时也会触发，并不等于真的换了网络。
+   * 只有 SSID 或本机地址真的变了才重建服务；否则重建只会清空设备列表，
+   * 表现成「设备闪一下就消失」。地址没变时只补发一次定向探测。
+   */
   handleNetworkChanged(): void {
     this.host.runOnUi(() => {
-      this.host.statusText = '网络已变化，正在重新发现设备'
-      this.host.transferService.stopReceive().then(() => this.stopDiscovery())
-        .then(() => this.refreshNetworkName())
-        .then(() => this.ensureReceiverAndDiscovery())
-        .catch((err: Error) => {
-          this.host.statusText = `网络服务恢复失败：${errorText(err)}`
-        })
+      const previousName = this.host.networkName
+      const previousIp = this.host.localIp
+      const apply = async (): Promise<void> => {
+        await this.refreshNetworkName()
+        const unchanged = this.host.discoveryService !== undefined &&
+          previousName === this.host.networkName && previousIp === this.host.localIp
+        if (unchanged) {
+          this.probeTrustedDevices()
+          return
+        }
+        this.host.statusText = '网络已变化，正在重新发现设备'
+        await this.host.transferService.stopReceive()
+        await this.stopDiscovery()
+        await this.ensureReceiverAndDiscovery()
+        this.probeTrustedDevices()
+      }
+      apply().catch((err: Error) => {
+        this.host.statusText = `网络服务恢复失败：${errorText(err)}`
+      })
     })
+  }
+
+  /** 局域网体检用：把发现链路的收发计数交给诊断服务，不改变任何连接状态。 */
+  discoveryStats(): DiscoveryStats {
+    const service = this.host.discoveryService
+    if (service) {
+      return service.stats()
+    }
+    return {
+      sentBeacons: 0,
+      failedBeacons: 0,
+      receivedPackets: 0,
+      lastSentAt: 0,
+      lastReceivedAt: 0,
+      lastError: '',
+    }
   }
 
   async refreshNetworkName(): Promise<void> {
@@ -516,29 +549,84 @@ export class PadNetworkController {
     this.host.statusText = `等待输入 ${device.deviceName} 的六位配对码`
   }
 
+  /**
+   * 重新连接只负责把设备找回来：向已知地址发定向探测，然后等对端带身份的确认。
+   *
+   * 配对信任不会因网络不可达或对端暂时没有回应而被删除。它只有两个清除入口：
+   * 用户主动移除设备，以及对端发来的带签名解除配对请求。
+   */
   reconnectTrustedDevice(device: DeviceInfo): void {
     if (!this.host.discoveryEnabled) {
       this.host.statusText = '请先开启连接服务'
       return
     }
-    this.host.targetIp = device.ip
-    this.host.portText = `${device.port}`
+    this.host.reconnectingDeviceIds = this.host.reconnectingDeviceIds.concat([device.deviceId])
+    const addresses = this.candidateAddresses(device.deviceId)
     this.host.statusText = `正在重新连接：${device.deviceName}`
-    this.host.saveTarget()
-    this.restartDiscovery().catch((err: Error) => {
-      this.host.statusText = `重新连接失败：${errorText(err)}`
-    })
-    setTimeout(() => {
-      if (!this.host.isTrusted(device.deviceId) || this.isBidirectionallyAlive(device.deviceId)) return
-      const fresh = this.host.nearbyDevices.find((item: DeviceInfo) => item.deviceId === device.deviceId)
-      if (!fresh) {
-        this.host.statusText = `设备当前不在线：${device.deviceName}`
+    const probeAndWait = (): void => {
+      this.probeTrustedDevices(device.deviceId)
+      setTimeout(() => {
+        this.host.reconnectingDeviceIds =
+          this.host.reconnectingDeviceIds.filter((id: string) => id !== device.deviceId)
+        if (!this.host.isTrusted(device.deviceId)) return
+        const fresh = this.host.nearbyDevices.find((item: DeviceInfo) => item.deviceId === device.deviceId)
+        if (fresh && this.isBidirectionallyAlive(device.deviceId)) {
+          this.host.targetIp = fresh.ip
+          this.host.portText = `${fresh.port}`
+          this.host.saveTarget()
+          this.host.statusText = `已连接：${fresh.deviceName}`
+          return
+        }
+        this.host.statusText = addresses.length === 0 ?
+          `尚未保存 ${device.deviceName} 的地址，等待它出现在附近设备` :
+          `暂未收到 ${device.deviceName} 的回应，配对关系保持不变，可稍后重试`
+      }, 6000)
+    }
+    if (this.host.discoveryService) {
+      probeAndWait()
+      return
+    }
+    this.ensureReceiverAndDiscovery().then(() => {
+      if (!this.host.discoveryService) {
+        this.host.reconnectingDeviceIds =
+          this.host.reconnectingDeviceIds.filter((id: string) => id !== device.deviceId)
+        this.host.statusText = '发现服务不可用，请稍后重试'
         return
       }
-      this.host.forgetTrustedDevice(device.deviceId, '对端未确认原配对关系，需要重新输入配对码')
-        .then(() => this.beginPairing(fresh))
-        .catch((err: Error) => { this.host.statusText = `重新配对准备失败：${errorText(err)}` })
-    }, 4500)
+      probeAndWait()
+    }).catch((err: Error) => {
+      this.host.reconnectingDeviceIds =
+        this.host.reconnectingDeviceIds.filter((id: string) => id !== device.deviceId)
+      this.host.statusText = `连接服务恢复失败：${errorText(err)}`
+    })
+  }
+
+  /** 已配对设备的回连候选地址：当前地址优先，其后是历史地址。 */
+  candidateAddresses(deviceId: string): Array<string> {
+    const result: Array<string> = []
+    const append = (value: string): void => {
+      if (!value || value.length === 0 || value === '0.0.0.0' || value === '127.0.0.1') return
+      if (value === this.host.localIp) return
+      if (result.indexOf(value) >= 0) return
+      result.push(value)
+    }
+    const stored = this.host.persistedDevice(deviceId)
+    if (stored) {
+      append(stored.ip)
+      const history = stored.addressHistory ?? []
+      history.forEach((item: string) => append(item))
+    }
+    return result.slice(0, 6)
+  }
+
+  /** 网络恢复或用户点重新连接时主动找回已配对设备，不等下一次广播周期。 */
+  probeTrustedDevices(deviceId?: string): void {
+    const service = this.host.discoveryService
+    if (!service) return
+    const ids = deviceId ? [deviceId] : this.host.trustedDeviceIds
+    ids.forEach((id: string) => {
+      this.candidateAddresses(id).forEach((address: string) => service.probe(address))
+    })
   }
 
   /** 用户主动移除设备时，先发出远端撤销通知，再立即清除本机状态。 */

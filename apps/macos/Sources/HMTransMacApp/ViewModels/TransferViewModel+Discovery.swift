@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import HMTransCore
 
@@ -167,6 +168,7 @@ extension TransferViewModel {
     }
 
     func persist(device: DeviceInfo) {
+        let previous = persistedDevices.first { $0.id == device.deviceId }
         let saved = PersistedDevice(
             id: device.deviceId,
             name: device.deviceName,
@@ -175,13 +177,54 @@ extension TransferViewModel {
             address: device.ip,
             port: device.port,
             isPaired: TrustedDevicesStore.contains(device.deviceId),
-            lastSeenAt: Date()
+            lastSeenAt: Date(),
+            addressHistory: Self.mergedAddressHistory(previous?.addressHistory, current: device.ip)
         )
-        let duplicates = persistedDevices.filter { persistedDevice($0, matches: device) && $0.id != saved.id }
-        for duplicate in duplicates { store.removeDevice(id: duplicate.id) }
-        persistedDevices.removeAll { $0.id == saved.id || persistedDevice($0, matches: device) }
+        // 只按设备 ID 去重。IP 会被 DHCP 重新分配，按地址合并会让另一台设备顶替已配对设备。
+        persistedDevices.removeAll { $0.id == saved.id }
         persistedDevices.insert(saved, at: 0)
         store.upsert(device: saved)
+    }
+
+    /// 保留最近若干个已知地址供回连探测，当前地址始终排在最前。
+    private static func mergedAddressHistory(_ history: [String]?, current: String) -> [String] {
+        guard Self.isUsableAddress(current) else { return history ?? [] }
+        var result = [current]
+        for address in history ?? [] where result.count < 6 && address != current {
+            result.append(address)
+        }
+        return result
+    }
+
+    /// 已配对设备的回连候选地址：当前地址优先，其后是历史地址。
+    func candidateAddresses(for device: PersistedDevice) -> [String] {
+        var result: [String] = []
+        let appendIfUsable = { (value: String) in
+            guard Self.isUsableAddress(value), !result.contains(value), !isLocalIPv4Address(value) else { return }
+            result.append(value)
+        }
+        appendIfUsable(device.address)
+        device.addressHistory?.forEach(appendIfUsable)
+        return Array(result.prefix(6))
+    }
+
+    /// 向一组地址发定向发现报文，让已配对设备在新网段里被主动找回，而不必等下一次广播周期。
+    func probe(addresses: [String]) {
+        guard let discovery else { return }
+        for address in addresses { discovery.probe(address: address) }
+    }
+
+    /// 网络恢复后主动探测所有已配对设备。信任关系不因探测结果变化。
+    func probeTrustedDevices() {
+        for device in persistedDevices where TrustedDevicesStore.contains(device.id) {
+            probe(addresses: candidateAddresses(for: device))
+        }
+    }
+
+    private static func isUsableAddress(_ value: String) -> Bool {
+        guard !value.isEmpty, value != "0.0.0.0", value != "127.0.0.1" else { return false }
+        var address = in_addr()
+        return inet_pton(AF_INET, value, &address) == 1
     }
 
     private func pruneStaleDevices() {
@@ -207,11 +250,10 @@ extension TransferViewModel {
         // 但绝不能伪造第二个可点击并再次要求配对的设备。
     }
 
+    /// 设备身份只由稳定设备 ID 决定。IP 属于网络地址，可能被复用或重分配，
+    /// 用它做去重会让两台不同设备被误合并，也会让已配对设备在新网段里丢失。
     private func discoveredDevice(_ lhs: DeviceInfo, matches rhs: DeviceInfo) -> Bool {
-        lhs.deviceId == rhs.deviceId || lhs.ip == rhs.ip
+        lhs.deviceId == rhs.deviceId
     }
 
-    private func persistedDevice(_ lhs: PersistedDevice, matches rhs: DeviceInfo) -> Bool {
-        lhs.id == rhs.deviceId || lhs.address == rhs.ip
-    }
 }
